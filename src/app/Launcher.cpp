@@ -3686,8 +3686,12 @@ void Launcher::copyFiles(const QStringList& files)
 
 void Launcher::cycleScope(int delta)
 {
-    if (m_mergeFileScope) {
-        if (m_contentEnabled) chooseScope(m_scope == Content ? All : Content);
+    if (m_mergeFileScope) { // 程序, 全部, then 内容 when it is searched
+        static constexpr Scope kMergeOrder[] {Apps, All, Content};
+        const int scopes = m_contentEnabled ? 3 : 2;
+        const int found = static_cast<int>(std::find(std::begin(kMergeOrder), std::begin(kMergeOrder) + scopes, m_scope) - std::begin(kMergeOrder));
+        const int from = found >= 0 && found < scopes ? found : 0;
+        chooseScope(kMergeOrder[((from + delta) % scopes + scopes) % scopes]);
         return;
     }
     static constexpr Scope kOrder[] {Apps, All, Files, Content}; // as the tabs show them (文件夹 within 文件)
