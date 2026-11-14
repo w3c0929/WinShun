@@ -252,6 +252,9 @@ struct Settings {
     bool shortcutHelp = true;
     bool footerHints = true;
     bool pureSearch = false; // empty floating launcher: just the input, without start results or chrome
+    // The search panel with nothing typed and no filter chosen lists every
+    // file, as Everything does; off: nothing until something is typed (GitHub #321).
+    bool panelListsAll = true;
     // The launcher's scopes (全部, 文件, 内容…) as one key that says the
     // current one and goes to the next when clicked, in place of the tabs
     // side by side (GitHub #185, #244). Tab moves through them either way.
@@ -482,6 +485,9 @@ struct Settings {
     // (WebSuggester). On: only words typed after a site's keyword go out,
     // to that site, which the user is about to search anyway.
     bool webSuggestions = true;
+    // Nothing found on this PC: a row that searches the first site of the
+    // list for the words typed, so Enter looks them up (GitHub #320).
+    bool webFallback = true;
 
     // [Shares]: network shares searched too, written as an array: size=,
     // 1\Path=, 1\Name=. A mapped drive (Z:\...) is kept as the share it maps.

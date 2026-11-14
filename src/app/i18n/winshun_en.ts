@@ -1019,6 +1019,10 @@
         <translation>Web search suggestions</translation>
     </message>
     <message>
+        <source>没有结果时用网页搜索</source>
+        <translation>Search the web when nothing is found</translation>
+    </message>
+    <message>
         <source>网页搜索关键词</source>
         <translation>Web search keywords</translation>
     </message>
@@ -1437,6 +1441,10 @@
             <numerusform>%Ln more</numerusform>
             <numerusform>%Ln more</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>…只显示开头</source>
+        <translation>… only the beginning is shown</translation>
     </message>
     <message>
         <source>带格式，Shift+Enter 粘贴为纯文本</source>
@@ -4422,6 +4430,10 @@ Installing first renames it to %2, left beside the plugin; no file is deleted.</
 <context>
     <name>ResultRow</name>
     <message>
+        <source>运行</source>
+        <translation>Running</translation>
+    </message>
+    <message>
         <source>打开设置</source>
         <translation>Open settings</translation>
     </message>
@@ -6462,6 +6474,22 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>search suggestions;autocomplete;complete;suggest;suggestion</translation>
     </message>
     <message>
+        <source>没有结果时用网页搜索</source>
+        <translation>Search the web when nothing is found</translation>
+    </message>
+    <message>
+        <source>没有找到;无结果;默认搜索;兜底;fallback;no results;default search</source>
+        <translation>not found;no results;default search;fallback</translation>
+    </message>
+    <message>
+        <source>在“全部”里什么都没找到时，列出一行用上面第一个能搜索的网站搜这些字，按 Enter 打开。想换网站，点它那一行的“置顶”</source>
+        <translation>When All finds nothing, lists a row that searches the first site above for what you typed; Enter opens it. To use another site, click Move to top on its row</translation>
+    </message>
+    <message>
+        <source>置顶</source>
+        <translation>Move to top</translation>
+    </message>
+    <message>
         <source>在网站关键词后输入文字时，列出这个网站的搜索建议。只有这时才会把输入的文字发给那个网站</source>
         <translation>When you type words after a site keyword, list that site&apos;s search suggestions. Only then is what you type sent to that site</translation>
     </message>
@@ -8129,6 +8157,18 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Minimal search mode</translation>
     </message>
     <message>
+        <source>搜索面板空着时列出全部文件</source>
+        <translation>List all files in the empty search panel</translation>
+    </message>
+    <message>
+        <source>关掉后，搜索面板里没输入文字、也没选筛选条件时不列任何文件，输入后才显示结果</source>
+        <translation>When off, the search panel lists no files until you type something or choose a filter</translation>
+    </message>
+    <message>
+        <source>面板;完整搜索窗口;空白;默认;全部文件;不显示结果;panel;empty;everything</source>
+        <translation>panel;full search window;blank;default;all files;no results;empty;everything</translation>
+    </message>
+    <message>
         <source>范围标签</source>
         <translation>Scope tabs</translation>
     </message>
@@ -8532,6 +8572,14 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>全部</source>
         <translation>All</translation>
+    </message>
+    <message>
+        <source>运行</source>
+        <translation>Running</translation>
+    </message>
+    <message>
+        <source>正在运行的程序，Enter 切换过去</source>
+        <translation>The windows open now; Enter switches to one</translation>
     </message>
     <message>
         <source>打开最多的应用</source>
@@ -9789,6 +9837,10 @@ Double-click grip: expand/collapse search panel</translation>
 <context>
     <name>ws::ClipModel</name>
     <message>
+        <source>已遮住</source>
+        <translation>hidden</translation>
+    </message>
+    <message>
         <source>%1 动图</source>
         <translation>%1 animation</translation>
     </message>
@@ -10217,6 +10269,18 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>移到“%1”</source>
         <translation>Move to “%1”</translation>
+    </message>
+    <message>
+        <source>遮住内容</source>
+        <translation>Hide content</translation>
+    </message>
+    <message>
+        <source>显示内容</source>
+        <translation>Show content</translation>
+    </message>
+    <message>
+        <source>已遮住</source>
+        <translation>Hidden</translation>
     </message>
     <message>
         <source>加备注…</source>
@@ -11879,6 +11943,14 @@ Content index: %5</translation>
     <message>
         <source>已复制名称</source>
         <translation>Name copied</translation>
+    </message>
+    <message>
+        <source>没有可用的程序路径</source>
+        <translation>No program path is known</translation>
+    </message>
+    <message>
+        <source>已复制完整路径</source>
+        <translation>Full path copied</translation>
     </message>
     <message>
         <source>已复制，可在资源管理器中粘贴</source>

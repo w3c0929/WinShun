@@ -343,6 +343,14 @@ void SettingsEditor::setWebSuggestions(bool on)
     commit();
 }
 
+void SettingsEditor::setWebFallback(bool on)
+{
+    if (m_settings.webFallback == on)
+        return;
+    m_settings.webFallback = on;
+    commit();
+}
+
 void SettingsEditor::setSort(const QString& sort)
 {
     if (m_settings.sort == sort || !isSortName(sort))
@@ -447,6 +455,14 @@ void SettingsEditor::setPureSearch(bool on)
     if (m_settings.pureSearch == on)
         return;
     m_settings.pureSearch = on;
+    commit();
+}
+
+void SettingsEditor::setPanelListsAll(bool on)
+{
+    if (m_settings.panelListsAll == on)
+        return;
+    m_settings.panelListsAll = on;
     commit();
 }
 
@@ -2380,6 +2396,14 @@ void SettingsEditor::removeWebShortcut(int index)
     m_settings.webShortcuts.removeAt(index);
     commit();
     pruneWebIcons(m_settings.webShortcuts, m_pickedWebIcon);
+}
+
+void SettingsEditor::moveWebShortcutFirst(int index)
+{
+    if (index <= 0 || index >= m_settings.webShortcuts.size())
+        return;
+    m_settings.webShortcuts.move(index, 0);
+    commit();
 }
 
 void SettingsEditor::openWebShortcut(int index)

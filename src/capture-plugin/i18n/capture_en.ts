@@ -2042,6 +2042,18 @@ The unfinished recording is kept at: %1</translation>
         <translation>Close the pin</translation>
     </message>
     <message>
+        <source>编辑</source>
+        <translation>Edit</translation>
+    </message>
+    <message>
+        <source>识别文字</source>
+        <translation>Read text</translation>
+    </message>
+    <message>
+        <source>收到屏幕顶边</source>
+        <translation>To the top edge</translation>
+    </message>
+    <message>
         <source>复制</source>
         <translation>Copy</translation>
     </message>

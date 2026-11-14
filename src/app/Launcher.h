@@ -96,6 +96,9 @@ class Launcher : public QObject {
     // that is not known (busy: the divider shows work going on).
     Q_PROPERTY(qreal progress READ progress NOTIFY statusChanged FINAL)
     Q_PROPERTY(bool searching READ searching NOTIFY statusChanged FINAL)
+    // Opened by a key typed in a file manager, which has yet to arrive
+    // (awaitTyping): nothing is listed, and nothing is "not found" either.
+    Q_PROPERTY(bool typingAwaited READ typingAwaited NOTIFY typingAwaitedChanged FINAL)
     Q_PROPERTY(bool stale READ stale NOTIFY statusChanged FINAL)
     Q_PROPERTY(QString placeholder READ placeholder NOTIFY scopeChanged FINAL)
     Q_PROPERTY(QString contentFilesLabel READ contentFilesLabel NOTIFY scopeChanged FINAL)
@@ -444,6 +447,8 @@ public:
     // showed for a moment and gave way to what was typed, the box changing
     // size twice (GitHub #234). Until the box says something else, or hides.
     void awaitTyping(const QString& text);
+    void setTypingAwaited(bool awaited);
+    bool typingAwaited() const { return m_typingAwaited; }
     // FolderTyping: "only" (only the folder and below), "level" (only what
     // lies directly in it), else its rows first and then the rest.
     void setFolderTyping(const QString& how);
@@ -499,6 +504,9 @@ public:
     // 网页搜索建议 (Settings::webSuggestions): a site keyword and words typed
     // ("baidu 显卡") list the site's suggestions under its search's row.
     void setWebSuggestions(bool on);
+    // 没有结果时用网页搜索 (Settings::webFallback): nothing found in 全部,
+    // a row searching the first site of the list for the words (GitHub #320).
+    void setWebFallback(bool on);
     // Its user's favorites (may be none): with every request, and the
     // rows refreshed when they change.
     void setFavorites(Favorites* favorites);
@@ -546,6 +554,9 @@ public:
     bool scopeButton() const { return m_scopeButton; }
     void setScopeButton(bool on);
     void setPureSearch(bool on);
+    // The panel with nothing typed and no filter chosen: every file (as
+    // Everything), or nothing until something is (GitHub #321).
+    void setPanelListsAll(bool on);
     int maxRows() const { return m_maxRows; }
     void setMaxRows(int rows);
     int numberKeysLeft() const { return static_cast<int>(m_numberKeysLeft); }
@@ -832,6 +843,7 @@ signals:
     void shown();
     void resultsReplaced(); // results for a new query: select the first row
     void namesShown(); // a name search finished and its rows are in the model
+    void typingAwaitedChanged();
     void dismissRequested();
     void escaped(); // Esc closed it (dismiss), before dismissRequested: nothing opened
     // Not started: it would have needed administrator rights to start at all
@@ -1347,6 +1359,7 @@ private:
     bool m_shortcutHelp = true;
     bool m_footerHints = true;
     bool m_pureSearch = false;
+    bool m_panelListsAll = true;
     bool m_scopeButton = false;
     bool m_typingAwaited = false; // awaitTyping, and ...
     QString m_awaitedText; // ... the box's text then, trimmed
@@ -1368,7 +1381,10 @@ private:
     AppsView m_appsView = FrequentApps; // kept in the state file (Search/AppsView)
     AppsView m_shownAppsView = FrequentApps; // of the rows on screen, as m_shownText
     QList<int> m_appCounts {0, 0, 0, 0};
-    quint64 m_appsRefreshToken = 0; // an earlier 运行 refresh is moot when it does not match
+    QTimer m_runningTick; // while 运行 is on screen: have the windows or the icons changed?
+    QStringList m_runningShown; // the windows 运行 was last made from (windowKeys)
+    QStringList m_trayAllNames; // the icons it was last made from: one coming or going makes the grid again
+    void runningTicked();
     QVector<ws::traysearch::TrayItem> m_trayItems; // 运行's notification-area icons
     QVector<int> m_trayShown; // indices into m_trayItems, as the words narrow them
     QStringList m_trayMenuNames; // the last menu read, by entry, for choosing one
@@ -1396,6 +1412,8 @@ private:
     bool m_contentInLowPriority = false; // 内容 also looks in system, program and tool folders
     WebShortcuts m_web;
     bool m_webSuggestions = true;
+    bool m_webFallback = true;
+    std::optional<SearchResult> webFallbackRow() const;
     WebSuggester m_suggester;
     SearchResults m_suggestRows; // the latest answer's, for the site typed; kept until the next answer
     QPointer<Favorites> m_favorites;

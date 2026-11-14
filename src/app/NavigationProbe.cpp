@@ -853,8 +853,16 @@ bool checkPureSearch(QQmlEngine* engine, const QDir& output)
     QInputMethodEvent composing(u"zhong"_s, {});
     QCoreApplication::sendEvent(field, &composing);
     check(!window->property("pureEmpty").toBool(), u"IME composition restores controls before committing the query"_s);
+    // Its letters are searched before a candidate is chosen (GitHub #157), Microsoft Pinyin's separators left out.
+    check(launcher.query() == u"zhong"_s && field->property("text").toString().isEmpty(),
+        u"IME composition: the letters are the query, the field's text is the input method's"_s);
+    QInputMethodEvent separated(u"re'port"_s, {});
+    QCoreApplication::sendEvent(field, &separated);
+    settle(window);
+    check(launcher.query() == u"report"_s && launcher.results()->count() == 1, u"IME composition finds rows by its letters"_s);
     QInputMethodEvent endComposition;
     QCoreApplication::sendEvent(field, &endComposition);
+    check(launcher.query().isEmpty(), u"IME composition given up: nothing typed"_s);
     launcher.setQuery(u"report"_s);
     settle(window);
     check(launcher.results()->count() == 1, u"typing searches the real index"_s);
@@ -959,6 +967,76 @@ bool checkPureSearch(QQmlEngine* engine, const QDir& output)
     launcher.setMaxRows(8);
     launcher.setQuery({});
     settle(window);
+    {
+        // Web searches (GitHub #320): a site's keyword after the words puts
+        // its search on top as before them; nothing found, a row searches the
+        // first site that does (没有结果时用网页搜索), unless switched off.
+        const auto shows = [&](int count) {
+            QElapsedTimer waiting;
+            waiting.start();
+            while ((launcher.searching() || launcher.results()->count() != count) && waiting.elapsed() < 3000)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            settle(window);
+            return !launcher.searching() && launcher.results()->count() == count;
+        };
+        const auto first = [&] { return launcher.results()->at(0); };
+        launcher.setWebShortcuts({{u"page"_s, u"A page"_s, u"https://example.com/page"_s, {}},
+            {u"gg"_s, u"Google"_s, u"https://www.google.com/search?q=%s"_s, {}},
+            {u"bd"_s, u"Baidu"_s, u"https://www.baidu.com/s?wd=%s"_s, {}}});
+        launcher.setQuery(u"report gg"_s);
+        check(shows(1) && first()->isWeb() && first()->keyword == u"gg" && first()->words == u"report",
+            u"web: the keyword after the words searches its site for them"_s);
+        launcher.setQuery(u"how to cook eggs"_s);
+        check(shows(1) && first()->isWeb() && first()->keyword == u"gg"
+                && first()->target == u"https://www.google.com/search?q=how%20to%20cook%20eggs",
+            u"web: nothing found, a row searches the first site that searches"_s);
+        check(!window->property("showEmptyState").toBool(), u"web: that row stands in for the empty state"_s);
+        check(window->grabWindow().save(output.filePath(u"web-fallback.png"_s)), u"capture the web search row"_s);
+        launcher.setQuery(u"report"_s);
+        check(shows(1) && !first()->isWeb(), u"web: something found, no such row"_s);
+        launcher.setWebFallback(false);
+        launcher.setQuery(u"how to cook eggs"_s);
+        check(shows(0), u"web: switched off, nothing found lists nothing"_s);
+        settle(window);
+        check(window->property("showEmptyState").toBool(), u"web: and says so as before"_s);
+        launcher.setWebFallback(true);
+        launcher.setWebShortcuts({});
+        launcher.setQuery({});
+        settle(window);
+    }
+    {
+        // 搜索面板空着时列出全部文件 (Settings::panelListsAll, GitHub #321):
+        // on, the empty panel lists every file as Everything does; off,
+        // nothing until something is typed or a filter chosen.
+        const auto lists = [&](int count) {
+            QElapsedTimer waiting;
+            waiting.start();
+            while ((launcher.searching() || launcher.results()->count() != count) && waiting.elapsed() < 3000)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            settle(window);
+            return !launcher.searching() && launcher.results()->count() == count;
+        };
+        window->resize(900, 600);
+        launcher.setPanel(true);
+        launcher.handleShown(); // asks again, as the app does after sizing the window
+        check(lists(26), u"panel: empty, it lists every file by default"_s);
+        launcher.setPanelListsAll(false);
+        check(lists(0), u"panel: set so, empty it lists nothing"_s);
+        check(window->grabWindow().save(output.filePath(u"panel-empty.png"_s)), u"capture the empty panel"_s);
+        launcher.setQuery(u"ledger"_s);
+        check(lists(25), u"panel: words typed are searched as ever"_s);
+        launcher.setQuery({});
+        check(lists(0), u"panel: cleared, nothing again"_s);
+        launcher.setFolderFilter(u"D:\\"_s);
+        check(lists(26), u"panel: a folder chosen is something asked for, and lists"_s);
+        launcher.setFolderFilter({});
+        check(lists(0), u"panel: the filter gone, nothing again"_s);
+        launcher.setPanelListsAll(true);
+        check(lists(26), u"panel: switched back on, every file at once"_s);
+        launcher.setPanel(false);
+        launcher.handleShown(); // asks again, as the app does after sizing the window
+        settle(window);
+    }
     check(!window->isActive(), u"probe never activates the user's desktop"_s);
     QFile report(output.filePath(u"pure-search.json"_s));
     if (!report.open(QIODevice::WriteOnly)) return false;

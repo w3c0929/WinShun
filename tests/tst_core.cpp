@@ -1976,8 +1976,18 @@ private slots:
         QVERIFY(typed(u"blog notes"_s).isEmpty()); // an ordinary query then
         QVERIFY(typed(u"ghost"_s).isEmpty());
         QVERIFY(typed(u"g"_s).isEmpty());
-        QVERIFY(typed(u"report gh"_s).isEmpty());
+        // The words first, the keyword after them (GitHub #320).
+        QCOMPARE(typed(u"report gh"_s), (QStringList {u"0"_s, u"report"_s}));
+        QCOMPARE(typed(u" how to  cook eggs  GH "_s), (QStringList {u"0"_s, u"how to  cook eggs"_s}));
+        QVERIFY(typedKeyword(shortcuts, u"report gh"_s)->atEnd);
+        QVERIFY(!typedKeyword(shortcuts, u"gh report"_s)->atEnd);
+        QCOMPARE(typed(u"gh report gh"_s), (QStringList {u"0"_s, u"report gh"_s})); // the keyword first wins
+        QCOMPARE(typed(u"blog notes gh"_s), (QStringList {u"0"_s, u"blog notes"_s})); // a page's keyword first: words like any
+        QVERIFY(typed(u"notes blog"_s).isEmpty()); // a page takes no words, at the end either
+        QVERIFY(typed(u"reportgh"_s).isEmpty());
         QVERIFY(typed({}).isEmpty());
+        QCOMPARE(defaultWebSearch(shortcuts), 0);
+        QCOMPARE(defaultWebSearch({shortcuts[1]}), -1);
         QVERIFY(!typedKeyword({}, u"gh"_s));
     }
 
@@ -9713,6 +9723,81 @@ private slots:
         QCOMPARE(shown(mine, u"工具箱"_s), QStringList {u"My Tool"_s}); // an alias: never shown
         QCOMPARE(shown(mine, u"gjx"_s), QStringList {u"My Tool"_s});
         QVERIFY(first(mine, u"工具箱"_s).exact);
+    }
+
+    void appInstalledNames()
+    {
+        const auto app = [](const QString& name, const QString& target) {
+            AppInfo a;
+            a.name = name;
+            a.id = target;
+            a.target = target;
+            a.prepare();
+            return a;
+        };
+        const auto names = [](const AppList& list, const QString& text) {
+            const ParsedQuery query = ws::parseQuery(text);
+            const NameMatcher matcher(query);
+            QStringList out;
+            for (const AppHit& hit : searchApps(list, query, matcher, {}))
+                out.append(list[hit.index].name);
+            return out;
+        };
+        AppList apps {
+            app(u"Word"_s, uR"(C:\Program Files\Microsoft Office\Root\Office16\WINWORD.EXE)"_s),
+            app(u"Visio"_s, uR"(C:\Program Files\Microsoft Office\Root\Office16\VISIO.EXE)"_s),
+            app(u"7-Zip File Manager"_s, uR"(C:\Program Files\7-Zip\7zFM.exe)"_s),
+            app(u"Zeta"_s, uR"(C:\Telegram\zeta.exe)"_s),
+            app(u"Addin Manager"_s, uR"(C:\Program Files\Microsoft Office\Addins\Manager\manager.exe)"_s),
+        };
+        const std::vector<InstalledName> installed {
+            {u"Microsoft Office LTSC 专业增强版 2024 - zh-cn"_s, uR"(C:\Program Files\Microsoft Office)"_s},
+            {u"Microsoft Visio LTSC 专业版 2024 - zh-cn"_s, uR"(C:\Program Files\Microsoft Office)"_s},
+            {u"Office Addins 3"_s, uR"(C:\Program Files\Microsoft Office\Addins)"_s},
+            {u"7-Zip 25.01 (x64)"_s, uR"(C:\Program Files\7-Zip)"_s},
+            {u"Telegram Desktop"_s, uR"(C:\Telegram-2)"_s}, // another folder
+        };
+        addInstalledNames(apps, installed);
+        // Visio's name says Visio: its alone, though Word is in the same folder.
+        QCOMPARE(apps[0].installedNames, std::vector<std::string> {"Microsoft Office LTSC 专业增强版 2024 - zh-cn"});
+        QCOMPARE(apps[1].installedNames, (std::vector<std::string> {"Microsoft Office LTSC 专业增强版 2024 - zh-cn",
+                                             "Microsoft Visio LTSC 专业版 2024 - zh-cn"}));
+        QCOMPARE(apps[2].installedNames, std::vector<std::string> {"7-Zip 25.01 (x64)"});
+        QVERIFY(apps[3].installedNames.empty()); // not installed in that folder
+        // The deepest folder's names only: not the suite's it sits in.
+        QCOMPARE(apps[4].installedNames, std::vector<std::string> {"Office Addins 3"});
+        QVERIFY(apps[0].aliases.empty()); // apps.txt's are another matter
+        QCOMPARE(names(apps, u"office ltsc"_s), (QStringList {u"Word"_s, u"Visio"_s}));
+        QCOMPARE(names(apps, u"7-zip 25"_s), QStringList {u"7-Zip File Manager"_s});
+        QCOMPARE(names(apps, u"visio"_s), QStringList {u"Visio"_s});
+        // An app named so itself comes before those that only came with it.
+        QCOMPARE(names(apps, u"addin"_s).value(0), u"Addin Manager"_s);
+        QStringList office = names(apps, u"office"_s); // each by the name of the folder it is in
+        office.sort();
+        QCOMPARE(office, (QStringList {u"Addin Manager"_s, u"Visio"_s, u"Word"_s}));
+        // Never the exact match, typed in full or not.
+        {
+            const ParsedQuery query = ws::parseQuery(u"7-Zip 25.01 (x64)"_s);
+            const NameMatcher matcher(query);
+            const std::vector<AppHit> hits = searchApps(apps, query, matcher, {});
+            QCOMPARE(hits.size(), std::size_t {1});
+            QVERIFY(!hits.front().exact);
+        }
+        // Read again: the same names, not twice.
+        addInstalledNames(apps, installed);
+        QCOMPARE(apps[2].installedNames.size(), std::size_t {1});
+
+        // Its own name is not given to it again.
+        AppList again {app(u"7-Zip File Manager"_s, uR"(C:\Program Files\7-Zip\7zFM.exe)"_s)};
+        addInstalledNames(again, {{u"7-zip file manager"_s, uR"(C:\Program Files\7-Zip)"_s}});
+        QVERIFY(again[0].installedNames.empty());
+
+        // A folder many programs share names none of them.
+        const QStringList shared {uR"(C:\Program Files)"_s, uR"(C:\Users\me)"_s};
+        QVERIFY(sharedInstallFolder(uR"(c:\program files)"_s, shared));
+        QVERIFY(sharedInstallFolder(uR"(D:\)"_s, shared));
+        QVERIFY(!sharedInstallFolder(uR"(C:\Program Files\7-Zip)"_s, shared));
+        QVERIFY(!sharedInstallFolder(uR"(D:\PDFgear)"_s, shared));
     }
 
     void historyCounts()

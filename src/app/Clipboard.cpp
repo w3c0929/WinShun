@@ -4,6 +4,7 @@
 #include "ColorText.h"
 #include "Diagnostics.h"
 #include "FileIconProvider.h"
+#include "FileText.h"
 #include "HotkeySteps.h"
 #include "TextField.h"
 #include "platform/ComWorker.h"
@@ -28,6 +29,7 @@
 #include <QQuickWindow>
 #include <QScreen>
 #include <QStyleHints>
+#include <QThreadPool>
 #include <QUrl>
 
 #include <algorithm>
@@ -50,6 +52,8 @@ constexpr qint64 kClipboardWaitMs = 300; // held open longer than that, the past
 constexpr qint64 kFieldWaitMs = 1000;
 constexpr qsizetype kPreviewChars = 20000; // a preview shows no more; pasting takes all of it
 constexpr int kPreviewFiles = 50;
+constexpr std::size_t kFileHeadBytes = 64 * 1024; // of a copied text file, for its preview
+constexpr std::size_t kFileHeads = 8;
 
 const QStringList kSeparators {u"newline"_s, u"space"_s, u"comma"_s, u"tab"_s, u"none"_s};
 
@@ -112,6 +116,13 @@ Clipboard::Clipboard(ClipStore* store, ClipboardWatcher* watcher, QObject* paren
             if (again)
                 m_rereading.insert(id);
             m_recognizer.read(id, m_store->imagePath(id));
+        }
+        // Read before QR codes were (until 0.27): those left without words
+        // once more, for the code one of them may be (GitHub #305).
+        if (!again && m_store->value(u"codes"_s) != u"1") {
+            for (const qint64 id : m_store->wordlessPictures())
+                m_recognizer.read(id, m_store->imagePath(id));
+            m_store->setValue(u"codes"_s, u"1"_s);
         }
     });
     if (m_store->isOpen())
@@ -1587,6 +1598,41 @@ void Clipboard::turnOn()
     emit turnOnRequested();
 }
 
+const Clipboard::FileHead* Clipboard::fileHead(qint64 clip, const QFileInfo& file) const
+{
+    const QString path = file.absoluteFilePath();
+    const qint64 size = file.size();
+    const QDateTime modified = file.lastModified();
+    const auto same = [&](const FileHead& head) { return head.path == path && head.size == size && head.modified == modified; };
+    if (const auto known = std::ranges::find_if(m_fileHeads, same); known != m_fileHeads.end())
+        return known->ready ? &*known : nullptr;
+    if (m_fileHeads.size() >= kFileHeads)
+        m_fileHeads.erase(m_fileHeads.begin());
+    m_fileHeads.push_back({path, size, modified});
+    // readHead never opens a cloud file that is not on this computer, and says NotText of a binary one.
+    QThreadPool::globalInstance()->start([self = QPointer<Clipboard>(const_cast<Clipboard*>(this)), clip, path, size, modified] {
+        const filetext::Head head = filetext::readHead(QDir::toNativeSeparators(path).toStdWString(), kFileHeadBytes);
+        const bool text = head.status == filetext::Status::Ok;
+        const QString shown = text ? head.text.left(kPreviewChars) : QString();
+        const bool cut = text && (head.cut || shown.size() < head.text.size());
+        QMetaObject::invokeMethod(qApp, [self, clip, path, size, modified, shown, cut] {
+            if (!self)
+                return;
+            const auto mine = std::ranges::find_if(self->m_fileHeads, [&](const FileHead& head) {
+                return head.path == path && head.size == size && head.modified == modified;
+            });
+            if (mine == self->m_fileHeads.end())
+                return; // others were asked for since: read again if this one is
+            mine->ready = true;
+            mine->text = shown;
+            mine->cut = cut;
+            if (!shown.isEmpty())
+                self->m_model.fileRead(clip);
+        }, Qt::QueuedConnection);
+    });
+    return nullptr;
+}
+
 QVariantMap Clipboard::preview(int row) const
 {
     const Clip* c = m_model.at(row);
@@ -1601,6 +1647,16 @@ QVariantMap Clipboard::preview(int row) const
         {u"formatted"_s, c->html || c->rtf},
         {u"swatch"_s, ClipModel::colorOf(*c)},
     };
+    if (c->masked) { // dots in place of whatever it is, where it came from and when below them
+        map.insert(u"kind"_s, static_cast<int>(ClipKind::Text));
+        map.insert(u"formatted"_s, false);
+        map.insert(u"swatch"_s, QString());
+        map.insert(u"text"_s, u"\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"_s);
+        map.insert(u"more"_s, 0);
+        map.insert(u"size"_s, tr("已遮住"));
+        map.insert(u"group"_s, QString());
+        return map;
+    }
     if (c->kind == ClipKind::Text) {
         if (const std::optional<QColor> color = colortext::parse(c->text)) {
             QVariantList notations;
@@ -1643,8 +1699,14 @@ QVariantMap Clipboard::preview(int row) const
         // a PDF...); local files only: a network one could keep it waiting.
         if (!paths.isEmpty() && isLocal(paths.constFirst())) {
             const QFileInfo first(paths.constFirst());
-            if (first.isFile())
+            if (first.isFile()) {
                 map.insert(u"thumbnail"_s, FileIconProvider::thumbnailUrl(paths.constFirst()));
+                // One file copied: what it says, as the search's preview shows a text file (GitHub #324).
+                if (const FileHead* head = paths.size() == 1 ? fileHead(c->id, first) : nullptr; head && !head->text.isEmpty()) {
+                    map.insert(u"fileText"_s, head->text);
+                    map.insert(u"fileCut"_s, head->cut);
+                }
+            }
         }
         if (c->kind == ClipKind::Files)
             size = tr("%Ln 个文件", nullptr, static_cast<int>(paths.size()));
@@ -1708,6 +1770,11 @@ QVariantList Clipboard::menuItems(int row) const
             items.append(entry(EditImage, c.animated ? tr("编辑首帧") : tr("编辑"), QString(), u"\uE70F"_s));
         if (c.kind == ClipKind::Image)
             items.append(entry(OpenImage, tr("打开图片"), QString(), u""_s));
+    }
+    {
+        // Kept from view: a password copied, a screen being shared or recorded (GitHub #260).
+        const bool masked = std::all_of(clips.begin(), clips.end(), [](const Clip* c) { return c->masked; });
+        items.append(entry(Mask, masked ? tr("显示内容") : tr("遮住内容"), QString(), masked ? u"\uE890"_s : u"\uED1A"_s)); // View, Hide
     }
     if (!many) // a line of the user's own before it, found by the search
         items.append(entry(EditNote, clips.front()->note.isEmpty() ? tr("加备注…") : tr("改备注…"), QString(), u"\uE70F"_s)); // Edit
@@ -1792,6 +1859,15 @@ void Clipboard::trigger(int row, int action)
     case NewGroup:
         emit groupNameRequested(row, 0);
         break;
+    case Mask: {
+        const std::vector<const Clip*> clips = targets(row);
+        std::vector<qint64> ids;
+        for (const Clip* c : clips)
+            ids.push_back(c->id);
+        m_store->setMasked(ids, !std::all_of(clips.begin(), clips.end(), [](const Clip* c) { return c->masked; }));
+        m_model.refreshTimes(); // the rows show it, and the preview is asked for again
+        break;
+    }
     case EditNote:
         if (const std::vector<const Clip*> clips = targets(row); clips.size() == 1)
             emit noteRequested(clips.front()->id, clips.front()->note);

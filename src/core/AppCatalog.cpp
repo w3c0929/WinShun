@@ -8,6 +8,7 @@
 #include "Wtf8.h"
 
 #include <QCollator>
+#include <QDir>
 #include <QFile>
 #include <QHash>
 #include <QMetaObject>
@@ -47,6 +48,9 @@ constexpr auto kMaxAge = 10min;
 // An abbreviation typed in full ("ps" for Photoshop): below a name typed in
 // full (115), above a program's file name (109).
 constexpr int kAbbreviationScore = 112;
+// What a match in the name Windows lists the software under is worth less
+// than one in the app's own name: the apps named so themselves come first.
+constexpr int kInstalledNamePenalty = 8;
 
 // System.AppUserModel.* properties that propkey.h has no constants for.
 constexpr GUID kAppUserModel {0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}};
@@ -226,7 +230,7 @@ bool sameApps(const AppList& a, const AppList& b)
 {
     return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const AppInfo& x, const AppInfo& y) {
         return x.name == y.name && x.id == y.id && x.target == y.target && x.arguments == y.arguments
-            && x.kind == y.kind && x.elevatable == y.elevatable;
+            && x.kind == y.kind && x.elevatable == y.elevatable && x.installedNames == y.installedNames;
     });
 }
 
@@ -604,6 +608,12 @@ std::vector<AppHit> searchApps(
             if (const int s = matcher.matchName(app.program); s >= 0)
                 better(s - 6, -1); // "winword" finds Word, a little below a name match
         }
+        // "office ltsc" finds Word and Excel, below every app named so itself:
+        // "visio" is Visio first, then the suite it was installed with.
+        for (const std::string& installed : app.installedNames) {
+            if (const int s = matcher.matchName(installed); s >= 0)
+                better(std::max(s - kInstalledNamePenalty, 1), -1);
+        }
         // Whole or not at all: "p" and "s" are in too many names to pull in Photoshop.
         const bool abbreviation
             = !initials.empty() && std::ranges::find(app.abbreviations, initials) != app.abbreviations.end();
@@ -933,6 +943,190 @@ void AppCatalog::publish(const Outcome& outcome)
         start(again, checkAgain);
 }
 
+namespace {
+
+// Where installed programs are listed: the same keys Settings > 应用 reads.
+const std::pair<HKEY, const wchar_t*> kUninstallKeys[] {
+    {HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall"},
+    {HKEY_LOCAL_MACHINE, L"SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"},
+    {HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall"},
+};
+
+std::wstring registryString(HKEY key, const wchar_t* name)
+{
+    DWORD size = 0; // %VARS% expanded: RRF_NOEXPAND is not asked for
+    if (::RegGetValueW(key, nullptr, name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, nullptr, &size) != ERROR_SUCCESS
+        || size < sizeof(wchar_t))
+        return {};
+    std::wstring value(size / sizeof(wchar_t), L'\0');
+    if (::RegGetValueW(key, nullptr, name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, value.data(), &size)
+        != ERROR_SUCCESS)
+        return {};
+    while (!value.empty() && value.back() == L'\0')
+        value.pop_back();
+    return value;
+}
+
+DWORD registryDword(HKEY key, const wchar_t* name)
+{
+    DWORD value = 0;
+    DWORD size = sizeof value;
+    return ::RegGetValueW(key, nullptr, name, RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS ? value : 0;
+}
+
+// An install folder as installers write it: in quotes, with a closing '\'.
+QString installFolder(const std::wstring& text)
+{
+    QString folder = QString::fromStdWString(text).trimmed();
+    if (folder.size() >= 2 && folder.startsWith(u'"') && folder.endsWith(u'"'))
+        folder = folder.mid(1, folder.size() - 2).trimmed();
+    folder = QDir::toNativeSeparators(folder);
+    while (folder.size() > 3 && folder.endsWith(u'\\'))
+        folder.chop(1);
+    return folder;
+}
+
+bool inFolder(const QString& path, const QString& folder)
+{
+    return !folder.isEmpty() && path.size() > folder.size() && path[folder.size()] == u'\\'
+        && path.startsWith(folder, Qt::CaseInsensitive);
+}
+
+// A subkey added or removed updates the key's write time: how an install,
+// an uninstall or an update (a new version's key) shows here.
+void addUninstallKeys(Fnv1a& hash)
+{
+    for (const auto& [root, path] : kUninstallKeys) {
+        win32::UniqueKey key;
+        if (::RegOpenKeyExW(root, path, 0, KEY_READ, key.out()) != ERROR_SUCCESS)
+            continue;
+        DWORD subkeys = 0;
+        FILETIME written {};
+        if (::RegQueryInfoKeyW(key.get(), nullptr, nullptr, nullptr, &subkeys, nullptr, nullptr, nullptr, nullptr, nullptr,
+                nullptr, &written)
+            == ERROR_SUCCESS) {
+            hash.add(&subkeys, sizeof subkeys);
+            hash.add(&written, sizeof written);
+        }
+    }
+}
+
+} // namespace
+
+bool sharedInstallFolder(const QString& folder, const QStringList& shared)
+{
+    return folder.size() <= 3 || shared.contains(folder, Qt::CaseInsensitive); // "C:\" too
+}
+
+std::vector<InstalledName> installedNames()
+{
+    // Where many programs live side by side: an installer that gave one of
+    // these as its own folder would lend its name to all of them.
+    QStringList shared;
+    for (const char* variable : {"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles",
+             "CommonProgramFiles(x86)", "ProgramData", "SystemRoot", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PUBLIC"}) {
+        if (const QString folder = installFolder(qEnvironmentVariable(variable).toStdWString()); !folder.isEmpty())
+            shared.append(folder);
+    }
+    for (const QString& inside : {uR"(\System32)"_s, uR"(\SysWOW64)"_s})
+        shared.append(installFolder(qEnvironmentVariable("SystemRoot").toStdWString()) + inside);
+    shared.append(installFolder(qEnvironmentVariable("LOCALAPPDATA").toStdWString()) + uR"(\Programs)"_s);
+
+    std::vector<InstalledName> names;
+    for (const auto& [root, path] : kUninstallKeys) {
+        win32::UniqueKey list;
+        if (::RegOpenKeyExW(root, path, 0, KEY_READ, list.out()) != ERROR_SUCCESS)
+            continue;
+        DWORD subkeys = 0;
+        if (::RegQueryInfoKeyW(list.get(), nullptr, nullptr, nullptr, &subkeys, nullptr, nullptr, nullptr, nullptr, nullptr,
+                nullptr, nullptr)
+            != ERROR_SUCCESS)
+            continue;
+        for (DWORD i = 0; i < subkeys; ++i) {
+            wchar_t child[256];
+            DWORD length = static_cast<DWORD>(std::size(child));
+            if (::RegEnumKeyExW(list.get(), i, child, &length, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
+                continue;
+            win32::UniqueKey entry;
+            if (::RegOpenKeyExW(list.get(), child, 0, KEY_READ, entry.out()) != ERROR_SUCCESS)
+                continue;
+            // A component, an update or a patch: not software of its own.
+            if (registryDword(entry.get(), L"SystemComponent") != 0
+                || !registryString(entry.get(), L"ParentKeyName").empty())
+                continue;
+            const std::wstring name = registryString(entry.get(), L"DisplayName");
+            const QString folder = installFolder(registryString(entry.get(), L"InstallLocation"));
+            if (name.empty() || folder.isEmpty() || sharedInstallFolder(folder, shared))
+                continue;
+            names.push_back({QString::fromStdWString(name), folder});
+        }
+    }
+    std::ranges::sort(names, [](const InstalledName& a, const InstalledName& b) {
+        return a.folder != b.folder ? a.folder < b.folder : a.name < b.name;
+    });
+    return names;
+}
+
+namespace {
+
+// Whether `name` holds `word` as words of its own: "Microsoft Visio LTSC 2024"
+// holds "Visio", not "Vis".
+bool holdsWord(const QString& name, const QString& word)
+{
+    if (word.size() < 2)
+        return false;
+    for (qsizetype at = name.indexOf(word, 0, Qt::CaseInsensitive); at >= 0;
+        at = name.indexOf(word, at + 1, Qt::CaseInsensitive)) {
+        const qsizetype end = at + word.size();
+        if ((at == 0 || !name[at - 1].isLetterOrNumber()) && (end == name.size() || !name[end].isLetterOrNumber()))
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+void addInstalledNames(AppList& apps, const std::vector<InstalledName>& names)
+{
+    const auto installedIn = [](const AppInfo& app, const InstalledName& one) {
+        return app.kind == AppKind::Desktop && inFolder(app.target, one.folder);
+    };
+    // A name that says one of the folder's apps is that app's alone: Visio is
+    // installed in Office's folder under "Microsoft Visio LTSC 2024", and
+    // "visio" is not to bring Word and Excel along.
+    std::vector<bool> ofOneApp(names.size());
+    for (std::size_t n = 0; n < names.size(); ++n) {
+        ofOneApp[n] = std::ranges::any_of(apps, [&](const AppInfo& app) {
+            return installedIn(app, names[n]) && holdsWord(names[n].name, app.name);
+        });
+    }
+    for (AppInfo& app : apps) {
+        app.installedNames.clear();
+        if (app.kind != AppKind::Desktop || app.target.isEmpty())
+            continue;
+        qsizetype deepest = 0;
+        for (const InstalledName& one : names) {
+            if (one.folder.size() > deepest && inFolder(app.target, one.folder))
+                deepest = one.folder.size();
+        }
+        if (deepest == 0)
+            continue;
+        for (std::size_t n = 0; n < names.size(); ++n) {
+            const InstalledName& one = names[n];
+            if (one.folder.size() != deepest || !inFolder(app.target, one.folder))
+                continue;
+            if (ofOneApp[n] && !holdsWord(one.name, app.name))
+                continue;
+            if (sameFolded(one.name, app.name) || app.otherNames.contains(one.name, Qt::CaseInsensitive))
+                continue; // found by that name already, and at its full worth
+            std::string name = wtf8::fromUtf16(wtf8::view(one.name));
+            if (std::ranges::find(app.aliases, name) == app.aliases.end()
+                && std::ranges::find(app.installedNames, name) == app.installedNames.end())
+                app.installedNames.push_back(std::move(name));
+        }
+    }
+}
+
 AppList loadInstalledApps(const std::stop_token& stop)
 {
     const ComApartment com;
@@ -982,6 +1176,11 @@ AppList loadInstalledApps(const std::stop_token& stop)
     if (stop.stop_requested())
         return {};
 
+    // Settings > 应用's names for the software in these folders: what people
+    // type for it ("7-Zip 25.01", "Microsoft Office") is often not what its
+    // shortcut is called ("7-Zip File Manager", "Word").
+    addInstalledNames(apps, installedNames());
+
     QCollator collator; // the user's locale: Chinese names in pinyin order on a Chinese system
     collator.setNumericMode(true);
     collator.setCaseSensitivity(Qt::CaseInsensitive);
@@ -1022,6 +1221,8 @@ quint64 installedAppsFingerprint()
             hash.add(&written, sizeof written);
         }
     }
+    // The installed software's own names come from the Uninstall keys too.
+    addUninstallKeys(hash);
     return hash.value();
 }
 

@@ -358,7 +358,13 @@ bool isDarkMode()
 // D3D11 backend logged a warning about that on every resize after.
 void prepareBackdrop(QQuickWindow* window)
 {
-    if (!SystemTheme::backdropAvailable()) // the setting can turn it on later
+    // Without Mica too (Windows 10) wherever Direct3D draws: a swap chain
+    // without alpha is not scaled, and the frame in which its size and the
+    // window's differ (every time the window grows or shrinks) had the
+    // difference filled black: the box typed open in a folder flashed black
+    // under its rows (GitHub #234). With alpha it is a composition swap
+    // chain, stretched for that frame. The software renderer has none.
+    if (!SystemTheme::backdropAvailable() && QQuickWindow::graphicsApi() != QSGRendererInterface::Direct3D11)
         return;
     const auto keepAlpha = [window] {
         QSurfaceFormat format = window->requestedFormat();
@@ -793,7 +799,9 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
                 : tr("Windows 没能打开它。请稍后再试，或按 Ctrl+Shift+Enter 以管理员身份运行。"));
     });
     connect(m_launcher.get(), &Launcher::namesShown, this, [this] {
-        if (m_launcherReveal.pending())
+        if ((m_typedRows == TypedRows::FirstFrame || m_typedRows == TypedRows::Awaited) && !m_launcher->typingAwaited())
+            typedRowsShown(); // the rows of the key typed in a folder: seen with the frame that has them
+        else if (m_launcherReveal.pending())
             armReveal();
     });
     connect(m_launcher.get(), &Launcher::webSettingsRequested, this, &App::showWebSettings);
@@ -907,18 +915,8 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
             showPluginSettings(u"winshun.localsend"_s);
         }
     });
-    connect(m_clipboard.get(), &Clipboard::lanSendRequested, this, [this](const QString& text, const QStringList& files) {
-        if (!m_pluginHost || !m_pluginHost->catalog().enabled(u"winshun.localsend"_s)
-            || localSendNeedsUpdate(m_pluginHost->catalog())) {
-            hideClipboard(false);
-            showPluginSettings(u"winshun.localsend"_s);
-            return;
-        }
-        if (m_launcher->panel())
-            setPanel(false);
-        showLauncher();
-        m_launcher->runPluginCommand(u"winshun.localsend"_s, u"send"_s, u"clipboard"_s, text, files);
-    });
+    connect(m_clipboard.get(), &Clipboard::lanSendRequested, this,
+        [this](const QString& text, const QStringList& files) { lanSend(text, files, true); });
     // The history changed (a screenshot taken, removed, put back): the
     // launcher's screenshot list too, while it shows it.
     connect(m_clipboard.get(), &Clipboard::categoriesChanged, m_launcher.get(), &Launcher::refreshScreenshots);
@@ -1078,6 +1076,7 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
     };
     callbacks.commandReceived = [this](const QString& command) { handleCommand(command); };
     // Explorer's "search here" (WinShunSearch.exe): the folder typed, words to come.
+    callbacks.lanSend = [this](const QStringList& files) { lanSend({}, files, false); };
     callbacks.searchHere = [this](const QString& folder) {
         m_launcher->noteSearchHere(folder); // not indexed (GitHub #52): searched on the disk all the same
         showLauncher(folder.endsWith(u'\\') ? folder + u' ' : folder + u"\\ "_s);
@@ -1366,7 +1365,11 @@ bool App::createWindow()
         EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, &App::foregroundChanged, 0, 0, WINEVENT_OUTOFCONTEXT);
     // Fresh rows coming in while it slides in beat a launcher that comes
     // late: keep the existing 60 ms fallback even if no frame arrives.
-    m_launcherReveal.setWindow(m_window, 60ms, [this] { revealLauncher(); });
+    // 200 ms for a frame that does not come. It was 60: with the software
+    // renderer (a PC without a usable GPU, a virtual machine) the first
+    // frame takes longer, and the window was seen before anything was drawn
+    // in it, white or black (seen on Windows 10 in a VM, GitHub #234).
+    m_launcherReveal.setWindow(m_window, 200ms, [this] { revealLauncher(); });
     connect(m_window, &QQuickWindow::frameSwapped, this, [this] {
         if (m_prewarming.load())
             QMetaObject::invokeMethod(this, &App::finishPrewarm, Qt::QueuedConnection);
@@ -1381,6 +1384,13 @@ bool App::createWindow()
     m_typingCap.setSingleShot(true);
     m_typingCap.setTimerType(Qt::PreciseTimer);
     connect(&m_typingCap, &QTimer::timeout, this, &App::deliverTyping);
+    m_typedRowsCap.setSingleShot(true);
+    m_typedRowsCap.setInterval(kTypedRowsCap);
+    m_typedRowsCap.setTimerType(Qt::PreciseTimer);
+    connect(&m_typedRowsCap, &QTimer::timeout, this, [this] {
+        if (m_typedRows == TypedRows::Awaited)
+            revealLauncher(); // a slow search, or keys that typed nothing: seen as it is
+    });
     m_handoffWatch.setSingleShot(true);
     m_handoffWatch.setInterval(500ms);
     connect(&m_handoffWatch, &QTimer::timeout, this, &App::endHandoff);
@@ -1509,6 +1519,7 @@ void App::applyWebSearch()
     m_pluginHost->setWebKeywords(keywords);
     m_launcher->setWebShortcuts(shortcuts);
     m_launcher->setWebSuggestions(!shortcuts.isEmpty() && m_settings.webSuggestions);
+    m_launcher->setWebFallback(m_settings.webFallback);
 }
 
 bool App::openWebSearch(const QString& query)
@@ -1945,6 +1956,7 @@ void App::applySettings(bool initial)
     m_launcher->setKeyboardHints(m_settings.shortcutHelp, m_settings.footerHints);
     m_launcher->setMaxRows(m_settings.maxRows);
     m_launcher->setPureSearch(m_settings.pureSearch && !m_launcherOverBox);
+    m_launcher->setPanelListsAll(m_settings.panelListsAll);
     tellLauncherFolders();
     m_clipboard->setNumberHints(m_settings.numberHints);
     const QString clipboardSize = m_settings.clipboardUiSize == u"follow" ? m_settings.uiSize : m_settings.clipboardUiSize;
@@ -3028,7 +3040,9 @@ void App::deliverTyping()
     const searchtyping::LauncherState state {
         .active = m_window->isActive(),
         .fieldFocused = focus && (focus == m_searchField || focus->objectName() == u"panelSearchField"),
-        .revealed = m_window->isVisible() && !m_launcherReveal.pending() && !m_prewarming.load() && !isCloaked(window),
+        // Drawn and kept from view for the rows of these very keys (TypedRows): as revealed.
+        .revealed = m_window->isVisible() && !m_launcherReveal.pending() && !m_prewarming.load()
+            && (!isCloaked(window) || m_typedRows == TypedRows::Awaited),
         .preparing = m_launcherOpening,
         .routed = launcherRouted(),
     };
@@ -3256,12 +3270,20 @@ void App::showFolderSearch(HWND root, HWND tab, bool opus, const QString& folder
     // On the monitor of the list typed in (a lister over two may have the other on the other).
     // Folder typing uses a compact panel in the file list's bottom-right
     // corner, even when there is space beside the window (GitHub #234).
-    const RECT list = opus ? RECT {} : folderview::explorerFileList(root, tab);
+    const RECT list = opus ? RECT {} : folderview::explorerTypingCorner(root, tab);
     // Pinned and up, or the panel: where it is (showLauncher).
     const QString kept = m_launcher->pinned() && launcherShown() ? u"pinned"_s : m_launcher->panel() ? u"panel"_s : QString();
     m_launcher->awaitTyping(prefix); // the key typed follows: nothing listed before it
     showLauncher(prefix, {}, false, screenOf(::MonitorFromWindow(opus ? tab : root, MONITOR_DEFAULTTONEAREST)), opus ? tab : root, opus,
         list);
+    // Opened anew: not to be seen until the rows of the key typed are in it
+    // (revealLauncher), so it comes up once, as tall as it will be. Seen
+    // empty first, it grew a moment later, and a window without Mica
+    // (Windows 10) showed black where it had grown until its next frame
+    // (GitHub #234).
+    m_typedRows = m_launcherReveal.pending() ? TypedRows::FirstFrame : TypedRows::No;
+    m_typedRowsClock.start();
+    qInfo() << "Folder typing: the box is" << (m_typedRows == TypedRows::No ? "up already" : "kept from view for the key's rows");
     m_typingOrigin = {root, tab, opus, folder}; // after showLauncher, which clears it
     // For the journal's typing-handoff: how it was placed, the window typed
     // in, its file list and the work area (screen pixels), the box where Qt
@@ -4305,6 +4327,20 @@ void App::refreshIndexFolder(bool measure)
     m_settingsEditor->setIndexFolderState(state);
 }
 
+void App::lanSend(const QString& text, const QStringList& files, bool fromHistory)
+{
+    if (!m_pluginHost || !m_pluginHost->catalog().enabled(u"winshun.localsend"_s)
+        || localSendNeedsUpdate(m_pluginHost->catalog())) {
+        hideClipboard(false);
+        showPluginSettings(u"winshun.localsend"_s);
+        return;
+    }
+    if (m_launcher->panel())
+        setPanel(false);
+    showLauncher();
+    m_launcher->runPluginCommand(u"winshun.localsend"_s, u"send"_s, fromHistory ? u"clipboard"_s : u"files"_s, text, files);
+}
+
 void App::handleCommand(const QString& command)
 {
     if (command == u"toggle") {
@@ -5281,6 +5317,8 @@ void App::showLauncher(const QString& query, const std::optional<taskbar::Spot>&
     // or caretRequested places the caret; replay then loses the first key.
     // The typing callers deliver again after this preparation has finished.
     QScopedValueRollback opening(m_launcherOpening, true);
+    m_typedRows = TypedRows::No; // showFolderSearch sets it after
+    m_typedRowsCap.stop();
     m_launcher->setFolderSearch(avoid && (inside || !::IsRectEmpty(&orInto)));
     cancelTypingSelection();
     m_typingOrigin = {}; // opened anew: set again by typingFolderKnown when that is why
@@ -6252,10 +6290,45 @@ void App::armReveal()
     m_launcherReveal.arm();
 }
 
+// The rows of the words typed in a file manager are in the box, which was
+// kept from view for them (TypedRows): seen with its next frame, at the
+// height they give it.
+void App::typedRowsShown()
+{
+    // Whether its first frame has been drawn or not (the keys go into it
+    // kHandoffCapMs after it is active all the same): a frame from now on,
+    // which has the rows and the height they give it. With longer for that
+    // frame than an opening gets: revealed before it, the window showed its
+    // empty first frame in the size of the rows.
+    qInfo().noquote() << u"Folder typing: the key's rows are in after %1 ms, seen with the frame after next"_s.arg(m_typedRowsClock.elapsed());
+    m_typedRows = TypedRows::Settling;
+    m_typedRowsCap.stop();
+    m_launcherReveal.begin(kTypedRowsFrame);
+    armReveal();
+}
+
 void App::revealLauncher()
 {
     if (!m_window)
         return;
+    if (m_typedRows != TypedRows::No)
+        qInfo().noquote() << u"Folder typing: a frame after %1 ms, state %2"_s.arg(m_typedRowsClock.elapsed()).arg(int(m_typedRows));
+    if (m_typedRows == TypedRows::FirstFrame && launcherShown()) { // the rows are not in yet (typedRowsShown)
+        // Drawn, and ready for the keys typed: they go into it now, and it
+        // is seen with their rows (typedRowsShown), or after kTypedRowsCap.
+        m_typedRows = TypedRows::Awaited;
+        m_typedRowsCap.start();
+        deliverTyping();
+        return;
+    }
+    if (m_typedRows == TypedRows::Settling && launcherShown()) {
+        m_typedRows = TypedRows::No;
+        m_launcherReveal.begin(kTypedRowsFrame);
+        armReveal();
+        return;
+    }
+    m_typedRows = TypedRows::No;
+    m_typedRowsCap.stop();
     // Slide in before revealing, unless it was hidden before its first frame.
     if (m_window->isVisible())
         m_placement->slideIn();
@@ -6707,7 +6780,7 @@ void App::hideLauncher()
     if (clipboardUnderLauncher())
         hideClipboard(false);
     // Slid out, unless it was never seen (still waiting for its first frame).
-    if (m_launcherReveal.pending() || m_prewarming.load()) {
+    if (m_launcherReveal.pending() || m_prewarming.load() || m_typedRows == TypedRows::Awaited) {
         finishHidingLauncher();
         return;
     }
@@ -6743,6 +6816,8 @@ void App::finishHidingLauncher()
         return;
     m_window->hide();
     m_launcherReveal.cancel();
+    m_typedRows = TypedRows::No;
+    m_typedRowsCap.stop();
     win::setCloaked(m_window, false); // hidden before its first frame: drop the cloak
     m_launcher->handleHidden();
     if (m_launcher->panel())
@@ -8160,6 +8235,7 @@ void App::pluginsChanged()
     const bool update = localSendNeedsUpdate(m_pluginHost->catalog());
     if (m_clipboard)
         m_clipboard->setLanSendAvailable(m_pluginHost->catalog().enabled(u"winshun.localsend"_s) && !update, update);
+    shellmenu::applyLanSend(m_pluginHost->catalog().enabled(u"winshun.localsend"_s) && !update);
     applyScreenshots();
     if (!m_pluginRecoveryBusy && moved::missing(m_pluginHost->catalog(), m_settings.plugins).isEmpty())
         setPluginRecoveryState({});
@@ -8236,6 +8312,7 @@ void App::applyPlugins()
     applySwitches();
     const bool update = localSendNeedsUpdate(catalog);
     m_clipboard->setLanSendAvailable(catalog.enabled(u"winshun.localsend"_s) && !update, update);
+    shellmenu::applyLanSend(catalog.enabled(u"winshun.localsend"_s) && !update);
     applyScreenshots(); // and 截图历史
     restorePrintScreen();
 }

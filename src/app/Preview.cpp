@@ -52,6 +52,7 @@
 #include "platform/FileDialog.h"
 #include "platform/FileManagers.h"
 #include "platform/FolderViewHit.h"
+#include "platform/TypeToSearch.h"
 #include "platform/WindowEffects.h"
 #include "platform/Foreground.h"
 #include "platform/MessageWindow.h"
@@ -3103,8 +3104,16 @@ void checkSearchMenuKeys(Launcher& launcher, QQuickWindow* window, FilePreview& 
         key(Qt::Key_O, Qt::ControlModifier);
         QInputMethodEvent resumedComposition(u"shi"_s, {});
         QCoreApplication::sendEvent(field, &resumedComposition);
-        check(!menuOpen() && launcher.query() == query, mode + u"starting IME composition closes the menu"_s);
+        // The letters being composed are searched where they will go (GitHub #157); the field keeps its own text.
+        check(!menuOpen() && field->property("text").toString() == query
+                && launcher.query() == query.left(1) + u"shi"_s + query.mid(1),
+            mode + u"starting IME composition closes the menu, its letters in the search"_s);
         QCoreApplication::sendEvent(field, &ended);
+        check(launcher.query() == query, mode + u"a composition given up leaves the query as typed"_s);
+        QElapsedTimer rowsBack; // the rows of the query as typed, for the checks below
+        rowsBack.start();
+        while (launcher.searching() && rowsBack.elapsed() < 2000)
+            pump(10);
         for (const auto modifier : {Qt::ControlModifier | Qt::ShiftModifier, Qt::ControlModifier | Qt::AltModifier,
                  Qt::ControlModifier | Qt::MetaModifier}) {
             key(Qt::Key_O, modifier);
@@ -6387,8 +6396,8 @@ bool checkAppsGrid(QQmlEngine* qmlEngine, const QDir& output)
     settle(window, 6);
     check(launcher.scope() == Launcher::Apps && tabs->property("current").toInt() == 3, u"Shift+Tab from 全部 is not 应用, shown current"_s);
     check(grid->isVisible() && window->property("view").value<QObject*>() == grid, u"the grid is not the window's view"_s);
-    check(strip->property("shown").toBool() && strip->property("apps").toBool() && strip->property("chips").toList().size() == 3,
-        u"the strip does not show the apps' three choices"_s);
+    check(strip->property("shown").toBool() && strip->property("apps").toBool() && strip->property("chips").toList().size() == 4,
+        u"the strip does not show the apps' four choices"_s);
     const QList<int> counts = launcher.appCounts();
     say(u"apps: %1 frequent, %2 favorites, %3 in all; %4 columns"_s.arg(counts.value(0)).arg(counts.value(1)).arg(counts.value(2))
             .arg(grid->property("columns").toInt()));
@@ -6443,6 +6452,16 @@ bool checkAppsGrid(QQmlEngine* qmlEngine, const QDir& output)
     say(u"jsq: %1 tile(s), first \"%2\""_s.arg(count()).arg(count() > 0 ? name(0) : QString()));
     check(count() > 0 && count() < counts.value(2), u"the pinyin initials jsq did not narrow the apps"_s);
     check(saveGrab(window, output.filePath(u"apps-typed.png"_s)), u"render the typed search"_s);
+    // What Windows lists the software under, not what its shortcuts are called
+    // (said, not checked: it is this PC's own software).
+    for (const QString& typed : {u"microsoft office"_s, u"office ltsc"_s, u"visio"_s, u"blender foundation"_s}) {
+        launcher.setQuery(typed);
+        settle(window, 4);
+        QStringList found;
+        for (int i = 0; i < qMin(count(), 6); ++i)
+            found.append(name(i));
+        say(u"%1: %2 tile(s): %3"_s.arg(typed).arg(count()).arg(found.join(u", "_s)));
+    }
     launcher.setQuery(u"zzzqqqxxx"_s);
     settle(window, 4);
     check(count() == 0 && !window->property("showEmptyState").toBool(), u"nothing found is not the grid's own line alone"_s);
@@ -6450,6 +6469,34 @@ bool checkAppsGrid(QQmlEngine* qmlEngine, const QDir& output)
     launcher.setQuery({});
     settle(window, 4);
     check(count() == counts.value(2), u"the words gone, the apps are not all back"_s);
+
+    // 运行: the windows open now as tiles (this probe's own are not among
+    // them), no star on them, narrowed by the words typed; kept as the choice.
+    launcher.setAppsView(Launcher::RunningApps);
+    settle(window, 6);
+    const int running = launcher.appCounts().value(Launcher::RunningApps);
+    say(u"运行: %1 window(s), first \"%2\""_s.arg(running).arg(count() > 0 ? name(0) : QString()));
+    check(running > 0 && count() >= running, u"运行 does not list the open windows"_s);
+    check(count() == 0 || launcher.results()->data(launcher.results()->index(0), ResultModel::WindowResultRole).toBool(),
+        u"运行's tiles are not windows"_s);
+    // The notification-area icons no window stands for come after them.
+    for (int i = running; i < count(); ++i) {
+        check(launcher.results()->data(launcher.results()->index(i), ResultModel::TrayAppRole).toBool(),
+            u"运行's tiles after the windows are not tray icons"_s);
+    }
+    check(QSettings(stateFile, QSettings::IniFormat).value(u"Search/AppsView"_s).toString() == u"running", u"运行 was not kept as the choice"_s);
+    check(saveGrab(window, output.filePath(u"apps-running.png"_s)), u"render 运行"_s);
+    grid->setProperty("currentIndex", qMin(1, count() - 1));
+    pump(1700); // past a tick: the same windows are not laid out again
+    check(grid->property("currentIndex").toInt() == qMin(1, count() - 1), u"运行's tick took the selection back to the first tile"_s);
+    launcher.setQuery(u"zzzqqqxxx"_s);
+    settle(window, 4);
+    check(count() == 0, u"words no window has still list windows"_s);
+    launcher.setQuery({});
+    key(Qt::Key_Tab, Qt::ControlModifier);
+    check(launcher.appsView() == Launcher::FrequentApps, u"Ctrl+Tab from 运行 is not 常用"_s);
+    launcher.setAppsView(Launcher::AllApps);
+    settle(window, 4);
 
     // The panel has no grid: 应用 gives way to 全部 there, and is back with the box.
     launcher.setPanel(true);
@@ -7781,6 +7828,7 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
     }
     if (!window || !launcher) return false;
     const QString prefix = folder + u"\\ "_s;
+    int lowTall = 0; // the box with kFolderTypingMany rows in a window low on the screen
     const auto search = [&](const QString& words, int count) {
         launcher->setQuery(prefix + words);
         waiting.restart();
@@ -7818,10 +7866,13 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
     RECT searchRect {}, sourceRect {};
     ::GetWindowRect(reinterpret_cast<HWND>(window->winId()), &searchRect);
     ::GetWindowRect(root, &sourceRect);
-    const RECT fileList = folderview::explorerFileList(root, tab);
+    const RECT fileList = folderview::explorerTypingCorner(root, tab);
     check(searchRect.right <= sourceRect.right && searchRect.left >= sourceRect.left
-            && searchRect.top >= fileList.top && searchRect.bottom <= fileList.bottom,
+            && searchRect.top >= fileList.top && searchRect.bottom <= fileList.bottom + 1, // Qt rounds its top and its height each
         "compact search stays inside the originating Explorer file area");
+    report.insert(u"compact_box"_s, QJsonArray {int(searchRect.left), int(searchRect.top), int(searchRect.right), int(searchRect.bottom)});
+    report.insert(u"compact_list"_s, QJsonArray {int(fileList.left), int(fileList.top), int(fileList.right), int(fileList.bottom)});
+    report.insert(u"compact_window"_s, QJsonArray {int(sourceRect.left), int(sourceRect.top), int(sourceRect.right), int(sourceRect.bottom)});
     check(window->width() <= 460, "folder search uses a compact width");
     check(field && field->property("text").toString() == u"follow_"_s,
         "folder input shows only the query, keeping its path out of editable text");
@@ -8063,7 +8114,7 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
     pump(600);
     settle(window, 3);
     {
-        const RECT list = folderview::explorerFileList(root, secondTab);
+        const RECT list = folderview::explorerTypingCorner(root, secondTab);
         RECT box {}, client {};
         ::GetWindowRect(reinterpret_cast<HWND>(window->winId()), &box);
         ::GetClientRect(root, &client);
@@ -8071,9 +8122,21 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
         const int gap = qRound(windowavoidance::kExplorerListGap * (window->screen() ? window->screen()->devicePixelRatio() : 1.0));
         check(box.left >= client.left && box.top >= client.top && box.right <= client.right && box.bottom <= client.bottom,
             "too large to keep clear of: the box is inside the Explorer window");
-        check(std::abs(list.right - box.right - gap) <= 2 && box.bottom <= list.bottom - gap + 2,
-            "too large to keep clear of: in the bottom right corner of its file list, the rows ending at its bottom");
+        check(std::abs(list.right - box.right - gap) <= 2
+                && std::abs(std::min(client.bottom, area.bottom) - box.bottom) <= 2,
+            "too large to keep clear of: at the right of its file list, down to the window's bottom (over the status bar)");
         check(box.left != area.left || box.top != area.top, "too large to keep clear of: not at the top left of the screen");
+        // Low on the screen, its rows have the room it opened with above it,
+        // not what is left under its top (GitHub #234).
+        const bool many = search(u"many_"_s, kFolderTypingMany);
+        settle(window, 3);
+        RECT grown {};
+        ::GetWindowRect(reinterpret_cast<HWND>(window->winId()), &grown);
+        lowTall = window->height();
+        check(many && std::abs(grown.bottom - box.bottom) <= 1, "low on the screen: grown with its rows, its bottom where it was");
+        report.insert(u"low_grown_height"_s, lowTall);
+        launcher->setQuery(prefix);
+        pump(200);
         report.insert(u"centred_explorer_list"_s, QJsonArray {int(list.left), int(list.top), int(list.right - list.left),
             int(list.bottom - list.top)});
         report.insert(u"centred_explorer_box"_s, QJsonArray {int(box.left), int(box.top), int(box.right - box.left),
@@ -8153,10 +8216,13 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
         check(launcher->results()->count() == 0 && !launcher->searching(),
             "opened by typing: nothing is listed before the words typed");
         if (both) {
-            check(!::IntersectRect(&overlap, &box, &bars.vertical) && !::IntersectRect(&overlap, &box, &bars.horizontal),
-                "with scroll bars: the box is over neither");
-            check(std::abs(bars.vertical.left - box.right - gap) <= 2 && std::abs(bars.horizontal.top - box.bottom - gap) <= 2,
-                "with scroll bars: against the one on the right and the one at the bottom");
+            RECT client {};
+            ::GetClientRect(root, &client);
+            ::MapWindowPoints(root, nullptr, reinterpret_cast<POINT*>(&client), 2);
+            check(!::IntersectRect(&overlap, &box, &bars.vertical), "with scroll bars: the box is not over the one on the right");
+            check(std::abs(bars.vertical.left - box.right - gap) <= 2
+                    && std::abs(std::min(client.bottom, area.bottom) - box.bottom) <= 2,
+                "with scroll bars: against the one on the right, down to the window's bottom");
         }
         {
             const int shortBox = box.bottom - box.top;
@@ -8170,6 +8236,41 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
             report.insert(u"grow_changes"_s, watch.changes);
             report.insert(u"grow_bottoms"_s, QJsonArray {int(watch.highest), int(watch.lowest), int(box.bottom)});
             ::GetWindowRect(reinterpret_cast<HWND>(window->winId()), &box);
+        }
+        // Opened by a key whose rows come while it is still kept from view:
+        // first seen with them, as tall as they make it (GitHub #234).
+        {
+            app.hideLauncher();
+            pump(300);
+            ::SetForegroundWindow(root);
+            app.showFolderSearch(root, secondTab, false, folder);
+            const HWND own = reinterpret_cast<HWND>(window->winId());
+            waiting.restart();
+            while (window->height() == 0 && waiting.elapsed() < 200)
+                pump(5);
+            pump(80); // its first frame is drawn; the key's rows are awaited (App::kTypedRowsCap is 700 ms)
+            const bool held = window->isVisible() && isCloaked(own);
+            const int emptyHeight = window->height();
+            launcher->setQuery(prefix + u"many_"_s);
+            int seenAt = 0;
+            waiting.restart();
+            while (waiting.elapsed() < 2000) {
+                pump(2);
+                if (!isCloaked(own)) {
+                    seenAt = window->height();
+                    break;
+                }
+            }
+            const bool rows = launcher->results()->count() == kFolderTypingMany;
+            BottomWatch watch(own);
+            settle(window, 3);
+            pump(300);
+            check(held, "opened by a key typed: kept from view until that key's rows are in it");
+            check(seenAt > emptyHeight && rows, "first seen with the rows of the key typed, taller than the empty box");
+            check(window->height() == seenAt, "seen once, at its final height: it does not grow after");
+            check(lowTall == seenAt, "low on the screen: as tall with as many rows as anywhere");
+            report.insert(u"typed_reveal"_s, QJsonArray {held, emptyHeight, seenAt, window->height(), int(watch.changes)});
+            ::GetWindowRect(own, &box);
         }
         const auto rectOf = [](const RECT& r) { return QJsonArray {int(r.left), int(r.top), int(r.right - r.left), int(r.bottom - r.top)}; };
         report.insert(u"scrollbars_vertical"_s, rectOf(bars.vertical));

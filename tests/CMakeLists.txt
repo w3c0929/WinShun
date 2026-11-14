@@ -1366,8 +1366,10 @@ set_tests_properties(tst_explorertabs PROPERTIES
 # winshun.bookmarks (src/bookmarks-plugin/Bookmarks), built in again: reading
 # Bookmarks files, the folder text, percent-decoding, matching, scoring,
 # the 50-row cap and the "nothing found" rows.
-qt_add_executable(tst_bookmarks tst_bookmarks.cpp ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin/Bookmarks.cpp)
-target_include_directories(tst_bookmarks PRIVATE ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin ${PROJECT_SOURCE_DIR}/src/plugins-sdk)
+qt_add_executable(tst_bookmarks tst_bookmarks.cpp ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin/Bookmarks.cpp
+    ${PROJECT_SOURCE_DIR}/src/core/Pinyin.cpp ${PROJECT_SOURCE_DIR}/src/core/PinyinTable.cpp)
+target_include_directories(tst_bookmarks PRIVATE ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin ${PROJECT_SOURCE_DIR}/src/plugins-sdk
+    ${PROJECT_SOURCE_DIR}/src/core)
 target_link_libraries(tst_bookmarks PRIVATE winshun_options Qt6::Test)
 set_target_properties(tst_bookmarks PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_bookmarks COMMAND tst_bookmarks)
@@ -1586,4 +1588,15 @@ target_link_libraries(tst_capturekeys PRIVATE Qt6::Gui Qt6::Test)
 set_target_properties(tst_capturekeys PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_capturekeys COMMAND tst_capturekeys -o -,txt)
 set_tests_properties(tst_capturekeys PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# PrtScn taken from the Snipping Tool and kept (#322, src/capture/PrintScreen and
+# the registry watch the screenshot plugin keeps it with): on a key of its own
+# under HKCU\Software\WinShunTest, never the real Control Panel\Keyboard.
+qt_add_executable(tst_printscreen tst_printscreen.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/RegistryWatch.cpp)
+target_include_directories(tst_printscreen PRIVATE ${PROJECT_SOURCE_DIR}/src/app/platform ${PROJECT_SOURCE_DIR}/src/core)
+target_link_libraries(tst_printscreen PRIVATE wscapture Qt6::Core Qt6::Test advapi32 user32)
+set_target_properties(tst_printscreen PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_printscreen COMMAND tst_printscreen -o -,txt)
+set_tests_properties(tst_printscreen PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")

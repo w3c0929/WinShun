@@ -567,6 +567,9 @@ Launcher::Launcher(IndexService* index, AppCatalog* apps, SystemCatalog* places,
         emit statusChanged();
     });
 
+    m_runningTick.setInterval(1500ms);
+    connect(&m_runningTick, &QTimer::timeout, this, &Launcher::runningTicked);
+
     m_statusPoll.setInterval(500ms); // live item count while the index is being built
     connect(&m_statusPoll, &QTimer::timeout, this, [this] {
         if (m_index->state() != IndexService::State::Ready || m_index->isRefreshing())
@@ -995,8 +998,16 @@ void Launcher::setTypingFolder(const QString& prefix)
 
 void Launcher::awaitTyping(const QString& text)
 {
-    m_typingAwaited = true;
     m_awaitedText = text.trimmed();
+    setTypingAwaited(true);
+}
+
+void Launcher::setTypingAwaited(bool awaited)
+{
+    if (m_typingAwaited == awaited)
+        return;
+    m_typingAwaited = awaited;
+    emit typingAwaitedChanged();
 }
 
 void Launcher::setFolderSearch(bool enabled)
@@ -1494,6 +1505,42 @@ void Launcher::setWebShortcuts(const WebShortcuts& shortcuts)
         search();
 }
 
+void Launcher::setWebFallback(bool on)
+{
+    if (on == m_webFallback)
+        return;
+    m_webFallback = on;
+    if (m_window && m_window->isVisible() && m_scope == All && !searchText().isEmpty())
+        search();
+}
+
+// Nothing found for words typed in 全部: the row that searches the web for
+// them, with the first site of the user's list that searches (the one the
+// OCR's 网页搜索 uses too). Not for what is not plain words to look up: a
+// folder typed in or a path, a filter, a regular expression, a mistake in
+// the query, a command's or a site's keyword (those have their own rows).
+std::optional<SearchResult> Launcher::webFallbackRow() const
+{
+    const QString words = m_query.trimmed();
+    if (!m_webFallback || m_scope != All || m_panel || m_folderSearch || m_keyword || m_filePrefix || m_regexMode
+        || words.isEmpty() || !m_queryError.isEmpty() || !m_typingPrefix.isEmpty() || !typedQuick().filters.isEmpty()
+        || typedKeyword(m_web, m_query) || words.contains(QDir::separator()) || words.contains(u'/'))
+        return std::nullopt;
+    const qsizetype first = defaultWebSearch(m_web);
+    if (first < 0)
+        return std::nullopt;
+    const WebShortcut& web = m_web[first];
+    SearchResult r; // as SearchEngine's fromWeb makes a search's row
+    r.name = web.name;
+    r.path = webPath(web.keyword, words);
+    r.app = AppKind::Web;
+    r.target = web.searchUrl(words);
+    r.keyword = web.keyword;
+    r.words = words;
+    r.icon = web.iconRef();
+    return r;
+}
+
 void Launcher::setWebSuggestions(bool on)
 {
     if (on == m_webSuggestions)
@@ -1693,6 +1740,15 @@ void Launcher::setPureSearch(bool on)
     m_pureSearch = on;
     emit resultOptionsChanged();
     if (m_window && m_window->isVisible() && m_query.trimmed().isEmpty())
+        search();
+}
+
+void Launcher::setPanelListsAll(bool on)
+{
+    if (m_panelListsAll == on)
+        return;
+    m_panelListsAll = on;
+    if (m_panel && m_window && m_window->isVisible() && m_query.trimmed().isEmpty())
         search();
 }
 
@@ -2005,7 +2061,6 @@ void Launcher::setAppsView(AppsView view)
     if (m_appsView == view)
         return;
     m_appsView = view;
-    ++m_appsRefreshToken; // a 运行 refresh waiting is moot
     if (!m_stateFile.isEmpty()) {
         QSettings(m_stateFile, QSettings::IniFormat)
             .setValue(u"Search/AppsView"_s,
@@ -2029,6 +2084,20 @@ void Launcher::cycleAppsView(int delta)
     const int size = static_cast<int>(std::size(kOrder));
     setAppsView(kOrder[((at + delta) % size + size) % size]);
 }
+
+namespace {
+
+// What tells one list of windows from another: which they are, and their titles.
+QStringList windowKeys(const SearchResults& windows)
+{
+    QStringList keys;
+    keys.reserve(windows.size());
+    for (const SearchResult& w : windows)
+        keys.append(w.path + u'\n' + w.name);
+    return keys;
+}
+
+} // namespace
 
 // search() in 程序: the apps the strip chose, as rows; narrowed by what is
 // typed, matched and ranked as 全部 does apps (names, pinyin, other names,
@@ -2067,8 +2136,9 @@ void Launcher::showApps()
     QStringList highlights;
     QList<int> counts {0, 0, 0, 0};
     const QString text = searchText();
-    SearchResults running = windowsearch::snapshot(); // 运行: the windows open on this desktop
+    const SearchResults running = windowsearch::snapshot(); // 运行: the windows open on this desktop
     counts[RunningApps] = static_cast<int>(running.size());
+    m_runningShown = windowKeys(running);
     bool keepRows = false;
     if (m_appsView == RunningApps)
     {
@@ -2077,6 +2147,10 @@ void Launcher::showApps()
         // 运行's notification-area icons below the windows, narrowed by the
         // same words (refreshTray keeps the UI Automation walk rare).
         refreshTray();
+        m_trayAllNames.clear();
+        m_trayAllNames.reserve(m_trayItems.size());
+        for (const ws::traysearch::TrayItem& item : m_trayItems)
+            m_trayAllNames.append(item.name);
         m_trayShown.clear();
         if (text.trimmed().isEmpty()) {
             for (int i = 0; i < static_cast<int>(m_trayItems.size()); ++i)
@@ -2146,7 +2220,7 @@ void Launcher::showApps()
         // A normal desktop always has tray icons, so an empty list means the
         // walk failed this moment (a desktop switch, Explorer restarting).
         // Said once in a while, for a report that says the page was empty.
-        if (rows.isEmpty() && m_window && m_window->isVisible()
+        if (rows.isEmpty() && text.trimmed().isEmpty() && m_window && m_window->isVisible()
             && (m_runningEmptyTick == 0 || rowsClock - m_runningEmptyTick >= 10000)) {
             m_runningEmptyTick = rowsClock;
             qWarning("WinShun: 运行 came back empty (windows %lld, tray %lld)",
@@ -2239,14 +2313,39 @@ void Launcher::showApps()
         showRows(std::move(rows), std::move(highlights));
         refreshStatus();
     }
-    if (m_scope == Apps && m_appsView == RunningApps && m_window && m_window->isVisible()) {
-        const quint64 token = ++m_appsRefreshToken;
-        QTimer::singleShot(1500, this, [this, token] {
-            if (token != m_appsRefreshToken || m_scope != Apps || m_appsView != RunningApps || !m_window
-                || !m_window->isVisible())
-                return;
-            showApps(); // windows were opened or closed meanwhile
-        });
+    // 运行 follows the windows while it is looked at: one opened, closed or
+    // named anew, or an icon come or gone, is in the grid within the tick.
+    if (m_appsView == RunningApps && m_window && m_window->isVisible())
+        m_runningTick.start();
+    else
+        m_runningTick.stop();
+}
+
+// The tick of 运行. The grid is made again only when the windows or the tray
+// icons are not the ones shown: rows given again for nothing would take the
+// selection back to the first tile under the arrow keys.
+void Launcher::runningTicked()
+{
+    if (m_scope != Apps || m_appsView != RunningApps || !m_window || !m_window->isVisible()) {
+        m_runningTick.stop();
+        return;
+    }
+    if (windowKeys(windowsearch::snapshot()) != m_runningShown) {
+        showApps();
+        return;
+    }
+    // The icons come and go too (a program exits, one hides itself): walked
+    // no more often than the grid's own refresh did, and the grid made again
+    // only when one did.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (m_trayRefreshTick == 0 || now - m_trayRefreshTick >= 3000) {
+        refreshTray();
+        QStringList names;
+        names.reserve(m_trayItems.size());
+        for (const ws::traysearch::TrayItem& item : m_trayItems)
+            names.append(item.name);
+        if (names != m_trayAllNames)
+            showApps();
     }
 }
 
@@ -2418,6 +2517,16 @@ const AppInfo* bestTrayApp(const ws::traysearch::TrayItem& item, const AppList& 
             for (const auto& alias : app.aliases) {
                 if (loose(QString::fromStdString(alias))) {
                     score = 60 + QString::fromStdString(alias).length();
+                    break;
+                }
+            }
+        }
+        if (score < 0) {
+            // What Windows lists the software under ("Microsoft Office LTSC
+            // 2024"): below its own names, and never the exact one.
+            for (const auto& installed : app.installedNames) {
+                if (loose(QString::fromStdString(installed))) {
+                    score = 40 + QString::fromStdString(installed).length();
                     break;
                 }
             }
@@ -2710,7 +2819,7 @@ void Launcher::retranslate()
 
 void Launcher::handleHidden()
 {
-    m_typingAwaited = false;
+    setTypingAwaited(false);
     rememberQuery();
     closePreview(); // the wish to have it stays (m_previewWanted) ...
     if (!m_previewRestore)
@@ -2876,9 +2985,13 @@ void Launcher::search(bool more)
 
     // The words typed in a file manager are on their way (awaitTyping).
     if (m_typingAwaited && m_query.trimmed() != m_awaitedText)
-        m_typingAwaited = false;
+        setTypingAwaited(false);
     const bool pureEmpty = (m_pureSearch && !m_panel && !m_folderSearch && !m_inTaskbarBox && m_query.trimmed().isEmpty())
-        || (m_typingAwaited && m_scope != Content);
+        || (m_typingAwaited && m_scope != Content)
+        // The panel as set to list nothing of itself (GitHub #321): a filter
+        // chosen, or a kind of file, is something asked for, and lists.
+        || (m_panel && !m_panelListsAll && m_scope != Content && m_query.trimmed().isEmpty() && !filtersActive()
+            && !(m_scope == Files && m_fileType >= 0));
     if (m_scope == Content || pureEmpty) {
         m_engine->cancel();
         m_requestId = 0;
@@ -2999,6 +3112,10 @@ void Launcher::search(bool more)
 // moves the selection back to the first one; a refresh keeps it.
 void Launcher::showRows(SearchResults rows, QStringList highlights)
 {
+    if (rows.isEmpty()) {
+        if (std::optional<SearchResult> web = webFallbackRow())
+            rows.append(std::move(*web)); // Enter looks the words up instead of 没有找到 (GitHub #320)
+    }
     // The site's suggestions under its search's row, as they were: a new
     // list for the next word typed keeps them until the site answers for it
     // (rows coming and going at every key would make the window jump).
