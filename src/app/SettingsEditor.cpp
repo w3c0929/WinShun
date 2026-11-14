@@ -1124,7 +1124,7 @@ void SettingsEditor::setUiFont(const QString& family)
     const QString trimmed = family.trimmed();
     if (m_settings.uiFont == trimmed || !uifont::available(trimmed))
         return;
-    m_settings.uiFont = trimmed;
+    m_settings.uiFont = uifont::listedFamily(trimmed); // as the list has it: the picker shows it chosen
     commit();
 }
 
@@ -1887,11 +1887,11 @@ void SettingsEditor::setClipboardUiSize(const QString& size)
     commit();
 }
 
-void SettingsEditor::setClipboardLargePictures(bool on)
+void SettingsEditor::setClipboardPictureSize(const QString& size)
 {
-    if (m_settings.clipboardLargePictures == on)
+    if (m_settings.clipboardPictureSize == size || (size != u"small" && size != u"standard" && size != u"large"))
         return;
-    m_settings.clipboardLargePictures = on;
+    m_settings.clipboardPictureSize = size;
     commit();
 }
 

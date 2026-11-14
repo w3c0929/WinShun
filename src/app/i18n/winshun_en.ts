@@ -1055,8 +1055,8 @@
         <translation>Dense</translation>
     </message>
     <message>
-        <source>大图片缩略图</source>
-        <translation>Large picture thumbnails</translation>
+        <source>图片缩略图</source>
+        <translation>Picture thumbnails</translation>
     </message>
     <message>
         <source>开在光标上方时翻转</source>
@@ -2106,6 +2106,18 @@
     <message>
         <source>不填则由 Windows 决定；路径不用加引号</source>
         <translation>Leave blank to let Windows choose. Do not quote the path.</translation>
+    </message>
+    <message>
+        <source>显示在文件和文件夹的右键菜单里</source>
+        <translation>Show in the right-click menu of files and folders</translation>
+    </message>
+    <message>
+        <source>在资源管理器里右键文件或文件夹，“Win顺 命令”里选它，就把完整路径交给 {query}；Windows 11 在“显示更多选项”里</source>
+        <translation>Right-click a file or a folder in Explorer and pick it under "WinShun commands": its full path goes to {query}. On Windows 11 it is under "Show more options"</translation>
+    </message>
+    <message>
+        <source>命令里要有 {query}，用来接收右键的文件或文件夹</source>
+        <translation>The command needs {query}, which receives the file or folder right-clicked</translation>
     </message>
     <message>
         <source>关键词后面的字用来搜索文件</source>
@@ -6526,8 +6538,16 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>place;position;order;sort;jump to top;stay;fixed order;after paste</translation>
     </message>
     <message>
-        <source>大图片缩略图</source>
-        <translation>Large picture thumbnails</translation>
+        <source>图片缩略图</source>
+        <translation>Picture thumbnails</translation>
+    </message>
+    <message>
+        <source>小：图片那一行和别的一样高；大：缩略图能看清细节，不用打开预览</source>
+        <translation>Small: a picture's row is as high as any other. Large: thumbnails big enough to make out, without the preview</translation>
+    </message>
+    <message>
+        <source>缩略图;图片;截图;放大;看清;细节;等高;一样高;行高;整齐</source>
+        <translation>thumbnail;picture;image;screenshot;larger;details;same height;equal;row height;tidy</translation>
     </message>
     <message>
         <source>缩略图;图片;截图;放大;看清;细节</source>

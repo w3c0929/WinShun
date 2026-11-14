@@ -35,6 +35,18 @@ constexpr const wchar_t* kPasteFileKeys[] {
     L"Software\\Classes\\Directory\\Background\\shell\\WinShun.PasteFile",
 };
 
+// Where 贴到屏幕 goes: the files Windows knows as pictures (their PerceivedType),
+// whatever program they open with.
+constexpr const wchar_t* kPinPictureKeys[] {
+    L"Software\\Classes\\SystemFileAssociations\\image\\shell\\WinShun.PinPicture",
+};
+
+// Where Win顺 命令 › goes: any file, any folder.
+constexpr const wchar_t* kCommandsKeys[] {
+    L"Software\\Classes\\*\\shell\\WinShun.Commands",
+    L"Software\\Classes\\Directory\\shell\\WinShun.Commands",
+};
+
 std::wstring readString(HKEY root, const std::wstring& key, const wchar_t* name)
 {
     DWORD bytes = 0;
@@ -72,7 +84,9 @@ struct Stub {
 
 // Sets the verb at `keys` to run `arguments` with the stub (`on`), or takes
 // away the verbs there that start this copy's stub or one that is gone.
-void setVerbs(std::span<const wchar_t* const> keys, bool on, std::wstring_view title, std::wstring_view arguments)
+// `each`: with several items chosen the verb stays, run once an item.
+void setVerbs(std::span<const wchar_t* const> keys, bool on, std::wstring_view title, std::wstring_view arguments,
+    bool each = false)
 {
     const Stub stub;
     if (on && ::GetFileAttributesW(stub.path.c_str()) == INVALID_FILE_ATTRIBUTES)
@@ -98,7 +112,7 @@ void setVerbs(std::span<const wchar_t* const> keys, bool on, std::wstring_view t
         // Empty space has nothing selected, so "Single" hides the verb there
         // (0.8.0 wrote it everywhere; take it back off).
         if (std::wstring_view(key).find(L"\\Background\\") == std::wstring_view::npos)
-            changed |= writeString(key, L"MultiSelectModel", L"Single");
+            changed |= writeString(key, L"MultiSelectModel", each ? L"Document" : L"Single");
         else
             changed |= deleteValue(key, L"MultiSelectModel");
         changed |= writeString(commandKey, nullptr, command);
@@ -124,6 +138,62 @@ void applyPasteFile(bool on)
     // verb that has it differs, so it is written again without.
     setVerbs(kPasteFileKeys, on, explorerlang::pasteFileTitle(explorerlang::windowsIsEnglish()),
         L"--paste-file \"%V\"");
+}
+
+void applyPinPicture(bool on)
+{
+    setVerbs(kPinPictureKeys, on, explorerlang::pinPictureTitle(explorerlang::windowsIsEnglish()),
+        L"--pin-picture \"%1\"", true);
+}
+
+void applyCommands(const QList<MenuCommand>& commands)
+{
+    const Stub stub;
+    const bool on = !commands.isEmpty();
+    if (on && ::GetFileAttributesW(stub.path.c_str()) == INVALID_FILE_ATTRIBUTES)
+        return; // a build without it (run from the build folder)
+    const std::wstring title(explorerlang::commandsTitle(explorerlang::windowsIsEnglish()));
+    // All that is written, in one line: compared with what was, so that a start
+    // with the same commands writes nothing and tells Explorer nothing.
+    std::wstring state = stub.path + L'|' + title;
+    for (const MenuCommand& c : commands)
+        state += L'|' + c.id.toStdWString() + L'=' + c.title.toStdWString();
+    bool changed = false;
+    for (const wchar_t* key : kCommandsKeys) {
+        const std::wstring was = readString(HKEY_CURRENT_USER, key, L"WinShunState");
+        if (!on) {
+            // Only ours, or a copy's that is gone (as setVerbs).
+            const std::wstring program = was.substr(0, was.find(L'|'));
+            if (!program.empty()
+                && (scoop::sameCopy(QString::fromStdWString(program), QString::fromStdWString(stub.path))
+                    || ::GetFileAttributesW(program.c_str()) == INVALID_FILE_ATTRIBUTES))
+                changed |= ::RegDeleteTreeW(HKEY_CURRENT_USER, key) == ERROR_SUCCESS;
+            continue;
+        }
+        if (was == state)
+            continue;
+        ::RegDeleteTreeW(HKEY_CURRENT_USER, key); // the commands of before, however many
+        writeString(key, L"MUIVerb", title);
+        writeString(key, L"Icon", stub.folder + L"\\WinShun.exe,0");
+        // A cascade: its entries are the verbs under shell. Empty, and there all the same
+        // (writeString leaves out what reads as it is already, as a value not there does).
+        ::RegSetKeyValueW(HKEY_CURRENT_USER, key, L"SubCommands", REG_SZ, L"", sizeof(wchar_t));
+        // With several chosen each is run with the command, as Explorer's own 打开 does.
+        writeString(key, L"MultiSelectModel", L"Document");
+        int number = 0;
+        for (const MenuCommand& c : commands) {
+            wchar_t name[8]; // in the user's order: Explorer lists the verbs by their keys
+            ::swprintf_s(name, L"%03d", ++number);
+            const std::wstring verb = std::wstring(key) + L"\\shell\\" + name;
+            writeString(verb, L"MUIVerb", c.title.toStdWString());
+            writeString(verb + L"\\command", nullptr,
+                L"\"" + stub.path + L"\" --run-command " + c.id.toStdWString() + L" \"%1\"");
+        }
+        writeString(key, L"WinShunState", state);
+        changed = true;
+    }
+    if (changed)
+        ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
 }
 
 void applyLanSend(bool on)
