@@ -4853,6 +4853,18 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>apps;programs;icons;grid;launchpad;launcher</translation>
     </message>
     <message>
+        <source>运行里的托盘程序</source>
+        <translation>Tray programs in 运行</translation>
+    </message>
+    <message>
+        <source>“应用 › 运行”也列出通知区域里没有窗口的图标，“全部”搜索也能找到它们；关掉后不读取托盘图标，只列窗口</source>
+        <translation>Apps › Running also lists the notification-area icons that have no window, and 全部 finds them too; off, the tray is not read and only windows are listed</translation>
+    </message>
+    <message>
+        <source>托盘;通知区域;图标;运行;全部;tray;notification</source>
+        <translation>tray;notification area;icons;running;all;notification</translation>
+    </message>
+    <message>
         <source>打开结果的备用键</source>
         <translation>Second key to open a result</translation>
     </message>

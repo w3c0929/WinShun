@@ -749,6 +749,15 @@ void Launcher::setSearchKinds(bool apps, bool places)
         search();
 }
 
+void Launcher::setRunningTray(bool on)
+{
+    if (on == m_runningTray)
+        return;
+    m_runningTray = on;
+    if (m_window && m_window->isVisible())
+        search(); // 运行's rows and 全部's tray results follow
+}
+
 void Launcher::setRegexMode(bool on)
 {
     if (on == m_regexMode)
@@ -2146,21 +2155,25 @@ void Launcher::showApps()
         rows = text.trimmed().isEmpty() ? running : windowsearch::matching(running, text, regexTerms());
         // 运行's notification-area icons below the windows, narrowed by the
         // same words (refreshTray keeps the UI Automation walk rare).
-        refreshTray();
-        m_trayAllNames.clear();
-        m_trayAllNames.reserve(m_trayItems.size());
-        for (const ws::traysearch::TrayItem& item : m_trayItems)
-            m_trayAllNames.append(item.name);
         m_trayShown.clear();
-        if (text.trimmed().isEmpty()) {
-            for (int i = 0; i < static_cast<int>(m_trayItems.size()); ++i)
-                m_trayShown.append(i);
-        } else if (const ParsedQuery query = parseQuery(text, regexTerms()); query.error.isEmpty()) {
-            const NameMatcher matcher(query);
-            for (int i = 0; i < static_cast<int>(m_trayItems.size()); ++i) {
-                if (matcher.matchName(m_trayItems[i].name.toStdString()) >= 0)
+        m_trayAllNames.clear();
+        if (m_runningTray) {
+            refreshTray();
+            m_trayAllNames.reserve(m_trayItems.size());
+            for (const ws::traysearch::TrayItem& item : m_trayItems)
+                m_trayAllNames.append(item.name);
+            if (text.trimmed().isEmpty()) {
+                for (int i = 0; i < static_cast<int>(m_trayItems.size()); ++i)
                     m_trayShown.append(i);
+            } else if (const ParsedQuery query = parseQuery(text, regexTerms()); query.error.isEmpty()) {
+                const NameMatcher matcher(query);
+                for (int i = 0; i < static_cast<int>(m_trayItems.size()); ++i) {
+                    if (matcher.matchName(m_trayItems[i].name.toStdString()) >= 0)
+                        m_trayShown.append(i);
+                }
             }
+        } else {
+            m_trayRows.clear(); // off: no tray tile to open
         }
         // Signatures first: the 1.5 s refresh with nothing new must not walk
         // the processes and the apps again for every tile, nor replace the
@@ -2186,7 +2199,7 @@ void Launcher::showApps()
             // The tray icons no window stands for become rows of their own,
             // after the windows: one tile per program, the window's when it
             // has one. Windows first, then the tray's by name.
-            const QStringList processes = processPaths();
+            const QStringList processes = m_trayShown.isEmpty() ? QStringList() : processPaths();
             QVector<ws::traysearch::TrayItem> extra;
             for (const int i : m_trayShown) {
                 if (!trayMatchesWindow(m_trayItems[i], rows))
@@ -2336,7 +2349,9 @@ void Launcher::runningTicked()
     }
     // The icons come and go too (a program exits, one hides itself): walked
     // no more often than the grid's own refresh did, and the grid made again
-    // only when one did.
+    // only when one did. Off, the tray is not read at all.
+    if (!m_runningTray)
+        return;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (m_trayRefreshTick == 0 || now - m_trayRefreshTick >= 3000) {
         refreshTray();
@@ -3080,10 +3095,13 @@ void Launcher::search(bool more)
         // that have none — typing a tray program's name finds it here too.
         const std::shared_ptr<const AppList> apps = m_apps->apps();
         const bool dark = QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
-        request.openWindows = [query = request.text, regex = regexTerms(), apps, dark] {
+        request.openWindows = [query = request.text, regex = regexTerms(), apps, dark,
+                                  tray = m_runningTray] {
             SearchResults windows = windowsearch::matching(windowsearch::snapshot(), query, regex);
-            const SearchResults tray = traySearchRows(query, regex, windows, apps.get(), dark);
-            windows.append(tray);
+            if (tray) {
+                const SearchResults trayRows = traySearchRows(query, regex, windows, apps.get(), dark);
+                windows.append(trayRows);
+            }
             return windows;
         };
     }

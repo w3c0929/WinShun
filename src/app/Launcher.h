@@ -726,6 +726,9 @@ public:
     QString folderKeyword() const { return m_folderKeyword; }
     // 全部 also finds apps, and Windows' settings and switches (Request::apps, places).
     void setSearchKinds(bool apps, bool places);
+    // 运行 also lists the notification-area icons, and 全部 finds them
+    // (Settings::runningTray); off, the tray is not read at all.
+    void setRunningTray(bool on);
     // A chip of the strip: kFoldersChip (文件夹), -1 (不限), or a kind
     // (fileTypes); in 文件 (or 文件夹) from any scope.
     static constexpr int kFoldersChip = -2;
@@ -1385,6 +1388,7 @@ private:
     QStringList m_runningShown; // the windows 运行 was last made from (windowKeys)
     QStringList m_trayAllNames; // the icons it was last made from: one coming or going makes the grid again
     void runningTicked();
+    bool m_runningTray = true; // Settings: the tray icons in 运行 and 全部
     QVector<ws::traysearch::TrayItem> m_trayItems; // 运行's notification-area icons
     QVector<int> m_trayShown; // indices into m_trayItems, as the words narrow them
     QStringList m_trayMenuNames; // the last menu read, by entry, for choosing one

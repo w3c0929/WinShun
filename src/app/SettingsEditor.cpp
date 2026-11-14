@@ -311,6 +311,14 @@ void SettingsEditor::setSearchSystem(bool on)
     commit();
 }
 
+void SettingsEditor::setRunningTray(bool on)
+{
+    if (m_settings.runningTray == on)
+        return;
+    m_settings.runningTray = on;
+    commit();
+}
+
 void SettingsEditor::setRegexMode(bool on)
 {
     if (m_settings.regexMode == on)

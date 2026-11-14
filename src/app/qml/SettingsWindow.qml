@@ -4222,6 +4222,18 @@ Window {
                 }
 
                 SettingRow {
+                    title: qsTr("运行里的托盘程序")
+                    description: qsTr("“应用 › 运行”也列出通知区域里没有窗口的图标，“全部”搜索也能找到它们；关掉后不读取托盘图标，只列窗口")
+                    keywords: qsTr("托盘;通知区域;图标;运行;全部;tray;notification").split(";")
+                    ToggleSwitch {
+                        objectName: "runningTrayToggle"
+                        dpr: window.dpr
+                        checked: window.editor.runningTray
+                        onToggled: (on) => window.editor.runningTray = on
+                    }
+                }
+
+                SettingRow {
                     title: qsTr("不输入时显示")
                     unlocks: [recentItemsRow]
                     keywords: qsTr("最近;最近打开;最近修改;最近使用;历史;recent").split(";")

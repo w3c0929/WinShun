@@ -221,6 +221,9 @@ struct Settings {
     // and switches; off, it finds names and content only (SearchEngine::Request).
     bool searchApps = true;
     bool searchSystem = true;
+    // 运行 also lists the notification-area icons (the tray) no window stands
+    // for, and 全部 finds them; off, the tray is not read at all.
+    bool runningTray = true;
     bool regexMode = false; // the search box's (Launcher::regexMode, Ctrl+R)
     // match | newest | oldest | name | folder | type | largest | smallest
     // (kSortNames): how 文件 and 文件夹 order what they find, by best match,

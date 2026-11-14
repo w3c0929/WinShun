@@ -195,6 +195,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool tabEntersFavoriteFolder READ tabEntersFavoriteFolder WRITE setTabEntersFavoriteFolder NOTIFY changed FINAL)
     Q_PROPERTY(bool searchApps READ searchApps WRITE setSearchApps NOTIFY changed FINAL)
     Q_PROPERTY(bool searchSystem READ searchSystem WRITE setSearchSystem NOTIFY changed FINAL)
+    Q_PROPERTY(bool runningTray READ runningTray WRITE setRunningTray NOTIFY changed FINAL)
     Q_PROPERTY(bool regexMode READ regexMode WRITE setRegexMode NOTIFY changed FINAL)
     Q_PROPERTY(bool thumbnails READ thumbnails WRITE setThumbnails NOTIFY changed FINAL)
     Q_PROPERTY(bool rowDeleteButton READ rowDeleteButton WRITE setRowDeleteButton NOTIFY changed FINAL)
@@ -742,6 +743,8 @@ public:
     void setSearchApps(bool on);
     bool searchSystem() const { return m_settings.searchSystem; }
     void setSearchSystem(bool on);
+    bool runningTray() const { return m_settings.runningTray; }
+    void setRunningTray(bool on);
     bool regexMode() const { return m_settings.regexMode; }
     void setRegexMode(bool on);
     bool thumbnails() const { return m_settings.thumbnails; }

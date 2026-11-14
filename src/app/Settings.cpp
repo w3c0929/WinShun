@@ -968,6 +968,7 @@ void Settings::load()
     rowDeleteButton = readOrDefault(s, u"Results/DeleteButton"_s, d.rowDeleteButton);
     searchApps = readOrDefault(s, u"Results/SearchApps"_s, d.searchApps);
     searchSystem = readOrDefault(s, u"Results/SearchSystem"_s, d.searchSystem);
+    runningTray = readOrDefault(s, u"Results/RunningTray"_s, d.runningTray);
     regexMode = readOrDefault(s, u"Results/RegexMode"_s, d.regexMode);
     if (!s.contains(u"Results/Sort"_s) && s.value(u"Results/SortByModified"_s).toBool())
         s.setValue(u"Results/Sort"_s, u"newest"_s); // 0.6.0's switch: newest first, or best match
@@ -1363,6 +1364,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Results/DeleteButton"_s, rowDeleteButton);
     s.setValue(u"Results/SearchApps"_s, searchApps);
     s.setValue(u"Results/SearchSystem"_s, searchSystem);
+    s.setValue(u"Results/RunningTray"_s, runningTray);
     s.setValue(u"Results/RegexMode"_s, regexMode);
     s.setValue(u"Results/Sort"_s, sort);
     s.setValue(u"Results/StartList"_s, startList);

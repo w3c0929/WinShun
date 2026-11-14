@@ -1936,6 +1936,7 @@ void App::applySettings(bool initial)
     m_launcher->setDoubleClickToOpen(m_settings.doubleClickToOpen);
     m_launcher->setTabEntersFavoriteFolder(m_settings.tabEntersFavoriteFolder);
     m_launcher->setSearchKinds(m_settings.searchApps, m_settings.searchSystem);
+    m_launcher->setRunningTray(m_settings.runningTray);
     m_launcher->setRegexMode(m_settings.regexMode);
     m_launcher->setFolderTyping(m_settings.folderTyping);
     m_launcher->results()->setShowModifiedTime(m_settings.showModifiedTime);
