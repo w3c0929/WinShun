@@ -71,11 +71,13 @@
 #include "platform/DialogJump.h"
 #include "DialogRuleStore.h"
 #include "platform/ExternalPreview.h"
+#include "platform/EverythingServer.h"
 #include "platform/FileManagers.h"
 #include "platform/Foreground.h"
 #include "platform/Http.h"
 #include "platform/HotPages.h"
 #include "platform/IdleTrim.h"
+#include "platform/UiStall.h"
 #include "platform/MemoryReport.h"
 #include "BackgroundStatus.h"
 #include "HealthMonitor.h"
@@ -446,6 +448,7 @@ App::~App()
     // (SettingsWindow.resetForReopen) then, never from inside its destructor.
     if (m_settingsWindow)
         m_settingsWindow->hide();
+    m_uiStall.reset(); // closing may take its time: not a stall
     // The plugins told to go while all they may still ask for is here: a
     // plugin's last call (the screenshot giving its keys back) reaches the
     // tools of setUpAppTools. Left to the host's destructor, that came after
@@ -711,6 +714,11 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
         // What the launcher and the clipboard need to come up stays (HotPages).
         return m_launcherPages->pages().united(m_clipPages->pages());
     });
+    // Stuck, with nothing to say where (GitHub #111): from now on the journal has it.
+    if (diagnostics::enabled()) {
+        m_uiStall = std::make_unique<UiStallWatch>(
+            [](const QString& event, QJsonObject details) { diagnostics::record(event, std::move(details)); });
+    }
     // Loaded, caught up, done reading: emptied now, not at the next recheck.
     connect(m_index.get(), &IndexService::stateChanged, m_idleTrim.get(), &IdleTrim::poke);
     m_launcherPages = std::make_shared<HotPages>();
@@ -1894,6 +1902,13 @@ void App::onPlainHotkey(std::uint32_t vk, bool sent)
 
 void App::applySettings(bool initial)
 {
+    // Answering for Everything (GitHub #40): its window only while the switch is on.
+    if (m_settings.everythingCompat != static_cast<bool>(m_everything)) {
+        if (m_settings.everythingCompat)
+            m_everything = std::make_unique<EverythingServer>([service = m_index.get()] { return service->index(); });
+        else
+            m_everything.reset();
+    }
     // 网络代理 (GitHub #84): for every request over WinHTTP, from the next on. A
     // manual address that is not a good one follows the system's, as the page says.
     if (const proxy::Address address = proxy::parse(m_settings.proxyAddress); m_settings.proxyMode == u"none")
@@ -5629,11 +5644,21 @@ void App::showClipboard()
             // Search/Start must keep their input field too (#179). They can
             // cover ordinary topmost windows, so put the clipboard beside
             // the flyout instead of dismissing it to get the foreground.
-            const bool shellFlyout = win::isShellFlyout(foreground);
+            //
+            // The caret was waited for: another window may be in front by
+            // now (one that was only passing as the hotkey came). The keys
+            // are routed from the one there now, and the paste goes to it;
+            // over the earlier one the window would take no key at all
+            // (GitHub #86).
+            const HWND front = ::GetForegroundWindow();
+            const HWND routed = front == foreground ? target : paste::usableTarget(front);
+            if (front != foreground)
+                m_clipboard->setTarget(front);
+            const bool shellFlyout = win::isShellFlyout(front);
             m_clipDisplayWanted = shellFlyout && m_clipDisplay && m_clipDisplay->ready();
-            keepFocus = target && (startKeyRouting(target) || shellFlyout);
+            keepFocus = routed && (startKeyRouting(routed) || shellFlyout);
             if (shellFlyout && !m_clipDisplayWanted)
-                avoidClipboardShellFlyout(foreground);
+                avoidClipboardShellFlyout(front);
         }
         m_clipboard->handlePlaced(); // the preview, if left open: as wide as there is room for here
         // Cloaked until its first frame: Windows would first put up the

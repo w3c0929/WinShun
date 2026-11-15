@@ -969,6 +969,28 @@ add_test(NAME tst_keyrouter COMMAND tst_keyrouter -o -,txt)
 set_tests_properties(tst_keyrouter PROPERTIES RUN_SERIAL TRUE
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
+# Where the interface was when it stopped answering (GitHub #111): the watch
+# on this test's own thread, made to compute and to wait.
+qt_add_executable(tst_uistall tst_uistall.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/UiStall.cpp)
+target_include_directories(tst_uistall PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
+target_link_libraries(tst_uistall PRIVATE Qt6::Core Qt6::Test user32)
+set_target_properties(tst_uistall PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+add_test(NAME tst_uistall COMMAND tst_uistall -o -,txt)
+set_tests_properties(tst_uistall PROPERTIES RUN_SERIAL TRUE
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# Win顺 answering Everything's queries (GitHub #40): the query read into
+# Win顺's own search, the rows from an index, the bytes of both kinds of
+# list, and the window asked as a program asks Everything's (under a class of
+# the test's own: never the real one).
+qt_add_executable(tst_everything tst_everything.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/EverythingServer.cpp)
+target_include_directories(tst_everything PRIVATE ${PROJECT_SOURCE_DIR}/src/app ${PROJECT_SOURCE_DIR}/src/core)
+target_link_libraries(tst_everything PRIVATE wscore miniz Qt6::Test user32)
+set_target_properties(tst_everything PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+add_test(NAME tst_everything COMMAND tst_everything -o -,txt)
+set_tests_properties(tst_everything PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
 # The drop pie (DropPie): its chips round the middle, the direction that
 # chooses one, and the folders' names shortened to fit.
 qt_add_executable(tst_piegeometry tst_piegeometry.cpp ${PROJECT_SOURCE_DIR}/src/app/PieGeometry.cpp)
@@ -1193,7 +1215,8 @@ add_test(NAME tst_ocrpackage COMMAND tst_ocrpackage)
 qt_add_executable(tst_uifont tst_uifont.cpp ${PROJECT_SOURCE_DIR}/src/app/UiFont.cpp)
 target_include_directories(tst_uifont PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
 set_target_properties(tst_uifont PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
-target_link_libraries(tst_uifont PRIVATE winshun_options Qt6::Quick Qt6::Test)
+target_link_libraries(tst_uifont PRIVATE winshun_options Qt6::Quick Qt6::Test dwrite gdi32 user32)
+target_compile_definitions(tst_uifont PRIVATE WINSHUN_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME tst_uifont_freetype COMMAND tst_uifont)
 set_tests_properties(tst_uifont_freetype PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows:fontengine=freetype")
 add_test(NAME tst_uifont_gdi COMMAND tst_uifont)
@@ -1316,6 +1339,7 @@ add_dependencies(tst_cli ws)
 # overflow, bad input) worth pinning down.
 qt_add_executable(tst_tools tst_tools.cpp
     ${PROJECT_SOURCE_DIR}/src/tools-plugin/Calc.cpp ${PROJECT_SOURCE_DIR}/src/tools-plugin/Units.cpp
+    ${PROJECT_SOURCE_DIR}/src/tools-plugin/CalcHistory.cpp
     ${PROJECT_SOURCE_DIR}/src/tools-plugin/Color.cpp ${PROJECT_SOURCE_DIR}/src/tools-plugin/Codec.cpp)
 target_include_directories(tst_tools PRIVATE ${PROJECT_SOURCE_DIR}/src/tools-plugin)
 target_compile_definitions(tst_tools PRIVATE WINSHUN_TOOLS_MANIFEST="${PROJECT_SOURCE_DIR}/plugins/winshun.tools/plugin.json")

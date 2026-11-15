@@ -1,5 +1,38 @@
 # 踩坑记录
 
+## 界面字体：Windows 列得出来的字体，Qt（FreeType）按名字不一定画得出来（#325 第二轮，2026-11-15）
+
+- **现象**：0.29.0 把界面字体的名单改成问 Windows（`EnumFontFamiliesEx`）之后，选“霞鹜文楷”（常规体）预览不对，重启后是后备字体；它的 Light、Medium 正常。
+- **原因**：FreeType 引擎下，Qt 自己的已装字体名单是拿 Windows 报的名字去注册表 `Fonts` 键里找字体文件，找不到文件的字体就不登记。霞鹜文楷常规体（v1.530）的名称表里，家族名（ID 1）有中文，全名（ID 4）只有英文 “LXGW WenKai”；Light 两个都有中文。于是中文系统上 Windows 报的是 “霞鹜文楷 / LXGW WenKai”，Qt 对不上，这个文件干脆没进名单：`QFont("霞鹜文楷")` 是 Tahoma；`QFont("LXGW WenKai")` 能画，但那是 Light 那个文件按“排版家族名”（ID 16）登记进来的，画出来是**细体**。上一轮（11-14）在虚拟机里看到“LXGW WenKai 画得出来”就当成对了，其实画的是细体，截图上看不出来。
+- **同一类还有很多**：在本机 276 个字体里，FreeType 下按 Windows 列的名字画不出来的有 90 多个，几乎都是 Windows 当成独立家族的字重（Noto Sans SC Medium、Bahnschrift Light、Cascadia Code SemiBold、Segoe UI Variable Text…），Qt 把它们并进了排版家族。以前选它们都是悄悄退回默认字体。
+- **做法**（`UiFont.cpp` 的 `drawnAs`）：先问 Qt 按这个名字画不画得出来（`QFontInfo::exactMatch()`，或 `QRawFont` 的家族名以它开头；GDI 的名字最多 31 个字符，会被截断）。画不出来就自己找文件加载：DirectWrite 的 GDI 互操作（`CreateFontFromLOGFONT` → `IDWriteLocalFontFileLoader::GetFilePathFromKey`）按 GDI 的名字拿到常规和粗体的文件路径，为所有用户装的、只为当前用户装的都行；`addApplicationFont` 之后用 Qt 报的家族名。DirectWrite 没有文件的（字体管理软件临时启用、没安装的）用 `GetFontData` 取字节再加载。加载后那个家族里可能有好几个字重，所以把 GDI 报的字重（`tmWeight`）一起设上。
+- **别踩**：
+  - 判断“Qt 认不认识”不能用 `QFontDatabase::hasFamily()` 一刀切然后只换家族名：那 90 多个“字重家族”会全部变成常规体。
+  - 字重别用 DirectWrite 的 `GetWeight()`：可变字体上它对 “Cascadia Code ExtraLight” 报 700。
+  - 验证字重要比像素：同一句话，常规体的墨量比细体多约 10%（虚拟机里 786,671 对 714,818）。光看截图像不像楷体不够。
+- **没做**：可变字体的“字重家族”（Noto Sans SC Thin 之类）加载后具体落在哪个实例没有逐个验证；设置里的预览只换家族名，不带字重。
+
+## 截图：遮罩一出来固定卡约 2 秒，原因还不知道；日志现在会记调用栈（2026-11-15）
+
+- **现象**（#325 的报告人，Win10 22H2、RX 6800 XT、4K 200%、144 Hz、Win顺 以管理员运行）：按截图键后“黑屏卡一两秒”，或者刚要拖选区时卡一两秒。两周的 `capture-stall` 一共 25 条，其中 15 条是同一个样子：最后一次正常的 tick 就在遮罩第一帧显示出来的那一刻（前后 50 ms 内），然后界面线程 2.06–2.17 秒不应答，恢复时离“遮罩显示”固定 2181–2206 ms；有两次是两段各约 1 秒。只出现在距上次截图 1 分钟以上（或进程启动后第一次）的截图上，连着截的从不卡。改成拷贝呈现（`QT_D3D_NO_FLIP`）之后照样有。
+- **排除了的**：UI Automation 探测（在自己的线程里）、PrtScn 的 `WM_SETTINGCHANGE` 广播（只在改设置时）、截图历史（默认关）、`HotPages` 的后台学习（11-02 还没有它时就有同样的卡顿）。本机（Win11、RTX 4060）和 Win10 虚拟机（WARP）都没复现。
+- **教训**：`capture-stall` 只量了“卡多久”，量了两周还是不知道卡在哪。固定时长说明是在等某个超时或某个固定耗时的东西，这种问题要的是卡住那一刻的调用栈，而且界面线程多半只是在等渲染线程，得连其他线程一起记。现在截图期间有 `ui-stall` / `ui-stall-threads`（architecture.md“运行诊断”）。
+- **拿到新日志后先看**：`ui-stall` 第一条的 `frames` 最里层是哪个系统调用；是 `NtWaitForSingleObject` 且上面是 `Qt6Quick` 的话，去 `ui-stall-threads` 里找名字是 `QSGRenderThread` 的线程和显卡驱动（`atidxx64.dll`、`amdxx64.dll`）的线程。
+
+## 前台内存：图标字体缺字形时 Qt 把所有字体加载一遍；`thread_local` 数组每个线程一份（2026-11-15）
+
+- **现象**：索引 220 万条时，搜索框输入第一个词之后任务管理器里是 152 MB，再搜几个词到 175 MB；其中堆占了近 100 MB。
+- **原因和做法**（数字、测法见 `docs/validation/foreground-memory-20261115/`）：
+  - **图标的 `Text` 不要用 `font.family:` 指定图标字体**。字体里没有那个字形时，Qt 默认到别的字体里找（字体合并），而且是把系统装的字体**挨个加载**一遍才知道都没有：本机 69 个，约 17 MB，加载后不释放。触发它的不是“写错了图标码”，是绑定更新的中间状态：共用的行内按钮换图标时，`text` 先换成了新码、`font.family` 还是上一个图标的。用 `SystemTheme.glyphFont(字体, 磅值)`（风格部件里用 `look.glyphFont(像素)`），它带 `QFont::NoFontMerging`；QML 的 `font.*` 里没有这个开关，只能从 C++ 给整个 `font`。
+  - **`thread_local` 里不要放数组**。程序的线程局部存储是一个模板，Windows 给每个线程复制一份，线程一启动就写进内存，和线程用不用无关。一个 64 KB 的 `static thread_local` 缓冲，169 个线程就是 10.7 MB。要缓冲就在调用时从堆上取，或者用 `thread_local std::vector`（对象本身只有 24 字节）。`--foreground-memory` 探针会检查程序的线程局部存储小于 4 KB。
+  - **全量遍历要读的字段和不读的字段别放在同一个结构里**。文件索引每条 17 字节，搜索只读其中 9 字节（名字位置、所在文件夹、标志），可是内存按页算，隔 17 字节读一下就把整块都带进来了。现在两部分各存一块（`EntryScan`、`EntryLinks`），遍历用 `index.scanChunk(c)`、`index.scan(id)`、`index.parent(id)`；只有走文件夹的子项链、问文件大小才用 `index.entry(id)`（它把两部分拼成一个值返回，不再是指向索引内部的引用）。新写的遍历如果用了 `index.chunk(c)` 或在循环里对每一条调 `index.entry(id)`，另外那 8 字节又会全部进内存。
+  - **`addApplicationFontFromData(file.readAll())` 会让整个字体文件一直留在堆里**，`readAll` 还按倍数长：8.5 MB 的字体占 16 MB。用 `ws::addFontFromFile`（`FontFile.h`），它映射文件。
+- **查的时候踩到的**：
+  - **探针里用 `processEvents()` 转事件，`deleteLater` 的对象永远不删**。列表每次出新结果，旧的行都是 `deleteLater`；它只在“回到一个正在运行的事件循环”时执行，手动 `processEvents()` 不算。结果探针里每搜一轮多 7.6 MB、一直涨，看起来像泄漏，其实正式程序里没有。探针里等待要用 `QEventLoop::exec()`（`ForegroundUseProbe::pump`）。
+  - **umdh 看不到这个进程的堆**（Windows 11 给的是分段堆），`gflags +ust` 设了也没有调用栈。`platform/AllocationTrace` 自己记：改各模块导入表里的 `HeapAlloc`／`HeapFree`。写这种钩子要注意三件事：钩子里不能用 `thread_local`（加载器的线程在线程局部存储建好之前就会分配内存，一读就崩），函数里的 `static` 也不行（它靠线程局部存储判断是否已初始化）；持锁时不能再分配内存；`TlsGetValue` 会清掉调用方的 `GetLastError`，要直接读 TEB 里的槽。
+  - **任务管理器的“内存”是私有工作集**，映射文件的页、已提交但没碰过的页都不算。所以“字体改成映射”省的是私有提交；闲置交还过内存之后，前台那个数字几乎不变。两个数要分开报。
+  - 新旧程序要交替跑，别先跑完一个再跑另一个；别的会话在编译时数字会飘。
+
 ## 闲置后第一次呼出慢：交还内存时把窗口要用的页也交了（2026-11-12，#280）
 
 - **现象**：闲置一会儿后按快捷键，搜索框和剪贴板要等一下才出来，内存紧张的电脑上明显（#280 说 1–2 秒）。本机诊断日志里，交还过内存后的呼出中位数 78 ms、最慢 453 ms，没交还过的是 31 ms。
@@ -5541,3 +5574,20 @@
 - 搜索栏窗口不挂在对话框名下（#95），所以对方程序忙不会拖住我们的按键。
 
 这台机器是 Windows 11、独显、固态盘；反馈者的环境（Windows 10、可能是软件渲染或机械盘）没有条件复现。要继续查，需要对方的版本号、在哪个程序的对话框里、是打字出字慢还是结果出来慢。
+
+## 剪贴板开着却不接键，字打进了前台程序（#86，2026-11-15）
+
+- **现象**：Windows 10 上偶发：`Win+V` 呼出剪贴板后，打的字进了网页或微信，方向键、回车等剪贴板自己的键也不起作用，面板却一直开着。报告人没有再发日志，本机和 Win10 虚拟机都没有复现出原样。
+- **查到的三件事**（都用 `tst_keyrouter` 的实机项在 Windows 11 和 Windows 10 22H2 虚拟机上跑过）：
+  1. **低级钩子应答迟到，这个键就归前台程序**：让 `KeyRouter` 的钩子在回调里睡 1.1–1.5 秒，Windows 等到时限就把键交给前台程序，我们随后返回的“已接走”不算数；接着这个键的松开被我们吃掉，系统以为它还按着，下一次按下走 `already_held` 又漏一次。连着迟到 12 次，Windows 11 和 Windows 10 都**没有**卸掉钩子（以前文档里“超时一次就被悄悄卸掉”的说法在这两个系统上没有复现，录屏那条同理）。
+  2. **钩子真不再被调用时没人发现**：以前只有点一下搜索框才重装。现在路由线程每 250 ms 看一次：`GetLastInputInfo` 比两个钩子最后一次被调用（进、出各盖一次时间戳）晚 500 ms 以上、而前台还是目标窗口，就装一套新的再卸旧的（`hooks_recovered`）。修好第 1 条里“松开被吃掉”的那一半：松开时系统里这个键还按着，说明按下已经归了前台程序，松开也放行（`late_answers`），同一个键下次照常接。测试用 `loseHooksForTest` 把钩子卸掉来模拟：下一个键进了前台程序，之后 1 秒内恢复，且只重装一次。
+  3. **路由开在了已经不在前台的窗口上**：`showClipboard` 先读前台窗口，再等最多 100 ms 找文字光标，然后才起路由线程装前台事件钩子；这中间前台换了就没有事件告诉我们，`availability()` 从此一直是 `OtherForeground`，面板开着但一个键也不接，正是报告的样子（`engageClipboard` 里早就有一句“stale foreground notification left it over a different window”，但只在点击时处理）。现在等完光标重新读一次前台，按那时的窗口开路由、定粘贴目标；路由线程装好事件钩子后自己再核对一次，之后每次因 `OtherForeground` 放行按键时也核对，发现前台不是目标就按“前台换了”报给界面（每个窗口只报一次，`foreground_missed`），界面照常收起面板，不再留一个不接键的面板。
+- **没有证实的**：报告人当时到底是哪一种。新版的 `clipboard-key-routing-stop` 里 `other_foreground`、`hooks_recovered`、`foreground_missed` 能分出来。
+
+## 界面卡死查不到原因：现在卡住时自己记下调用栈（#111，2026-11-15）
+
+- **现象**：“剪贴板卡住，CPU 25% 左右，只能在任务管理器里结束进程”。诊断日志里只看得出进程没有正常退出就重新启动了（上一条事件之后没有 `key-helper lost` / `font-database-changed` 这些退出时才有的记录），看不出卡在哪。
+- **做法**：`UiStallWatch`（`src/app/platform/UiStall.*`），事件 `ui-stall` / `ui-stall-end`，字段见 architecture.md“运行诊断”。
+- **取栈为什么这么写**：把界面线程 `SuspendThread` 之后，它可能正握着堆锁或加载器的锁，这时本线程只要分配内存、`RtlLookupFunctionEntry`（要拿函数表的锁）或写日志就可能一起死锁，把一次几秒的卡顿变成永久卡死。所以停住期间只做 `GetThreadContext` 和 `memcpy`（缓冲区事先分配好），放行之后再在拷贝上用 `RtlVirtualUnwind` 回溯；寄存器和从栈上弹出来的值里指向原栈的地址都换成拷贝里的地址（用帧指针的函数靠它），整段包在 `__try` 里，栈不合理就到此为止。
+- **偏移对回函数名**：发布版不带 PDB。按发布标签重新编一份带符号的（`/Z7 /bigobj` + 链接 `/DEBUG /OPT:REF /OPT:ICF`，只编 `WinShun` 目标），代码段和发布的一致；然后 `cdb -z WinShun.exe -y <pdb 目录> -c "ln WinShun+<偏移>; q"`，或 `llvm-symbolizer --obj=WinShun.exe 0x<偏移+映像基址>`。Qt 和系统 DLL 的偏移用它们各自的符号（Qt 安装目录里有 PDB，系统的走微软符号服务器）。
+- **测试**：`tst_uistall` 让测试自己的线程空转、睡眠各 0.9 秒：空转记成 `busy`、栈里有测试程序自己的帧；睡眠记成不忙、栈顶在 `ntdll.dll`；长的每隔一段再看一次、最多 3 次；超过条数上限不再记；卡着时析构立即返回。

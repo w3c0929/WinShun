@@ -40,6 +40,7 @@ qt_add_executable(WinShun WIN32
     platform/TrayIcons.cpp platform/TrayIcons.h
     InteractionOptimizationProbe.cpp InteractionOptimizationProbe.h
     IdleOpenProbe.cpp IdleOpenProbe.h
+    ForegroundUseProbe.cpp ForegroundUseProbe.h
     main.cpp
     DropPieHelper.cpp DropPieHelper.h
     AiSettings.cpp AiSettings.h
@@ -73,7 +74,7 @@ qt_add_executable(WinShun WIN32
     ContentPaneProbe.cpp ContentPaneProbe.h
     RecentFolders.cpp RecentFolders.h
     Settings.cpp Settings.h
-    UiFont.cpp UiFont.h
+    UiFont.cpp UiFont.h FontFile.h
     SiteIconImage.cpp SiteIconImage.h
     SvgIcon.cpp SvgIcon.h
     Switches.cpp Switches.h SwitchBackend.h
@@ -95,16 +96,19 @@ qt_add_executable(WinShun WIN32
     DialogRuleStore.cpp DialogRuleStore.h
     platform/BlenderFileDialog.cpp platform/BlenderFileDialog.h
     platform/FileManagers.cpp platform/FileManagers.h
+    platform/EverythingServer.cpp platform/EverythingServer.h
     platform/FolderViewHit.cpp platform/FolderViewHit.h
     platform/Foreground.cpp platform/Foreground.h
     platform/HoldWatch.cpp platform/HoldWatch.h
     platform/Http.cpp platform/Http.h
     platform/HotPages.cpp platform/HotPages.h
     platform/IdleTrim.cpp platform/IdleTrim.h
+    platform/UiStall.cpp platform/UiStall.h
     platform/MemoryReport.cpp platform/MemoryReport.h
     ActivityText.cpp ActivityText.h
     BackgroundStatus.cpp BackgroundStatus.h
     HealthMonitor.cpp HealthMonitor.h
+    platform/AllocationTrace.cpp platform/AllocationTrace.h
     platform/ProcessUsage.cpp platform/ProcessUsage.h
     platform/InputMode.cpp platform/InputMode.h
     platform/Integrity.cpp platform/Integrity.h
@@ -441,7 +445,7 @@ target_link_libraries(WinShun PRIVATE
     Qt6::Svg # SvgIcon: web shortcuts' SVG icons, drawn once into the PNG kept
     comctl32 d2d1 dwmapi dwrite dxgi imm32 oleacc oleaut32 shcore shell32 shlwapi ole32 user32 uxtheme version winhttp winmm
     credui iphlpapi mpr psapi userenv windowscodecs
-    mfplat mfreadwrite mfuuid delayimp
+    mfplat mfreadwrite mfuuid delayimp dbghelp
     windowsapp # TextRecognizer: Windows.Media.Ocr, through C++/WinRT from the Windows SDK
     onnxruntime_headers) # PaddleOcr
 target_link_libraries(WinShun PRIVATE advapi32 userenv miniz comdlg32 gdi32) # native report printing
@@ -449,7 +453,7 @@ target_link_libraries(WinShun PRIVATE advapi32 userenv miniz comdlg32 gdi32) # n
 # with the rest of the manifest; the linker's own UAC fragment would be a
 # second one. Media Foundation is loaded only when used (SoundClip): Windows
 # N editions do not have it.
-target_link_options(WinShun PRIVATE /MANIFESTUAC:NO /DELAYLOAD:mfplat.dll /DELAYLOAD:mfreadwrite.dll)
+target_link_options(WinShun PRIVATE /MANIFESTUAC:NO /DELAYLOAD:mfplat.dll /DELAYLOAD:mfreadwrite.dll /DELAYLOAD:dbghelp.dll)
 
 # UI font files, loaded from fonts\ next to the exe (see main.cpp).
 set(font_files

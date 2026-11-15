@@ -50,7 +50,7 @@ class QWinEventNotifier;
 
 namespace ws {
 
-namespace preview { struct DoubleTapActionsProbe; struct IdleOpenProbe; }
+namespace preview { struct DoubleTapActionsProbe; struct IdleOpenProbe; struct ForegroundUseProbe; }
 
 namespace piedrop {
 class FileOperations;
@@ -77,6 +77,7 @@ class SystemCatalog;
 class History;
 class IndexService;
 class IdleTrim;
+class UiStallWatch;
 class KeyListener;
 class PointerWatch;
 class ServiceDialogNav;
@@ -98,6 +99,7 @@ class SettingsEditor;
 class Switches;
 class SwitchPlugin;
 class TypeToSearch;
+class EverythingServer;
 class LauncherKeysWatch;
 class Updater;
 class BackgroundStatus;
@@ -139,6 +141,7 @@ class App : public QObject {
     Q_OBJECT
     friend struct preview::DoubleTapActionsProbe;
     friend struct preview::IdleOpenProbe;
+    friend struct preview::ForegroundUseProbe;
 
 public:
     struct StartOptions {
@@ -773,6 +776,7 @@ private:
     win::LettersSwitch m_lettersSwitch; // what that did, to put back on hiding
     std::unique_ptr<ComWorker> m_typingWorker; // queries a file display's folder (folderTyped); before m_typing
     std::unique_ptr<TypeToSearch> m_typing; // while StartMenuTyping, ExplorerTyping, OpusTyping, DesktopTyping or PasteFile is on
+    std::unique_ptr<EverythingServer> m_everything; // while EverythingCompat is on; after m_index, which it asks
     // The launcher is up from typing in this Explorer or Opus window and tab:
     // Esc goes back to the window, a folder opened goes to the tab (openInTypingTab).
     // Cleared by any other opening (showLauncher), by hiding the launcher,
@@ -847,6 +851,7 @@ private:
     std::unique_ptr<VolumeNotifier> m_volumeNotifier; // after m_messages, whose window it uses
     std::unique_ptr<NetworkNotifier> m_network; // after m_index, whose shares it tells
     std::unique_ptr<IdleTrim> m_idleTrim; // gives the memory back while nothing is in use
+    std::unique_ptr<UiStallWatch> m_uiStall; // writes down what this thread was doing when it stopped answering
     // GitHub #265, memory short: the pages an opening needs are read back ahead.
     std::shared_ptr<HotPages> m_launcherPages;
     std::shared_ptr<HotPages> m_clipPages;
