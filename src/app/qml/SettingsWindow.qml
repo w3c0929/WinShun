@@ -4552,6 +4552,18 @@ Window {
                 }
 
                 SettingRow {
+                    title: qsTr("打开时填入刚复制的文字")
+                    keywords: qsTr("剪贴板;复制;自动;填入;粘贴;网址;clipboard;paste").split(";")
+                    description: qsTr("刚在别的程序里复制了一行文字，在这么多秒内打开搜索框，就直接搜它（全选着，打字即替换）；超过时间、复制的是多行或文件时不填。装了“网页搜索”插件，复制的是网址时第一行就是打开它")
+
+                    ScopeTabs {
+                        labels: [qsTr("关闭"), qsTr("3 秒"), qsTr("5 秒"), qsTr("10 秒")]
+                        current: [0, 3, 5, 10].indexOf(window.editor.clipboardFillSeconds) // another number of seconds (set in the file): none of them
+                        onActivated: (index) => window.editor.clipboardFillSeconds = [0, 3, 5, 10][index]
+                    }
+                }
+
+                SettingRow {
                     title: qsTr("打开结果的备用键")
                     keywords: qsTr("打开;回车;Enter;备用;左手;快捷键;空格;open;shortcut").split(";")
                     values: [window.editor.openHotkey]
@@ -4611,6 +4623,18 @@ Window {
                         labels: [qsTr("按住时显示"), qsTr("一直显示"), qsTr("不显示", "number hints")]
                         current: Math.max(0, ["held", "always", "off"].indexOf(window.editor.numberHints))
                         onActivated: (index) => window.editor.numberHints = ["held", "always", "off"][index]
+                    }
+                }
+
+                SettingRow {
+                    title: qsTr("字母直达")
+                    description: qsTr("轻按一下数字键用的那个键（搜索框是 Ctrl，剪贴板是 Alt，按上面的设置）再松开，每一行前面出现一个字母，按字母直接打开这一行（剪贴板里是粘贴），第九行以后也有；加 Shift 是打开所在位置（剪贴板里是粘贴为纯文本）。再按一下或按 Esc 退出。启动器和剪贴板共用")
+                    keywords: qsTr("快捷键;字母;单手;vim;vi;提示;跳转;直达;hint").split(";")
+
+                    ToggleSwitch {
+                        dpr: window.dpr
+                        checked: window.editor.letterJump
+                        onToggled: (on) => window.editor.letterJump = on
                     }
                 }
             }

@@ -1550,6 +1550,29 @@ std::optional<SearchResult> Launcher::webFallbackRow() const
     return r;
 }
 
+// A web address typed in 全部 (GitHub #171): the row that opens it, with the
+// web search plugin on. Listed with what else the words find, never in
+// place of it: which one Enter means is the user's to see and choose.
+std::optional<SearchResult> Launcher::webAddressRow() const
+{
+    if (m_web.isEmpty() || m_scope != All || m_panel || m_folderSearch || m_keyword || m_filePrefix || m_regexMode
+        || !m_queryError.isEmpty() || !m_typingPrefix.isEmpty() || !typedQuick().filters.isEmpty() || typedKeyword(m_web, m_query))
+        return std::nullopt;
+    const QString words = m_query.trimmed();
+    const std::optional<QString> address = typedWebAddress(words);
+    if (!address)
+        return std::nullopt;
+    SearchResult r;
+    r.name = words; // as typed: the row's second line says what opens
+    r.path = webAddressPath(*address);
+    r.app = AppKind::Web;
+    r.target = *address;
+    r.icon = *address; // its site's own
+    r.exact = true;
+    r.score = 1000; // as a typed keyword's row (SearchEngine's kTypedKeywordScore)
+    return r;
+}
+
 void Launcher::setWebSuggestions(bool on)
 {
     if (on == m_webSuggestions)
@@ -1698,6 +1721,14 @@ void Launcher::setExcludedFiles(const QStringList& types, const QStringList& nam
     // Files come or go in whatever is listed now: asked again, in place.
     if (m_window && m_window->isVisible())
         search();
+}
+
+void Launcher::setLetterJump(bool on)
+{
+    if (m_letterJump == on)
+        return;
+    m_letterJump = on;
+    emit resultOptionsChanged();
 }
 
 void Launcher::setNumberHints(const QString& hints)
@@ -3134,6 +3165,14 @@ void Launcher::showRows(SearchResults rows, QStringList highlights)
         if (std::optional<SearchResult> web = webFallbackRow())
             rows.append(std::move(*web)); // Enter looks the words up instead of 没有找到 (GitHub #320)
     }
+    if (std::optional<SearchResult> address = webAddressRow()) {
+        // First, but after a file or an app of that very name ("baidu.txt"
+        // there on the disk is what Enter opens; the address is the next row).
+        const bool named = !rows.isEmpty() && !rows.first().isWeb()
+            && rows.first().name.compare(address->name, Qt::CaseInsensitive) == 0;
+        rows.removeIf([&](const SearchResult& r) { return r.path == address->path; });
+        rows.insert(named ? 1 : 0, std::move(*address));
+    }
     // The site's suggestions under its search's row, as they were: a new
     // list for the next word typed keeps them until the site answers for it
     // (rows coming and going at every key would make the window jump).
@@ -4318,7 +4357,15 @@ void Launcher::refreshKeyHints()
     } else if (r->isPlugin()) {
         const PluginRow& p = *r->plugin;
         if (p.valid) {
-            if (!p.actions.isEmpty()) {
+            if (!p.setQuery.isEmpty() || !p.searchQuery.isEmpty()) {
+                // Enter drills (performPlugin prefers setQuery over actions for
+                // a row that has both): the hint must say so, not name action 0.
+                enter = !p.searchQuery.isEmpty() ? tr("搜索") : tr("填入搜索框");
+                if (p.actions.size() > 1) {
+                    secondKeys = p.actions[1].key.isEmpty() ? u"Ctrl+Enter"_s : p.actions[1].key;
+                    second = p.actions[1].title;
+                }
+            } else if (!p.actions.isEmpty()) {
                 enter = p.actions[0].title;
                 if (p.actions.size() > 1) {
                     secondKeys = p.actions[1].key.isEmpty() ? u"Ctrl+Enter"_s : p.actions[1].key;
@@ -6737,9 +6784,16 @@ QVariantList Launcher::menuItems(int row) const
         const PluginRow& p = *r->plugin;
         static constexpr QStringView kKeys[] {u"Enter", u"Ctrl+Enter", u"Shift+Enter"};
         if (p.valid) {
+            // A row that drills (setQuery/searchQuery) keeps that as its Enter
+            // even when it also carries actions: the menu names it first.
+            if (!p.setQuery.isEmpty() || !p.searchQuery.isEmpty()) {
+                const QString text = !p.searchQuery.isEmpty() ? tr("搜索") : tr("填入搜索框");
+                items.append(entry(Open, text, u"Enter"_s, u"\uE8A7"_s));
+            }
+            const bool drills = !p.setQuery.isEmpty() || !p.searchQuery.isEmpty(); // Enter is that row's, not its first action's
             for (int i = 0; i < p.actions.size(); ++i) {
                 const QString key = !p.actions[i].key.isEmpty() ? p.actions[i].key
-                    : i < 3                                     ? kKeys[i].toString()
+                    : i < 3 && !(drills && i == 0)              ? kKeys[i].toString()
                                                                 : QString();
                 items.append(entry(static_cast<Action>(PluginAction + i), p.actions[i].title, key,
                     i == 0 ? u"\uE8A7"_s : u"\uE768"_s));

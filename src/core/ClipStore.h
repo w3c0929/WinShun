@@ -32,6 +32,13 @@ QString clipImageExtension(ClipImageFormat format);
 // The kind of copied text, from what it looks like.
 ClipKind kindOfText(const QString& text);
 
+// What of a text copied a moment ago the search box takes as its words when
+// it opens (GitHub #171): the text without the space around it, if it is
+// one line of at most kSearchFillLength characters; else nothing (a
+// paragraph is not something to search for).
+constexpr qsizetype kSearchFillLength = 200;
+QString searchFillOf(const QString& copied);
+
 // What tells copied text (or files) from any other: the same again is the
 // same entry. Any thread.
 QByteArray clipHash(ClipKind kind, const QString& text);
@@ -322,6 +329,14 @@ public:
     // characters; empty takes it away.
     static constexpr qsizetype kNoteLength = 60;
     void setNote(qint64 id, const QString& note);
+    // The entry's own text replaced by what the user made of it (GitHub
+    // #267): text, a link or paths, whole in memory. It is then what its
+    // words say (kindOfText), its formatted versions are gone (they would
+    // paste the old words), its place and times stay. Its line ends are
+    // those it had ("\r\n" as programs copy it). Refused: not such an entry,
+    // or nothing but spaces; Duplicate: another entry is those very words.
+    enum class TextChange { Changed, Unchanged, Refused, Duplicate };
+    TextChange setText(qint64 id, const QString& edited);
     // Kept from view or shown again (Clip::masked).
     void setMasked(std::span<const qint64> ids, bool masked);
     // Moves an entry of a group to where `target`, of the same group, is

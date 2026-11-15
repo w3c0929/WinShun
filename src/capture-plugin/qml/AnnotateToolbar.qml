@@ -29,7 +29,7 @@ Item {
     readonly property bool historyShown: shows("undo") || shows("redo")
     // The groups after the tools: undo and redo; pin and save; cancel and copy;
     // and in the second row OCR with QR, then long, record and delay.
-    readonly property bool recognizeShown: shows("ocr") || shows("qr")
+    readonly property bool recognizeShown: shows("ocr") || shows("qr") || shows("translate")
     readonly property bool modesShown: shows("long") || shows("record") || shows("delay")
     readonly property bool outputShown: shows("save") || (pinnable && shows("pin"))
     readonly property bool finishShown: shows("copy") || shows("cancel")
@@ -373,6 +373,14 @@ Item {
         Separator { visible: bar.recognizeShown }
 
         OcrButton { visible: bar.shows("ocr") }
+        ActionButton { // GitHub #191: a pin where the selection is, its words translated in place
+            id: translateButton
+            visible: bar.shows("translate")
+            glyph: String.fromCharCode(0xE8C1) // Translate
+            name: qsTr("翻译")
+            tipText: qsTr("翻译：把图里的文字翻译好，贴在原来的位置；用“翻译”插件里设好的服务")
+            onClicked: bar.act(CaptureSession.OcrTranslate)
+        }
         ActionButton {
             id: qrButton
             visible: bar.shows("qr")

@@ -178,11 +178,33 @@ Item {
         key: page.numberKey
         // Over another app the existing KeyRouter delivers modifier keys too.
         listening: page.visible && (page.Window.active || page.clipboard.keysRouted) && !page.menuOpen
+        // 字母直达 (GitHub #175); not while a group is looked for or an entry's words are changed.
+        jumpEnabled: page.clipboard.letterJump && !page.findingGroup && page.editingId === 0
     }
     ShownRows {
         id: shownRows
         view: list
-        tracking: numberHints.hintOpacity > 0 // not per frame of a scroll while no number shows
+        tracking: numberHints.hintOpacity > 0 || numberHints.jumping // not per frame of a scroll while nothing shows
+        span: numberHints.jumping ? numberHints.letters.length : 9 // a letter each, past the ninth row too
+    }
+    // A key while the letters show: a letter pastes its row (with Shift: as
+    // plain text), and is taken; anything else puts the numbers back and is
+    // that key as ever (Esc only puts them back).
+    function letterKey(event) {
+        if (!numberHints.jumping || [Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta].includes(event.key))
+            return false
+        const offset = (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) === 0
+            ? numberHints.offsetOf(event.key) : -1
+        const row = offset >= 0 ? shownRows.rowOf(offset + 1) : -1
+        numberHints.leave()
+        if (offset >= 0) {
+            if (row >= 0 && !event.isAutoRepeat) {
+                list.currentIndex = row
+                clipboard.quickPaste(row, (event.modifiers & Qt.ShiftModifier) !== 0)
+            }
+            return true
+        }
+        return event.key === Qt.Key_Escape
     }
     // A chord that is one of Win顺's own shortcuts stays that (Clipboard.numberKeysLeft):
     // the row still shows it, struck through (ClipRow.hintTaken).
@@ -218,6 +240,12 @@ Item {
     function closePreview() {
         previewClickTimer.stop()
         clearHover()
+        if (editingId > 0) { // closed over the words being changed: they are there the next time
+            draftId = editingId
+            draftText = textEditor.text
+            editingId = 0
+            editOpenedPreview = false
+        }
         previewOpen = false
         clipboard.previewOpen = false
     }
@@ -389,6 +417,42 @@ Item {
         focusSearch()
     }
 
+    // An entry's own words being changed where the preview is (GitHub #267):
+    // its id; what was typed and not saved is kept for the entry until Esc.
+    property real editingId: 0
+    property bool editOpenedPreview: false // the preview closes again with it
+    property real draftId: 0
+    property string draftText
+    function beginEdit(id, text) {
+        closeContextMenu()
+        tabs.stopNaming()
+        if (!previewOpen) {
+            showPreview()
+            editOpenedPreview = true
+        }
+        for (let i = 0; i < list.count; ++i) { // the row it is, wherever the list has it now
+            if (clipboard.items.idAt(i) === id) {
+                list.currentIndex = i
+                break
+            }
+        }
+        editingId = id
+        textEditor.begin(id === draftId ? draftText : text)
+    }
+    function endEdit(keepDraft) {
+        if (editingId <= 0)
+            return
+        draftId = keepDraft ? editingId : 0
+        draftText = keepDraft ? textEditor.text : ""
+        editingId = 0
+        if (editOpenedPreview) {
+            editOpenedPreview = false
+            closePreview()
+        }
+        if (!input.activeFocus && page.Window.active)
+            focusSearch()
+    }
+
     function handleKey(event) {
         previewClickTimer.stop()
         // A key typed (not a modifier held for one) puts the key hints back.
@@ -409,6 +473,10 @@ Item {
             return
         }
         numberHints.press(event)
+        if (letterKey(event)) {
+            event.accepted = true
+            return
+        }
         if (menuOpen && contextMenu.handleKey(event)) {
             event.accepted = true
             return
@@ -628,6 +696,7 @@ Item {
             tabs.nameLength = 60
             tabs.startNaming(note)
         }
+        function onTextEditRequested(id, text) { page.beginEdit(id, text) }
         function onGroupNameRequested(row, group) {
             page.notingId = 0
             tabs.namePlaceholder = qsTr("分组名称")
@@ -707,6 +776,8 @@ Item {
                 anchors.rightMargin: pausedTag.visible ? 16 : 8
                 anchors.verticalCenter: parent.verticalCenter
                 focus: true
+                // The letters showing: the keys are letters, not an input method's words.
+                readOnly: numberHints.jumping
                 // Typed into without the focus (keysRouted): the caret shows
                 // where, steady (it blinks only with the focus).
                 cursorVisible: activeFocus || page.clipboard.keysRouted
@@ -1011,8 +1082,9 @@ Item {
                         objectName: "clipboardRow-" + index
                         width: list.width
                         height: clipRow.picture ? page.pictureRowHeight : page.rowHeight
-                        hint: page.numberKey >= 0 ? shownRows.numberOf(index) : 0
-                        reserveHintSpace: page.numberKey >= 0 && page.clipboard.numberHints !== "off"
+                        hint: page.numberKey >= 0 && !numberHints.jumping ? shownRows.numberOf(index) : 0
+                        hintLetter: numberHints.letterOf(shownRows.numberOf(index) - 1)
+                        reserveHintSpace: (page.numberKey >= 0 && page.clipboard.numberHints !== "off") || page.clipboard.letterJump
                         hintOpacity: numberHints.hintOpacity
                         hintModifier: page.numberKey === Qt.Key_Control ? "Ctrl" : "Alt"
                         hintTaken: clipRow.hint > 0 && !page.numberUsable(clipRow.hint)
@@ -1164,6 +1236,24 @@ Item {
                 // compiler, and the binding would not depend on it.
                 info: page.previewOpen && page.previewRevision >= 0 && list.count > 0 && page.previewIndex >= 0
                       ? page.clipboard.preview(page.previewIndex) : ({})
+                opacity: textEditor.visible ? 0 : 1 // its place taken by the words being changed
+            }
+            ClipTextEditor {
+                id: textEditor
+                metrics: page.metrics
+                dpr: page.dpr
+                visible: preview.visible && page.editingId > 0
+                x: preview.x
+                width: preview.width
+                height: preview.height
+                resizeMargin: preview.resizeMargin
+                onSaveRequested: (text) => {
+                    if (page.clipboard.setText(page.editingId, text))
+                        page.endEdit(false)
+                }
+                onCancelled: page.endEdit(false)
+                // The list or the search clicked, another window: put by, not lost.
+                onFocusLost: page.endEdit(true)
             }
 
             // The edge between the list and the preview: drag to size the
@@ -1355,6 +1445,7 @@ Item {
                 // Pinned without the keys: no key does anything here; the
                 // status says what a click does.
                 readonly property bool shown: !(page.clipboard.pinned && !page.clipboard.keysRouted && !page.Window.active)
+                                              && page.editingId === 0 // the keys are the editor's, which says its own
                                               && (page.selectedCount > 0
                                                   || statusLabel.implicitWidth <= footer.width - reserved - implicitWidth)
                 opacity: shown && !pinyinNote.visible && !holdNote.visible ? 1 : 0 // still laid out: its width tells when it fits again

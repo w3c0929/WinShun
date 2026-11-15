@@ -152,12 +152,14 @@ try {
         # Qt6Gui and Qt6Quick import msvcp140_2.dll, which the list lacked, and
         # 0.27.0 did not start (0xC0000135) on a PC without the redistributable
         # (found on a clean Windows 10). The library plugins share these too.
-        # The toolset ships VC143 or VC145 depending on its version; take
-        # whichever CRT directory it has.
-        $crt = Get-ChildItem (Join-Path $env:VCToolsRedistDir 'x64') -Directory -Filter 'Microsoft.VC*.CRT' |
-            Sort-Object Name | Select-Object -Last 1
-        if (-not $crt) { throw "No C++ runtime redistributable under $env:VCToolsRedistDir" }
-        Get-ChildItem $crt.FullName -Filter '*.dll' | Where-Object { $_.Name -match '^(msvcp140|vcruntime140)' } |
+        $crt = Join-Path $env:VCToolsRedistDir 'x64\Microsoft.VC143.CRT'
+        if (-not (Test-Path -LiteralPath $crt)) {
+            $crt = Get-ChildItem (Join-Path $env:VCToolsRedistDir 'x64') -Directory -Filter 'Microsoft.VC*.CRT' |
+                Where-Object { Test-Path (Join-Path $_.FullName 'vcruntime140.dll') } |
+                Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+            if (-not $crt) { throw "No x64 VC++ runtime found under $env:VCToolsRedistDir" }
+        }
+        Get-ChildItem $crt -Filter '*.dll' | Where-Object { $_.Name -match '^(msvcp140|vcruntime140)' } |
             ForEach-Object { Copy-Item $_.FullName $dist }
         # And checked: whatever anything deployed imports from the runtime's
         # folder or from Qt must be next to it.

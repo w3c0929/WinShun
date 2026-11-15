@@ -141,6 +141,7 @@ class Launcher : public QObject {
     // or "" for none (Settings::numberKeys).
     Q_PROPERTY(QString numberKeys READ numberKeys NOTIFY resultOptionsChanged FINAL)
     Q_PROPERTY(QString numberHints READ numberHints NOTIFY resultOptionsChanged FINAL)
+    Q_PROPERTY(bool letterJump READ letterJump NOTIFY resultOptionsChanged FINAL) // Settings::letterJump
     // A file's row has a delete button among its buttons (the settings, GitHub #316).
     Q_PROPERTY(bool rowDeleteButton READ rowDeleteButton NOTIFY resultOptionsChanged FINAL)
     Q_PROPERTY(bool shortcutHelp READ shortcutHelp NOTIFY resultOptionsChanged FINAL)
@@ -545,6 +546,8 @@ public:
     void setOpenHotkey(const QString& shortcut);
     Q_INVOKABLE bool isOpenKey(int key, int modifiers) const;
     void setNumberHints(const QString& hints);
+    bool letterJump() const { return m_letterJump; }
+    void setLetterJump(bool on);
     bool rowDeleteButton() const { return m_rowDeleteButton; }
     void setRowDeleteButton(bool shown);
     bool shortcutHelp() const { return m_shortcutHelp; }
@@ -1358,6 +1361,7 @@ private:
     bool m_tabEntersFavoriteFolder = false;
     QString m_numberKeys = QStringLiteral("ctrl");
     QString m_numberHints = QStringLiteral("always");
+    bool m_letterJump = false;
     bool m_rowDeleteButton = true;
     bool m_shortcutHelp = true;
     bool m_footerHints = true;
@@ -1418,6 +1422,7 @@ private:
     bool m_webSuggestions = true;
     bool m_webFallback = true;
     std::optional<SearchResult> webFallbackRow() const;
+    std::optional<SearchResult> webAddressRow() const;
     WebSuggester m_suggester;
     SearchResults m_suggestRows; // the latest answer's, for the site typed; kept until the next answer
     QPointer<Favorites> m_favorites;

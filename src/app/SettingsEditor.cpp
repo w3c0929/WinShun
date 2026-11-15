@@ -409,6 +409,14 @@ void SettingsEditor::setClearOnOpen(bool on)
     commit();
 }
 
+void SettingsEditor::setClipboardFillSeconds(int seconds)
+{
+    if (m_settings.clipboardFillSeconds == seconds || seconds < 0 || seconds > 60)
+        return;
+    m_settings.clipboardFillSeconds = seconds;
+    commit();
+}
+
 void SettingsEditor::setEnglishOnOpen(bool on)
 {
     if (m_settings.englishOnOpen == on)
@@ -424,6 +432,14 @@ void SettingsEditor::setNumberKeys(const QString& keys)
     m_settings.numberKeys = keys;
     commit();
     refreshNumberKeys();
+}
+
+void SettingsEditor::setLetterJump(bool on)
+{
+    if (m_settings.letterJump == on)
+        return;
+    m_settings.letterJump = on;
+    commit();
 }
 
 void SettingsEditor::setNumberHints(const QString& hints)

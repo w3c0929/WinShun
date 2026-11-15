@@ -983,12 +983,14 @@ void Settings::load()
         startList = d.startList;
     clearOnOpen = readOrDefault(s, u"Launcher/ClearOnOpen"_s, d.clearOnOpen);
     englishOnOpen = readOrDefault(s, u"Launcher/EnglishOnOpen"_s, d.englishOnOpen);
+    clipboardFillSeconds = std::clamp(readOrDefault(s, u"Launcher/ClipboardFill"_s, d.clipboardFillSeconds), 0, 60);
     numberKeys = readOrDefault(s, u"Results/NumberKeys"_s, d.numberKeys).trimmed().toLower();
     if (numberKeys != u"alt" && numberKeys != u"off")
         numberKeys = d.numberKeys;
     numberHints = readOrDefault(s, u"Results/NumberHints"_s, d.numberHints).trimmed().toLower();
     if (numberHints != u"held" && numberHints != u"always" && numberHints != u"off")
         numberHints = d.numberHints;
+    letterJump = readOrDefault(s, u"Results/LetterJump"_s, d.letterJump);
     shortcutHelp = readOrDefault(s, u"Results/ShortcutHelp"_s, d.shortcutHelp);
     footerHints = readOrDefault(s, u"Results/FooterHints"_s, d.footerHints);
     pureSearch = readOrDefault(s, u"Results/PureSearch"_s, d.pureSearch);
@@ -1376,8 +1378,10 @@ bool Settings::saveChecked() const
     s.setValue(u"Results/FavoritesOnStart"_s, favoritesOnStart);
     s.setValue(u"Launcher/ClearOnOpen"_s, clearOnOpen);
     s.setValue(u"Launcher/EnglishOnOpen"_s, englishOnOpen);
+    s.setValue(u"Launcher/ClipboardFill"_s, clipboardFillSeconds);
     s.setValue(u"Results/NumberKeys"_s, numberKeys);
     s.setValue(u"Results/NumberHints"_s, numberHints);
+    s.setValue(u"Results/LetterJump"_s, letterJump);
     s.setValue(u"Results/ShortcutHelp"_s, shortcutHelp);
     s.setValue(u"Results/FooterHints"_s, footerHints);
     s.setValue(u"Results/PureSearch"_s, pureSearch);

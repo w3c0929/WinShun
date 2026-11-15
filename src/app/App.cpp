@@ -105,6 +105,7 @@
 #include "PrintScreen.h" // restorePrintScreen
 #include "platform/HotkeyText.h"
 
+#include <QClipboard>
 #include <QContextMenuEvent>
 #include <QCursor>
 #include <QDateTime>
@@ -935,6 +936,7 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
     // (GitHub #267).
     connect(m_clipboard.get(), &Clipboard::groupNameRequested, this, &App::activateClipboard);
     connect(m_clipboard.get(), &Clipboard::noteRequested, this, &App::activateClipboard);
+    connect(m_clipboard.get(), &Clipboard::textEditRequested, this, &App::activateClipboard);
     connect(m_clipboard.get(), &Clipboard::fieldRequested, this, &App::returnToField);
     connect(m_clipboard.get(), &Clipboard::turnOnRequested, this, [this] {
         Settings settings = m_settings;
@@ -1053,7 +1055,7 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
             folderMenuHotkey();
         else if (id == kPanelHotkeyId) {
             beginTrigger(TriggerSource::Hotkey, pressedAt);
-            showSearchPanel();
+            panelHotkey(pressedAt);
         }
         else if (id != kDialogJumpHotkeyId) {
             beginTrigger(TriggerSource::Hotkey, pressedAt);
@@ -1109,6 +1111,7 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
         return m_volumeNotifier ? m_volumeNotifier->handle(event, data) : TRUE;
     };
     // Once the disks have settled: after hibernating, the file cache is gone.
+    callbacks.clipboardChanged = [this] { copyNoticed(); };
     callbacks.resumed = [this] {
         m_index->prewarmSoon(30s);
         m_index->shares().networkChanged(); // the servers may have gone, or come back, meanwhile
@@ -1132,6 +1135,7 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
     };
     callbacks.drawingMessage = [](UINT message, WPARAM wParam) { diagnostics::noteSystemMessage(message, wParam); };
     m_messages = std::make_unique<MessageWindow>(std::move(callbacks));
+    watchCopies(); // the settings were applied before there was a window to listen with
     // Its hotkeys and the plugins' with no modifier: the listener that holds
     // them back over administrators' windows is told (GitHub #243). Once for
     // all the changes of a moment: a plugin's start registers several.
@@ -1956,6 +1960,8 @@ void App::applySettings(bool initial)
     m_preview->setTextExtensions(m_settings.contentExtensions);
     m_clipboard->setNumberKeys(m_settings.clipboardNumberKeys);
     m_launcher->setNumberHints(m_settings.numberHints);
+    m_launcher->setLetterJump(m_settings.letterJump);
+    watchCopies();
     m_launcher->setRowDeleteButton(m_settings.rowDeleteButton);
     m_launcher->setScopeButton(m_settings.scopeButton);
     m_launcher->setKeyboardHints(m_settings.shortcutHelp, m_settings.footerHints);
@@ -1964,6 +1970,7 @@ void App::applySettings(bool initial)
     m_launcher->setPanelListsAll(m_settings.panelListsAll);
     tellLauncherFolders();
     m_clipboard->setNumberHints(m_settings.numberHints);
+    m_clipboard->setLetterJump(m_settings.letterJump);
     const QString clipboardSize = m_settings.clipboardUiSize == u"follow" ? m_settings.uiSize : m_settings.clipboardUiSize;
     const bool clipboardResized = clipboardSize != m_clipboard->uiSize();
     m_clipboard->setRowOptions(m_settings.clipboardClickToPaste, m_settings.clipboardPictureSize, clipboardSize);
@@ -2201,6 +2208,22 @@ bool insideFolder(const QString& path, const QString& folder)
     const QString clean = QDir::cleanPath(QDir::fromNativeSeparators(path));
     const QString base = QDir::cleanPath(QDir::fromNativeSeparators(folder)) + u'/';
     return clean.startsWith(base, Qt::CaseInsensitive) && !clean.contains(u"/../"_s);
+}
+
+// What the translate plugin's rows say, for translate_text: the row "t" is
+// the translation (its copy text whole, the title may be cut for showing),
+// "setup" asks for a service, anything else says what went wrong.
+QJsonObject translationAnswer(bool ok, const plugin::Items& items, const QString& error)
+{
+    if (!ok || items.isEmpty())
+        return {{u"state"_s, u"failed"_s}, {u"message"_s, error}};
+    const plugin::Item& first = items.first();
+    if (first.id == u"t")
+        return {{u"state"_s, u"ok"_s}, {u"text"_s, first.copy.isEmpty() ? first.title : first.copy}};
+    if (first.id == u"setup")
+        return {{u"state"_s, u"service"_s}};
+    return {{u"state"_s, u"failed"_s},
+        {u"message"_s, first.subtitle.isEmpty() || first.id == u"empty" ? first.title : first.title + u": "_s + first.subtitle}};
 }
 
 mcp::ToolResult toolError(const QString& text)
@@ -2465,6 +2488,40 @@ void App::setUpAppTools()
         [this](const QString&, const QString&, const QJsonObject& arguments, std::function<void(mcp::ToolResult)> done) {
             showLauncher(arguments.value(u"text"_s).toString().left(1000));
             done({});
+        }});
+    // 识别文字并翻译 (GitHub #191): the translate plugin's answer to "tr
+    // <text>", handed back to the plugin that asked, which shows it itself
+    // (the capture's OCR window). The text keeps its line breaks: paragraphs.
+    // "state": ok with "text"; service (the plugin has no service or key
+    // yet); plugin (not installed, or off); failed with "message". Nothing
+    // is shown here. `setup`: the settings instead, at the plugin's card, or
+    // at its entry in the library when it is not there.
+    tools.push_back({u"translate_text"_s, plugin::Permission::Ui,
+        [this](const QString&, const QString&, const QJsonObject& arguments, std::function<void(mcp::ToolResult)> done) {
+            const QString id = u"winshun.translate"_s;
+            const bool there = m_pluginHost && m_pluginHost->catalog().enabled(id);
+            if (arguments.value(u"setup"_s).toBool()) {
+                if (there)
+                    showPluginSettings(id);
+                else
+                    showSettings([id](QQuickWindow* window) {
+                        QMetaObject::invokeMethod(window, "showPluginLibrary", Q_ARG(QVariant, QVariant(id)));
+                    });
+                done({});
+                return;
+            }
+            const QString text = arguments.value(u"text"_s).toString().trimmed().left(4000);
+            if (text.isEmpty()) {
+                done(toolError(u"text is empty"_s));
+                return;
+            }
+            if (!there) {
+                done({{{u"state"_s, u"plugin"_s}}});
+                return;
+            }
+            m_pluginHost->callCommand(id, u"tr"_s, text, 4, [done](bool ok, const plugin::Items& items, const QString& error) {
+                done({translationAnswer(ok, items, error)});
+            });
         }});
     // 识别文字并网页搜索: Win顺's default web search.
     tools.push_back({u"web_search"_s, plugin::Permission::WinshunOpen,
@@ -3247,9 +3304,9 @@ void App::folderTyped(HWND root, HWND tab, bool opus, std::uint64_t request)
         // Opus's tab without a folder on disk (This PC, a library, FTP): known
         // all the same, and searched as the whole PC (GitHub #82).
         const std::optional<std::wstring> place
-            = opus ? filemanager::opusPlace(tab) : std::optional(filemanager::explorerFolder(tab));
+            = opus ? filemanager::opusPlace(tab) : filemanager::explorerPlace(tab);
         const QString folder = QString::fromStdWString(place.value_or({}));
-        const bool known = place && (opus || !folder.isEmpty());
+        const bool known = place.has_value(); // with no folder: This PC and the like, the whole PC is searched (#82, #329)
         qInfo().noquote() << (opus ? u"Opus typing:" : u"Explorer typing:")
                           << u"folder \"%1\"%2 %3 ms"_s.arg(folder, known ? QString() : u" (none)"_s).arg(clock.elapsed());
         QMetaObject::invokeMethod(
@@ -3282,9 +3339,11 @@ void App::typingFolderKnown(HWND root, HWND tab, bool opus, std::uint64_t reques
 {
     if (!m_typing || !m_typing->pending(request))
         return;
-    // No folder on disk there (Home, This PC, the Recycle Bin, a search): the
-    // keys were Explorer's after all, which jumps by them as it would have.
-    // In Opus such a tab is `known` with no folder: the whole PC is searched.
+    // Neither a folder on disk nor a place to search the whole PC from (the
+    // Recycle Bin, a search's results, the Control Panel): the keys were
+    // Explorer's after all, which jumps by them as it would have. This PC,
+    // Home and Quick access (and in Opus any tab without a folder) are
+    // `known` with no folder: the whole PC is searched (GitHub #82, #329).
     const auto explorerTab = [root]() -> HWND {
         GUITHREADINFO focus {sizeof focus};
         const bool items = ::GetGUIThreadInfo(::GetWindowThreadProcessId(root, nullptr), &focus)
@@ -3309,7 +3368,7 @@ void App::showFolderSearch(HWND root, HWND tab, bool opus, const QString& folder
 {
     // Typed in Opus, the box sits in the corner of its file list (as Listary's
     // does) rather than over it, and may search the whole PC (GitHub #82).
-    // No folder there (This PC and the like, Opus only): the whole PC too.
+    // No folder there (This PC and the like): the whole PC too.
     const bool everywhere = folder.isEmpty() || (opus && m_settings.opusTypingScope == u"all");
     const QString prefix = everywhere ? QString() : folder.endsWith(u'\\') ? folder + u' ' : folder + u"\\ "_s;
     // On the monitor of the list typed in (a lister over two may have the other on the other).
@@ -5352,11 +5411,49 @@ const char* App::rawInputState() const
     return raw.registration->hwndTarget == m_keyListener->window() ? "ok" : "other";
 }
 
-void App::showLauncher(const QString& query, const std::optional<taskbar::Spot>& spot, bool inBox, QScreen* on, HWND avoid,
+void App::watchCopies()
+{
+    if (m_messages)
+        m_messages->watchClipboard(m_settings.clipboardFillSeconds > 0);
+    if (m_settings.clipboardFillSeconds <= 0)
+        m_copiedAt.invalidate();
+}
+
+// The clipboard changed (MessageWindow, while the setting is on). Another
+// program's copy counts: what Win顺 puts there itself (a path copied from a
+// row, an entry pasted from the history) is not asked about.
+void App::copyNoticed()
+{
+    DWORD process = 0;
+    if (const HWND owner = ::GetClipboardOwner())
+        ::GetWindowThreadProcessId(owner, &process);
+    if (process == ::GetCurrentProcessId())
+        m_copiedAt.invalidate();
+    else
+        m_copiedAt.start();
+}
+
+// The words to open the search box with: one line copied within the
+// setting's seconds, once (the next opening is empty again).
+QString App::copiedJustNow()
+{
+    if (!m_copiedAt.isValid())
+        return {};
+    const bool fresh = m_copiedAt.elapsed() <= m_settings.clipboardFillSeconds * 1000ll;
+    m_copiedAt.invalidate();
+    return fresh ? searchFillOf(QGuiApplication::clipboard()->text()) : QString();
+}
+
+void App::showLauncher(const QString& asked, const std::optional<taskbar::Spot>& spot, bool inBox, QScreen* on, HWND avoid,
     bool inside, const RECT& orInto, bool asPanel)
 {
     if (!m_window)
         return;
+    // Opened for nothing in particular just after a copy (GitHub #171): the
+    // copy is what is searched, selected so that typing replaces it.
+    const bool mayFill = asked.isEmpty() && !avoid && !asPanel && !(m_launcher->pinned() && launcherShown());
+    const QString query = mayFill ? copiedJustNow() : asked;
+    const bool filled = asked.isEmpty() && !query.isEmpty();
     // show()/activation and forceActiveFocus() emit signals synchronously.
     // They may call deliverTyping before handleShown selects the old words
     // or caretRequested places the caret; replay then loses the first key.
@@ -5472,7 +5569,7 @@ void App::showLauncher(const QString& query, const std::optional<taskbar::Spot>&
     if (refuseFrontForTest() == RefuseFront::No)
         m_window->requestActivate();
     m_launcher->handleShown(); // selects all that is typed
-    if (!query.isEmpty()) // typed for the user (a folder, --query): words go after it
+    if (!query.isEmpty() && !filled) // typed for the user (a folder, --query): words go after it
         emit m_launcher->caretRequested(static_cast<int>(query.size()), false);
     if (m_launcherReveal.pending() && !m_launcher->waitingForNames())
         armReveal(); // nothing to wait for (内容 refreshes in the background)
@@ -6872,6 +6969,24 @@ void App::finishHidingLauncher()
 void App::showSearchPanel()
 {
     showLauncher({}, {}, false, nullptr, nullptr, false, {}, true);
+}
+
+// The panel's own hotkey (GitHub #206). Pressed again with the panel up and
+// in front, it closes it, as the launcher's does (GitHub #330: it stayed,
+// only Esc closed it); with the small box up it makes that the panel; behind
+// another window it comes forward. A press made before it was there to be
+// seen leaves it (seenBy, GitHub #111).
+void App::panelHotkey(std::optional<std::uint64_t> pressedAt)
+{
+    const std::uint64_t at = pressedAt.value_or(::GetTickCount64());
+    const bool up = launcherShown() && m_window && !clipboardInCharge();
+    if (up && shortcutAction(true, m_window->isActive(), m_launcher->panel(), true, seenBy(m_launcherRevealedAt, at)) == ShortcutAction::Hide) {
+        hideLauncher();
+        if (m_triggers)
+            m_triggers->decided("hide");
+        return;
+    }
+    showSearchPanel();
 }
 
 void App::togglePanel()

@@ -1958,6 +1958,45 @@ private slots:
         QVERIFY(pathtext::listTyped({root + u"\\nothing here"_s, {}}, false, 50).isEmpty());
     }
 
+
+    // A web address typed in the search box (GitHub #171).
+    void typedWebAddresses()
+    {
+        const auto opens = [](const QString& text) { return typedWebAddress(text).value_or(u"-"_s); };
+        // With its scheme: as it is.
+        QCOMPARE(opens(u"https://example.com/a?b=1#c"_s), u"https://example.com/a?b=1#c"_s);
+        QCOMPARE(opens(u"HTTP://Example.com"_s), u"HTTP://Example.com"_s);
+        QCOMPARE(opens(u"  https://example.com  "_s), u"https://example.com"_s);
+        QCOMPARE(opens(u"https://"_s), u"-"_s);
+        QCOMPARE(opens(u"https:// example.com"_s), u"-"_s);
+        // Without: https before a name.
+        QCOMPARE(opens(u"github.com"_s), u"https://github.com"_s);
+        QCOMPARE(opens(u"baidu.com"_s), u"https://baidu.com"_s);
+        QCOMPARE(opens(u"www.baidu.com"_s), u"https://www.baidu.com"_s);
+        QCOMPARE(opens(u"github.com/LingCore/WinShun/issues?q=is:open"_s), u"https://github.com/LingCore/WinShun/issues?q=is:open"_s);
+        QCOMPARE(opens(u"docs.qt.io"_s), u"https://docs.qt.io"_s);
+        QCOMPARE(opens(u"example.com.cn:8443/x"_s), u"https://example.com.cn:8443/x"_s);
+        QCOMPARE(opens(u"百度.com"_s), u"https://百度.com"_s);
+        // This computer and numbers: http.
+        QCOMPARE(opens(u"localhost:3000"_s), u"http://localhost:3000"_s);
+        QCOMPARE(opens(u"localhost/admin"_s), u"http://localhost/admin"_s);
+        QCOMPARE(opens(u"192.168.1.1"_s), u"http://192.168.1.1"_s);
+        QCOMPARE(opens(u"10.0.0.2:8080/status"_s), u"http://10.0.0.2:8080/status"_s);
+        // Words, files, paths, versions: not addresses.
+        for (const QString& text : {u"localhost"_s, u"report"_s, u"report.docx"_s, u"baidu.txt"_s, u"archive.zip"_s, u"clip.mov"_s,
+                 u"hello world.com"_s, u"a.b"_s, u".com"_s, u"com."_s, u"x..com"_s, u"-a.com"_s, u"C:/Users/x.com"_s,
+                 u"1.2.3"_s, u"6.12.0.300"_s, u"example.com:port"_s, u"example.com:"_s, u"ftp://example.com"_s, u"3.14"_s})
+            QVERIFY2(!typedWebAddress(text), qPrintable(text));
+        // An ending a file has more often than a country: an address only with more about it.
+        for (const QString& text : {u"main.py"_s, u"notes.md"_s, u"logo.ai"_s, u"app.js"_s, u"index.ts"_s, u"lib.rs"_s, u"main.go"_s,
+                 u"run.sh"_s, u"data.db"_s})
+            QVERIFY2(!typedWebAddress(text), qPrintable(text));
+        QCOMPARE(opens(u"www.python.py"_s), u"https://www.python.py"_s);
+        QCOMPARE(opens(u"crates.rs/tokio"_s), u"https://crates.rs/tokio"_s);
+        QCOMPARE(opens(u"claude.ai/new"_s), u"https://claude.ai/new"_s);
+        QCOMPARE(opens(u"deno.js:8000"_s), u"https://deno.js:8000"_s);
+        QVERIFY(isWebPath(webAddressPath(u"https://github.com"_s)));
+    }
     void webKeyword()
     {
         const WebShortcuts shortcuts {
@@ -14409,6 +14448,13 @@ private slots:
         // file) leaves the focus on the files with the flags 0x14 (in menu
         // mode, a pop-up menu); nothing open, 0.
         QCOMPARE(focusOf(0, true), Focus::ItemsView);
+        // Typing on This PC, Home or Quick access searches the whole PC (GitHub #329); other places without a folder do not.
+        QVERIFY(wholePcPlace(L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"));
+        QVERIFY(wholePcPlace(L"::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}")); // as Windows 11 spells Home
+        QVERIFY(wholePcPlace(L"::{679F85CB-0220-4080-B29B-5540CC05AAB6}"));
+        QVERIFY(!wholePcPlace(L"::{645FF040-5081-101B-9F08-00AA002F954E}")); // the Recycle Bin
+        QVERIFY(!wholePcPlace(L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\C:"));
+        QVERIFY(!wholePcPlace(L"C:\\Users") && !wholePcPlace(L""));
         QCOMPARE(focusOf(0x14, true), Focus::Menu);
         QCOMPARE(focusOf(kGuiInMenuMode | kGuiSystemMenuMode, true), Focus::Menu); // the system menu
         QCOMPARE(focusOf(kGuiInMenuMode, true), Focus::Menu);
@@ -16244,6 +16290,8 @@ private slots:
         QCOMPARE(shortcutAction(true, true, true, false), ShortcutAction::Hide);
         QCOMPARE(shortcutAction(true, true, false, true), ShortcutAction::ExpandPanel);
         QCOMPARE(shortcutAction(true, true, true, true), ShortcutAction::Hide); // the third press
+        // The panel's own hotkey asks as "expand on again" (GitHub #330): up as the panel and in
+        // front it closes, the small box becomes the panel, behind a window it comes forward.
 
         // Pressed before it was there to be seen (GitHub #111): it comes, and
         // stays; neither closed nor expanded, active or not.

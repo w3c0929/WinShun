@@ -5,11 +5,13 @@
 #include "PaddleOcr.h"
 #include "SmartRedact.h"
 #include "CaptureOcr.h"
+#include "TranslateOverlay.h"
 
 #include <QCoreApplication>
 #include <QFont>
 #include <QFontMetricsF>
 #include <QPainter>
+#include <QSignalSpy>
 #include <QTest>
 #include <QThread>
 
@@ -88,6 +90,238 @@ private slots:
         reader.cancelScan();
         QTest::qWait(500);
         QVERIFY(!done);
+    }
+
+    // 翻译 (GitHub #191): asked with a ticket, answered once; an answer for
+    // words no longer shown, or to an older request, is dropped.
+    void translationOfTheWords()
+    {
+        using namespace ws::capture;
+        CaptureOcr reader;
+        QSignalSpy asked(&reader, &CaptureOcr::translateRequested);
+        QSignalSpy changed(&reader, &CaptureOcr::translationChanged);
+        QSignalSpy words(&reader, &CaptureOcr::changed);
+        reader.showText(u"The quick brown fox jumps over the lazy\ndog."_s);
+        QVERIFY(!reader.translationShown());
+        reader.translate(u" \n "_s);
+        QCOMPARE(asked.count(), 0); // nothing to translate: not asked
+
+        reader.translate(reader.text());
+        QCOMPARE(asked.count(), 1);
+        QCOMPARE(asked.last().at(0).toString(), u"The quick brown fox jumps over the lazy dog."_s); // as paragraphs
+        QVERIFY(reader.translating() && reader.translationShown());
+        const int first = asked.last().at(1).toInt();
+        reader.translate(u"again"_s);
+        const int second = asked.last().at(1).toInt();
+        QVERIFY(second != first);
+        reader.setTranslation(first, CaptureOcr::Translated::Done, u"old"_s);
+        QVERIFY(reader.translating()); // the older request's answer
+        reader.setTranslation(second, CaptureOcr::Translated::Done, u" 再来 \n"_s);
+        QVERIFY(!reader.translating());
+        QCOMPARE(reader.translation(), u"再来"_s);
+        QVERIFY(reader.translationNote().isEmpty() && reader.translationNeeds().isEmpty());
+        reader.setTranslation(second, CaptureOcr::Translated::Failed, u"twice"_s);
+        QCOMPARE(reader.translation(), u"再来"_s); // answered already
+        const qsizetype wordsChanged = words.count();
+        QCOMPARE(wordsChanged, 1); // the words' own signal stayed quiet: what the user edited is not put back
+
+        const auto answer = [&](CaptureOcr::Translated outcome, const QString& text) {
+            reader.translate(u"x"_s);
+            reader.setTranslation(asked.last().at(1).toInt(), outcome, text);
+        };
+        answer(CaptureOcr::Translated::Failed, u"HTTP 401"_s);
+        QVERIFY(reader.translation().isEmpty() && reader.translationNote().contains(u"HTTP 401"_s) && reader.translationNeeds().isEmpty());
+        answer(CaptureOcr::Translated::Failed, {});
+        QVERIFY(!reader.translationNote().isEmpty());
+        answer(CaptureOcr::Translated::NoService, {});
+        QCOMPARE(reader.translationNeeds(), u"service"_s);
+        QVERIFY(reader.translationShown() && !reader.translationNote().isEmpty());
+        answer(CaptureOcr::Translated::NoPlugin, {});
+        QCOMPARE(reader.translationNeeds(), u"plugin"_s);
+        answer(CaptureOcr::Translated::Done, {}); // nothing to show (an older Win顺 took the words to its search box)
+        QVERIFY(!reader.translationShown());
+
+        // Other words: the translation goes, and the answer still on its way with it.
+        reader.translate(u"x"_s);
+        const int late = asked.last().at(1).toInt();
+        changed.clear();
+        reader.showText(u"other"_s);
+        QVERIFY(!reader.translationShown() && changed.count() == 1);
+        reader.setTranslation(late, CaptureOcr::Translated::Done, u"late"_s);
+        QVERIFY(!reader.translationShown());
+
+        QSignalSpy setup(&reader, &CaptureOcr::translationSetupRequested);
+        reader.setupTranslation();
+        QCOMPARE(setup.count(), 1);
+    }
+
+    // 截图翻译 in place, the whole way but the service: a page drawn as a
+    // screenshot shows it, read, its blocks' "translations" drawn over the
+    // words, and the result read again: the new words are there, the old gone,
+    // what was not text untouched.
+    void translatedInPlace()
+    {
+        using namespace ws::capture;
+        QFont font(u"Microsoft YaHei UI"_s);
+        font.setPixelSize(22);
+        QImage page(820, 330, QImage::Format_RGB32);
+        page.fill(QColor(250, 250, 252));
+        {
+            QPainter painter(&page);
+            painter.setFont(font);
+            painter.setPen(QColor(30, 30, 36));
+            painter.drawText(30, 50, u"Screenshots are read on this computer. Nothing leaves it"_s);
+            painter.drawText(30, 82, u"until you ask for a translation, and then only the words"_s);
+            painter.drawText(30, 114, u"go to the service you chose."_s);
+            painter.drawText(30, 190, u"Settings"_s);
+            painter.fillRect(QRect(600, 160, 180, 120), QColor(200, 60, 60)); // not text
+            painter.fillRect(QRect(0, 290, 820, 40), QColor(32, 34, 40)); // a dark bar with light words
+            painter.setPen(QColor(235, 235, 240));
+            painter.drawText(30, 318, u"Ready"_s);
+        }
+        CaptureOcr reader;
+        QList<RedactLine> lines;
+        bool done = false;
+        reader.scan(page, 1.5, [&](QList<RedactLine> read) { lines = std::move(read); done = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(done, 15000);
+        const QList<TextBlock> blocks = ocrBlocks(lines);
+        QStringList found;
+        for (const TextBlock& b : blocks)
+            found.append(b.text);
+        QVERIFY2(blocks.size() == 3, qPrintable(found.join(u" | "_s)));
+        QCOMPARE(blocks[0].lines, 3);
+        QVERIFY2(blocks[0].text.startsWith(u"Screenshots are read"_s) && blocks[0].text.endsWith(u"you chose."_s), qPrintable(blocks[0].text));
+        QCOMPARE(blocks[1].text, u"Settings"_s);
+        QCOMPARE(blocks[2].text, u"Ready"_s);
+
+        QCOMPARE(translatedPicture(page, blocks, {u"one"_s}, font), QImage()); // not a translation a block
+        const QStringList translations {u"截图在这台电脑上识别，在你要求翻译之前什么都不会离开；翻译时也只有文字会发给你选的服务。"_s, u"设置"_s, u"就绪"_s};
+        const QImage translated = translatedPicture(page, blocks, translations, font);
+        QCOMPARE(translated.size(), page.size());
+        QCOMPARE(translated.copy(600, 160, 180, 120), page.copy(600, 160, 180, 120).convertToFormat(QImage::Format_RGB32)); // the red box
+        QCOMPARE(translated.pixelColor(810, 20), QColor(250, 250, 252));
+        QCOMPARE(translated.pixelColor(400, 325), QColor(32, 34, 40)); // the bar is still the bar
+        const QString again = read(translated);
+        QVERIFY2(again.contains(u"截图在这台电脑上识别"_s) && again.contains(u"你选的服务"_s), qPrintable(again));
+        QVERIFY2(again.contains(u"设置"_s) && again.contains(u"就绪"_s), qPrintable(again));
+        QVERIFY2(!again.contains(u"Screenshots"_s) && !again.contains(u"Settings"_s) && !again.contains(u"Ready"_s), qPrintable(again));
+
+        // The other way: longer words than the label's box holds run on over the empty ground beside it.
+        const QImage longer = translatedPicture(page, blocks, {QString(), u"Settings and preferences"_s, QString()}, font);
+        const QString wide = read(longer);
+        QVERIFY2(wide.contains(u"Settings and preferences"_s), qPrintable(wide));
+        QVERIFY2(wide.contains(u"Screenshots are read"_s) && wide.contains(u"Ready"_s), qPrintable(wide)); // no translation: as they were
+        // The same words as there were: nothing drawn.
+        QCOMPARE(translatedPicture(page, blocks, found, font), page.convertToFormat(QImage::Format_RGB32));
+    }
+
+    // Bold words stay bold, and words in the middle of a button stay there.
+    void weightAndCentring()
+    {
+        using namespace ws::capture;
+        const auto measured = [](const QString& family, int px, bool bold, const QString& text, QColor ink, QColor paper) {
+            QFont font(family);
+            font.setPixelSize(px);
+            font.setBold(bold);
+            QImage image(px * 26, px * 3, QImage::Format_RGB32);
+            image.fill(paper);
+            QPainter painter(&image);
+            painter.setFont(font);
+            painter.setPen(ink);
+            painter.drawText(px, px * 2, text);
+            painter.end();
+            const QRect box(px - 3, static_cast<int>(px * 0.85), QFontMetrics(font).horizontalAdvance(text) + 6, static_cast<int>(px * 1.3));
+            return strokeWeight(image, box, blockColors(image, box), px * 1.3);
+        };
+        for (const QString& family : {u"Segoe UI"_s, u"Microsoft YaHei UI"_s}) {
+            for (const int px : {14, 18, 24, 34, 48}) {
+                for (const QString& text : {u"Translation in place today"_s, u"就地翻译这一段文字"_s}) {
+                    const double regular = measured(family, px, false, text, Qt::black, Qt::white);
+                    const double bold = measured(family, px, true, text, Qt::black, Qt::white);
+                    const double light = measured(family, px, true, text, QColor(235, 235, 240), QColor(32, 34, 40));
+                    const double thin = measured(family, px, false, text, QColor(235, 235, 240), QColor(32, 34, 40));
+                    const double onBlue = measured(family, px, false, text, Qt::white, QColor(15, 108, 189));
+                    QVERIFY2(thin < kBoldStrokeLight - 0.02 && onBlue < kBoldStrokeLight - 0.02, qPrintable(u"%1 %2"_s.arg(thin).arg(onBlue)));
+                    const QByteArray what = u"%1 %2px '%3': regular %4, bold %5, bold light on dark %6"_s.arg(family).arg(px).arg(text)
+                                                .arg(regular, 0, 'f', 3).arg(bold, 0, 'f', 3).arg(light, 0, 'f', 3).toUtf8();
+                    qInfo("%s", what.constData());
+                    QVERIFY2(regular < kBoldStroke - 0.015, what.constData());
+                    QVERIFY2(bold > regular * 1.25 && light > regular * 1.25, what.constData());
+                    // CJK in Segoe UI comes from a fallback font whose bold is thinner at large sizes: allowed to stay regular.
+                    if (family == u"Microsoft YaHei UI" || text.front().unicode() < 0x80 || px < 24)
+                        QVERIFY2(bold >= kBoldStroke + 0.01, what.constData());
+                }
+            }
+        }
+
+        // A button with its words in the middle, a label at the left of a wide row.
+        QImage page(600, 200, QImage::Format_RGB32);
+        page.fill(Qt::white);
+        QFont font(u"Microsoft YaHei UI"_s);
+        font.setPixelSize(20);
+        const QRect button(40, 40, 220, 44);
+        {
+            QPainter painter(&page);
+            painter.fillRect(button, QColor(15, 108, 189));
+            painter.setFont(font);
+            painter.setPen(Qt::white);
+            painter.drawText(button, Qt::AlignCenter, u"Save changes"_s);
+            painter.setPen(Qt::black);
+            painter.drawText(40, 150, u"Name"_s);
+        }
+        const int wide = QFontMetrics(font).horizontalAdvance(u"Save changes"_s);
+        const QRect words(button.center().x() - wide / 2 - 2, 48, wide + 4, 28);
+        const Margins inButton = blockMargins(page, words, QColor(15, 108, 189));
+        QVERIFY2(inButton.centred(), qPrintable(u"%1 %2"_s.arg(inButton.left).arg(inButton.right)));
+        const Margins label = blockMargins(page, QRect(38, 130, 60, 28), Qt::white);
+        QVERIFY(!label.centred());
+        QCOMPARE(label.right, -1); // the ground runs to the edge
+        // Drawn: the shorter words are in the middle of the button, as far from one edge as from the other.
+        TextBlock block;
+        block.box = words;
+        block.text = u"Save changes"_s;
+        block.lineHeight = 28;
+        block.lines = 1;
+        const QImage out = translatedPicture(page, {block}, {u"保存"_s}, font);
+        int first = -1, last = -1;
+        for (int x = button.left(); x <= button.right(); ++x) {
+            bool ink = false;
+            for (int y = button.top(); y <= button.bottom() && !ink; ++y)
+                ink = qGray(out.pixel(x, y)) > 200;
+            if (ink) {
+                if (first < 0)
+                    first = x;
+                last = x;
+            }
+        }
+        QVERIFY(first > 0);
+        QVERIFY2(std::abs((first - button.left()) - (button.right() - last)) <= 3, qPrintable(u"%1..%2"_s.arg(first).arg(last)));
+        // Longer words than the box: on both ways, still inside the button.
+        const QImage longer = translatedPicture(page, {block}, {u"Save all the changes"_s}, font);
+        QCOMPARE(longer.pixelColor(button.left() + 1, button.center().y()), QColor(15, 108, 189));
+        QCOMPARE(longer.pixelColor(button.right() - 1, button.center().y()), QColor(15, 108, 189));
+        QVERIFY2(read(longer).contains(u"Save all the changes"_s), qPrintable(read(longer)));
+    }
+
+    // 翻译 on the toolbar: read, then asked for at once.
+    void readThenTranslate()
+    {
+        using namespace ws::capture;
+        CaptureOcr reader;
+        QSignalSpy asked(&reader, &CaptureOcr::translateRequested);
+        reader.read(drawn({u"Press Ctrl twice"_s}, 28, Qt::black, Qt::white), 1.5, true);
+        QTRY_VERIFY_WITH_TIMEOUT(!reader.busy(), 15000);
+        QTRY_COMPARE(asked.count(), 1);
+        QVERIFY2(asked.first().at(0).toString().contains(u"Ctrl"_s), qPrintable(asked.first().at(0).toString()));
+        QVERIFY(reader.translating());
+        // Nothing read: nothing asked.
+        QImage blank(300, 80, QImage::Format_RGB32);
+        blank.fill(Qt::white);
+        reader.read(blank, 1.5, true);
+        QTRY_VERIFY_WITH_TIMEOUT(!reader.busy(), 15000);
+        QTest::qWait(50);
+        QCOMPARE(asked.count(), 1);
+        QVERIFY(!reader.translationShown());
     }
 
     // Small UI text, Chinese with English and decimals, one line each.

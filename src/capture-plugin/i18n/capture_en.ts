@@ -296,6 +296,14 @@
         <translation>QR code: reads the QR codes in the selection; copy the text or open a link</translation>
     </message>
     <message>
+        <source>翻译</source>
+        <translation>Translate</translation>
+    </message>
+    <message>
+        <source>翻译：把图里的文字翻译好，贴在原来的位置；用“翻译”插件里设好的服务</source>
+        <translation>Translate: pins the picture where it is with its words translated in place, using the service set in the Translate plugin</translation>
+    </message>
+    <message>
         <source>延时</source>
         <translation>Delay</translation>
     </message>
@@ -546,6 +554,14 @@
 </context>
 <context>
     <name>Annotation</name>
+    <message>
+        <source>文字打码</source>
+        <translation>Redact the text</translation>
+    </message>
+    <message>
+        <source>取消打码</source>
+        <translation>Show the text again</translation>
+    </message>
     <message>
         <source>添加</source>
         <translation>Add</translation>
@@ -839,6 +855,14 @@
     <message>
         <source>识别文字并网页搜索</source>
         <translation>Read text and search the web</translation>
+    </message>
+    <message>
+        <source>识别文字并翻译</source>
+        <translation>Read text and translate</translation>
+    </message>
+    <message>
+        <source>翻译</source>
+        <translation>Translate</translation>
     </message>
     <message>
         <source>取消截图</source>
@@ -1481,6 +1505,30 @@
 <context>
     <name>OcrPanel</name>
     <message>
+        <source>翻译</source>
+        <translation>Translate</translation>
+    </message>
+    <message>
+        <source>译文</source>
+        <translation>Translation</translation>
+    </message>
+    <message>
+        <source>复制译文</source>
+        <translation>Copy the translation</translation>
+    </message>
+    <message>
+        <source>正在翻译…</source>
+        <translation>Translating…</translation>
+    </message>
+    <message>
+        <source>安装翻译插件…</source>
+        <translation>Install the Translate plugin…</translation>
+    </message>
+    <message>
+        <source>设置翻译服务…</source>
+        <translation>Set up a translation service…</translation>
+    </message>
+    <message>
         <source>打开链接</source>
         <translation>Open link</translation>
     </message>
@@ -1913,6 +1961,10 @@ The unfinished recording is kept at: %1</translation>
 <context>
     <name>ws::capture::AnnotationModel</name>
     <message>
+        <source>点一下文字就能打码，再点一下取消</source>
+        <translation>Click a line of text to redact it; click again to show it</translation>
+    </message>
+    <message>
         <source>只能在选区里画</source>
         <translation>Draw inside the selection</translation>
     </message>
@@ -2117,6 +2169,22 @@ The unfinished recording is kept at: %1</translation>
         <translation>Reading failed: %1</translation>
     </message>
     <message>
+        <source>翻译失败。</source>
+        <translation>The translation failed.</translation>
+    </message>
+    <message>
+        <source>翻译失败：%1</source>
+        <translation>The translation failed: %1</translation>
+    </message>
+    <message>
+        <source>还没有设置翻译服务，设置好后再点“翻译”。</source>
+        <translation>No translation service is set up yet. Set one up, then choose Translate again.</translation>
+    </message>
+    <message>
+        <source>需要插件库里的“翻译”插件，装好后再点“翻译”。</source>
+        <translation>This needs the Translate plugin from the plugin library. Install it, then choose Translate again.</translation>
+    </message>
+    <message>
         <source>图片里没有找到文字。</source>
         <translation>No text was found in the picture.</translation>
     </message>
@@ -2230,6 +2298,22 @@ click here to cancel</translation>
 </context>
 <context>
     <name>ws::capture::PinManager</name>
+    <message>
+        <source>翻译</source>
+        <translation>Translate</translation>
+    </message>
+    <message>
+        <source>显示原文</source>
+        <translation>Show the original</translation>
+    </message>
+    <message>
+        <source>显示译文</source>
+        <translation>Show the translation</translation>
+    </message>
+    <message>
+        <source>复制译文</source>
+        <translation>Copy the translation</translation>
+    </message>
     <message>
         <source>关闭其他</source>
         <translation>Close the others</translation>
@@ -2492,6 +2576,18 @@ Original video kept at: %2</translation>
 </context>
 <context>
     <name>ws::captureplugin::CaptureApp</name>
+    <message>
+        <source>正在翻译…</source>
+        <translation>Translating…</translation>
+    </message>
+    <message>
+        <source>没有找到文字</source>
+        <translation>No text found</translation>
+    </message>
+    <message>
+        <source>Tab 看原文</source>
+        <translation>Tab shows the original</translation>
+    </message>
     <message>
         <source>“%1” 已被其他程序或系统占用，请换一个。</source>
         <translation>“%1” is already used by another program or by Windows. Please choose another.</translation>

@@ -876,6 +876,9 @@ foreach(scale IN ITEMS 1 1.25 1.5 2)
 endforeach()
 
 qt_add_executable(tst_core tst_core.cpp)
+# The file grew past the object-file format's 65 536 sections (a Debug compile
+# has no /GL to pack them): C1128 stopped the whole Debug build.
+target_compile_options(tst_core PRIVATE /bigobj)
 target_link_libraries(tst_core PRIVATE wscore wsextract miniz Qt6::Test)
 
 qt_add_executable(tst_activity tst_activity.cpp ${PROJECT_SOURCE_DIR}/src/app/ActivityText.cpp
@@ -1367,10 +1370,11 @@ set_tests_properties(tst_explorertabs PROPERTIES
 # Bookmarks files, the folder text, percent-decoding, matching, scoring,
 # the 50-row cap and the "nothing found" rows.
 qt_add_executable(tst_bookmarks tst_bookmarks.cpp ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin/Bookmarks.cpp
+    ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin/History.cpp
     ${PROJECT_SOURCE_DIR}/src/core/Pinyin.cpp ${PROJECT_SOURCE_DIR}/src/core/PinyinTable.cpp)
 target_include_directories(tst_bookmarks PRIVATE ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin ${PROJECT_SOURCE_DIR}/src/plugins-sdk
     ${PROJECT_SOURCE_DIR}/src/core)
-target_link_libraries(tst_bookmarks PRIVATE winshun_options Qt6::Test)
+target_link_libraries(tst_bookmarks PRIVATE winshun_options Qt6::Test winsqlite3)
 set_target_properties(tst_bookmarks PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_bookmarks COMMAND tst_bookmarks)
 set_tests_properties(tst_bookmarks PROPERTIES

@@ -17,6 +17,7 @@
 #include "Keycaps.h"
 #include "PictureFile.h"
 #include "PinManager.h"
+#include "TranslateOverlay.h"
 #include "PinImage.h"
 #include "PinWindow.h"
 #include "PrintScreen.h"
@@ -30,6 +31,7 @@
 #include "platform/WindowEffects.h"
 #include "platform/Foreground.h"
 
+#include <QTimer>
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QDebug>
@@ -447,6 +449,10 @@ void CaptureApp::apply()
         callbacks.ocr = [this](const QImage& image, double dpr, const QRect& where) { showCaptureOcr(image, dpr, where); };
         callbacks.ocrThen = [this](const QImage& image, double dpr, const QRect& where, capture::CaptureSession::Action then) {
             using Action = capture::CaptureSession::Action;
+            if (then == Action::OcrTranslate) {
+                translateInPlace(image, dpr, where);
+                return;
+            }
             captureOcrThen(image, dpr, where,
                 then == Action::OcrCopy ? OcrThen::Copy : then == Action::OcrSearch ? OcrThen::Search : OcrThen::Web);
         };
@@ -798,6 +804,41 @@ void CaptureApp::applyAppearance(const QJsonObject& a)
     }
 }
 
+namespace {
+
+// 设置翻译服务…: Win顺's settings would come up under the OCR window, which
+// stays above all others. Not above them while another program's window (the
+// settings, its drop-downs) is in front; above again, its words still there
+// to go on with, once the user is back from there: a tool window is not on
+// the taskbar or in Alt+Tab to be found again. Nothing came in front for 6 s:
+// above again too.
+void letOver(QQuickWindow* window)
+{
+    const HWND own = reinterpret_cast<HWND>(window->winId());
+    ::SetWindowPos(own, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    auto* watch = new QTimer(window);
+    watch->setInterval(300);
+    QObject::connect(watch, &QTimer::timeout, window, [own, watch, other = DWORD(0), ticks = 0]() mutable {
+        const HWND front = ::GetForegroundWindow();
+        DWORD process = 0;
+        if (front)
+            ::GetWindowThreadProcessId(front, &process);
+        if (!other) {
+            if (process && process != ::GetCurrentProcessId())
+                other = process; // the settings, in front now
+            if (other || ++ticks < 20)
+                return;
+        } else if (!front || process == other) {
+            return; // still there (no window in front: between two of them)
+        }
+        ::SetWindowPos(own, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        watch->deleteLater();
+    });
+    watch->start();
+}
+
+} // namespace
+
 capture::CaptureOcr& CaptureApp::captureOcr()
 {
     if (!m_captureOcr) {
@@ -814,6 +855,39 @@ capture::CaptureOcr& CaptureApp::captureOcr()
         });
         connect(m_captureOcr.get(), &capture::CaptureOcr::searchRequested, this, [this](const QString& query) { searchText(query, false); });
         connect(m_captureOcr.get(), &capture::CaptureOcr::webSearchRequested, this, [this](const QString& query) { searchText(query, true); });
+        connect(m_captureOcr.get(), &capture::CaptureOcr::translateRequested, this, [this](const QString& text, int ticket) {
+            // Win顺 asks the translate plugin and answers with what it said
+            // ("state": ok with "text", service, plugin, or failed with
+            // "message"). Win顺 before 0.30.0 has no such tool: the search box
+            // with "tr" before the words, the plugin's keyword unless the user
+            // changed it.
+            QPointer<CaptureApp> self(this);
+            m_protocol.tool(u"translate_text"_s, {{u"text"_s, text}}, [self, text, ticket](const QJsonValue& result, const QString& error) {
+                if (!self || !self->m_captureOcr)
+                    return;
+                using Translated = capture::CaptureOcr::Translated;
+                if (error.startsWith(u"Unknown tool")) {
+                    self->m_captureOcr->setTranslation(ticket, Translated::Done, {});
+                    self->m_protocol.tool(u"show_launcher"_s, {{u"text"_s, QString(u"tr "_s + text.simplified().left(800))}});
+                    return;
+                }
+                const QJsonObject answer = result.toObject();
+                const QString state = answer.value(u"state"_s).toString();
+                if (state == u"ok")
+                    self->m_captureOcr->setTranslation(ticket, Translated::Done, answer.value(u"text"_s).toString());
+                else if (state == u"service")
+                    self->m_captureOcr->setTranslation(ticket, Translated::NoService, {});
+                else if (state == u"plugin")
+                    self->m_captureOcr->setTranslation(ticket, Translated::NoPlugin, {});
+                else
+                    self->m_captureOcr->setTranslation(ticket, Translated::Failed, error.isEmpty() ? answer.value(u"message"_s).toString() : error);
+            });
+        });
+        connect(m_captureOcr.get(), &capture::CaptureOcr::translationSetupRequested, this, [this] {
+            if (m_ocrWindow)
+                letOver(m_ocrWindow);
+            m_protocol.tool(u"translate_text"_s, {{u"setup"_s, true}});
+        });
         connect(m_captureOcr.get(), &capture::CaptureOcr::closeRequested, this, [this] { closeCaptureOcr(); });
         connect(m_captureOcr.get(), &capture::CaptureOcr::openLinkRequested, this, [this](const QString& url) {
             // Only ever from a click on 打开链接; opened by Win顺 (no programs started
@@ -866,7 +940,7 @@ void CaptureApp::prepareWindow(QQuickWindow* window, bool backdrop)
 
 // 识别文字 (CaptureOcr, OcrPanel.qml): one window, made the first time,
 // beside the picture, taking the focus (the text can be edited).
-void CaptureApp::showCaptureOcr(const QImage& image, double dpr, const QRect& where, const QStringList* texts)
+void CaptureApp::showCaptureOcr(const QImage& image, double dpr, const QRect& where, const QStringList* texts, bool translate)
 {
     m_resumeOcr = false;
     if (!m_ocrWindow) {
@@ -886,13 +960,25 @@ void CaptureApp::showCaptureOcr(const QImage& image, double dpr, const QRect& wh
         prepareWindow(window, true);
         m_ocrFrame->setWindow(window);
         window->installEventFilter(this);
+        // Taller with a translation under the words: not off the bottom of the screen.
+        connect(window, &QWindow::heightChanged, window, [window] {
+            const QRect area = window->screen()->availableGeometry();
+            if (window->y() + window->height() > area.y() + area.height())
+                window->setY(std::max(area.y(), area.y() + area.height() - window->height()));
+        });
+        // Above the others again as soon as it is used, after 设置翻译服务… let the settings over it (letOver).
+        connect(window, &QWindow::activeChanged, window, [window] {
+            if (window->isActive())
+                ::SetWindowPos(reinterpret_cast<HWND>(window->winId()), HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        });
         m_ocrWindow = window;
     }
-    placeNear(m_ocrWindow, where);
+    // The words first: a translation left from the last picture goes, and the window is its plain height to place.
     if (texts)
         captureOcr().showTexts(*texts, tr("二维码"), tr("选区里没有找到二维码。"));
     else
-        captureOcr().read(image, dpr);
+        captureOcr().read(image, dpr, translate);
+    placeNear(m_ocrWindow, where);
     m_ocrWindow->show();
     m_ocrWindow->raise();
     win::bringToFront(m_ocrWindow);
@@ -936,8 +1022,128 @@ void CaptureApp::closeCaptureOcr(bool destroy)
     if (destroy) {
         m_ocrFrame.reset();
         m_quickOcr.reset();
+        m_translateOcr.reset();
         m_captureOcr.reset(); // its thread, and the reader if still loaded
     }
+}
+
+void CaptureApp::translateInPlace(const QImage& image, double dpr, const QRect& where)
+{
+    if (capture::PinWindow* pin = capture::CaptureOcr::available() ? pins().pin(image, where.topLeft()) : nullptr)
+        translatePin(pin, true);
+    else
+        showCaptureOcr(image, dpr, where, nullptr, true);
+}
+
+namespace {
+
+// At most this many blocks are asked for one by one when the answer for all
+// of them at once came back with other lines than blocks (a chat model that
+// joined or split some): a request each, one after the other.
+constexpr qsizetype kOneByOne = 24;
+
+} // namespace
+
+void CaptureApp::translatePin(capture::PinWindow* pin, bool own)
+{
+    const QImage image = pin->image();
+    const double dpr = pin->dpr();
+    const QRect where = pin->pictureRect();
+    if (image.isNull())
+        return;
+    if (!capture::CaptureOcr::available()) {
+        showCaptureOcr(image, dpr, where, nullptr, true); // says how to get the reader
+        return;
+    }
+    pin->note(tr("正在翻译…"), true);
+    const int ticket = ++m_translateTicket;
+    const int revision = pin->revision();
+    // The pin as it is when an answer comes: gone, or another picture by then, is no pin.
+    const auto still = [this, pin, revision]() -> capture::PinWindow* {
+        return m_pins && m_pins->contains(pin) && pin->revision() == revision ? pin : nullptr;
+    };
+    // The OCR window instead, with the words and what is in the way.
+    const auto instead = [this, still, own, image, dpr, where] {
+        if (capture::PinWindow* p = still()) {
+            if (own)
+                p->close(); // it was only the picture
+            else
+                p->note({});
+        }
+        showCaptureOcr(image, dpr, where, nullptr, true);
+    };
+    if (!m_translateOcr)
+        m_translateOcr = std::make_unique<capture::CaptureOcr>();
+    m_translateOcr->scan(image, dpr, [this, ticket, still, instead, image](QList<capture::RedactLine> lines) {
+        if (ticket != m_translateTicket)
+            return; // another translation was asked for: this pin stays as the picture
+        m_translateOcr.release()->deleteLater(); // its thread and reader go with it
+        const QList<capture::TextBlock> blocks = capture::ocrBlocks(lines);
+        QStringList words;
+        for (const capture::TextBlock& block : blocks)
+            words.append(block.text);
+        const QString text = words.join(u'\n'); // a block a line: the translation comes back a line a block
+        if (blocks.isEmpty()) {
+            if (capture::PinWindow* p = still())
+                p->note(tr("没有找到文字"));
+            return;
+        }
+        if (text.size() > capture::CaptureOcr::kMaxTranslate) {
+            instead();
+            return;
+        }
+        QPointer<CaptureApp> self(this);
+        const auto show = [self, still, image, blocks](const QStringList& translations) {
+            capture::PinWindow* p = still();
+            if (!self || !p)
+                return;
+            const QImage translated = capture::translatedPicture(image, blocks, translations, QGuiApplication::font());
+            if (p->setTranslation(translated, translations.join(u'\n'), p->revision()))
+                p->note(self->tr("Tab 看原文"));
+            self->m_idleTrim->poke();
+        };
+        m_protocol.tool(u"translate_text"_s, {{u"text"_s, text}},
+            [self, ticket, instead, show, words](const QJsonValue& result, const QString&) {
+                if (!self || ticket != self->m_translateTicket)
+                    return;
+                const QJsonObject answer = result.toObject();
+                if (answer.value(u"state"_s).toString() != u"ok") {
+                    instead(); // no service, no plugin, failed, or an older Win顺
+                    return;
+                }
+                const QStringList translations = answer.value(u"text"_s).toString().split(u'\n', Qt::SkipEmptyParts);
+                if (translations.size() == words.size()) {
+                    show(translations);
+                    return;
+                }
+                if (words.size() > kOneByOne) {
+                    instead();
+                    return;
+                }
+                // Other lines than blocks: each block on its own, in turn; one that fails keeps its words.
+                auto got = std::make_shared<QStringList>();
+                auto next = std::make_shared<std::function<void()>>();
+                *next = [self, ticket, show, words, got, next] {
+                    if (!self || ticket != self->m_translateTicket) {
+                        *next = nullptr;
+                        return;
+                    }
+                    if (got->size() == words.size()) {
+                        show(*got);
+                        *next = nullptr; // lets go of itself
+                        return;
+                    }
+                    self->m_protocol.tool(u"translate_text"_s, {{u"text"_s, words[got->size()]}},
+                        [got, next](const QJsonValue& one, const QString&) {
+                            const QJsonObject o = one.toObject();
+                            got->append(o.value(u"state"_s).toString() == u"ok" ? o.value(u"text"_s).toString().simplified() : QString());
+                            if (*next)
+                                (*next)();
+                        });
+                };
+                (*next)();
+            });
+    });
 }
 
 // The mouse buttons' 识别文字并复制 / 搜索 / 网页搜索: read on a reader of its
@@ -1101,6 +1307,7 @@ capture::PinManager& CaptureApp::pins()
         };
         callbacks.ocr = [this](const QImage& image, double dpr, const QRect& where) { showCaptureOcr(image, dpr, where); };
         callbacks.edit = [this](capture::PinWindow* pin) { editPin(pin); };
+        callbacks.translate = [this](capture::PinWindow* pin) { translatePin(pin, false); };
         callbacks.closed = [this] { m_idleTrim->poke(); }; // its pixels can go back to Windows
         callbacks.dark = [] { return isDarkMode(); };
         // The 界面风格's (Theme's nativeLook), as the launcher's.

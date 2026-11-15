@@ -32,6 +32,7 @@ public:
         std::function<void(const QImage&, bool screenshot)> copy; // screenshot: the pin came from a capture
         std::function<void(const QImage&, const QString& path)> save; // empty path: the Screenshots folder
         std::function<void(const QImage&, double dpr, const QRect& picture)> ocr;
+        std::function<void(PinWindow*)> translate; // 翻译: its words translated in place (#191); empty: not offered
         std::function<void(PinWindow*)> edit; // 编辑: the editing window opens on it
         std::function<void()> closed; // a pin closed: its memory can go back to Windows
         std::function<bool()> dark;
@@ -52,7 +53,8 @@ public:
     // A pin of `image` with its top left at `origin` (physical, virtual
     // desktop); `screenshot`: taken with the capture (PinWindow::screenshot);
     // `project`: its annotations, to edit again (empty: none).
-    void pin(const QImage& image, QPoint origin, bool screenshot = true, QByteArray project = {});
+    // The pin made (the manager's, here until it is closed: contains()); none for a null picture.
+    PinWindow* pin(const QImage& image, QPoint origin, bool screenshot = true, QByteArray project = {});
     // A picture not shown where it was taken (a long screenshot, a file, the
     // clipboard's): its own pixels kept, it starts within the work area of
     // the monitor at `anchor`, shown fitted when larger than 90% of it, its
@@ -86,7 +88,7 @@ public:
 private:
     void setWatching(); // starts or stops the watcher to match anyClickThrough()
     void watch(); // one tick: Ctrl and the cursor against every click-through pin
-    void add(const QImage& image, QPoint origin, bool screenshot, QByteArray project, std::optional<QPoint> fitAbout);
+    PinWindow* add(const QImage& image, QPoint origin, bool screenshot, QByteArray project, std::optional<QPoint> fitAbout);
     void showMenu(PinWindow* pin, POINT at);
     void closed(PinWindow* pin);
 

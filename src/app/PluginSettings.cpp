@@ -343,6 +343,26 @@ void PluginSettings::setHost(plugin::Host* host)
     m_dataRoot = host->options().dataRoot.isEmpty() ? m_userDir : QDir::toNativeSeparators(host->options().dataRoot);
     m_logPath = host->options().logPath;
     connect(host, &plugin::Host::stateChanged, this, [this](const QString&) { rebuild(); });
+    // winshun/settings/update (GitHub #332, PR #333): a plugin changed one of
+    // its own settings where the user sets it in the search box; the card
+    // and the settings file follow, so both show one value. Only what
+    // secrets::acceptedUpdate lets through, and only a value that differs:
+    // the plugin hears settingsChanged for a change (App::applyPlugins), and
+    // nothing for what it had already, so two sides cannot answer each other
+    // without end.
+    connect(host, &plugin::Host::settingsUpdateRequested, this, [this](const QString& id, const QJsonObject& values) {
+        const plugin::Entry* entry = m_host->catalog().find(id);
+        if (!entry || !entry->manifest)
+            return;
+        PluginConfig& config = m_editor->m_settings.pluginConfig(id);
+        bool changed = false;
+        for (const auto& [key, text] : plugin::secrets::acceptedUpdate(*entry->manifest, values))
+            changed = plugin::secrets::store(id, *entry->manifest, key, text, config.settings) || changed;
+        if (!changed)
+            return;
+        m_editor->commit();
+        rebuild();
+    });
     connect(&host->catalog(), &plugin::Catalog::changed, this, &PluginSettings::rebuild);
     connect(host, &plugin::Host::traced, this,
         [this](const QString& pluginId, const QString& direction, const QString& summary, const QString& detail, int elapsedMs) {

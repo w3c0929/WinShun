@@ -963,8 +963,16 @@
         <translation>Off</translation>
     </message>
     <message>
+        <source>打开时填入刚复制的文字</source>
+        <translation>Fill in what was just copied</translation>
+    </message>
+    <message>
         <source>序号提示</source>
         <translation>Number key hints</translation>
+    </message>
+    <message>
+        <source>字母直达</source>
+        <translation>Letter jump</translation>
     </message>
     <message>
         <source>按住修饰键时</source>
@@ -1492,6 +1500,25 @@
     <message>
         <source>%1 是你给 Win顺 设的快捷键，在这里按也是那个快捷键。可在设置里改用 %2</source>
         <translation>%1 is the shortcut you set for WinShun; pressing it here does the same. You can use %2 instead in Settings</translation>
+    </message>
+</context>
+<context>
+    <name>ClipTextEditor</name>
+    <message>
+        <source>修改文字</source>
+        <translation>Edit the text</translation>
+    </message>
+    <message>
+        <source>Ctrl+Enter 保存</source>
+        <translation>Ctrl+Enter saves</translation>
+    </message>
+    <message>
+        <source>取消</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>保存</source>
+        <translation>Save</translation>
     </message>
 </context>
 <context>
@@ -4865,6 +4892,30 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>tray;notification area;icons;running;all;notification</translation>
     </message>
     <message>
+        <source>打开时填入刚复制的文字</source>
+        <translation>Fill in what was just copied</translation>
+    </message>
+    <message>
+        <source>剪贴板;复制;自动;填入;粘贴;网址;clipboard;paste</source>
+        <translation>clipboard;copy;automatic;fill;paste;address;url</translation>
+    </message>
+    <message>
+        <source>刚在别的程序里复制了一行文字，在这么多秒内打开搜索框，就直接搜它（全选着，打字即替换）；超过时间、复制的是多行或文件时不填。装了“网页搜索”插件，复制的是网址时第一行就是打开它</source>
+        <translation>One line of text copied in another program at most this many seconds before the search box opens is searched at once (all selected: typing replaces it); not after that time, nor for several lines or files. With the Web search plugin, a copied address has the row that opens it first</translation>
+    </message>
+    <message>
+        <source>3 秒</source>
+        <translation>3 s</translation>
+    </message>
+    <message>
+        <source>5 秒</source>
+        <translation>5 s</translation>
+    </message>
+    <message>
+        <source>10 秒</source>
+        <translation>10 s</translation>
+    </message>
+    <message>
         <source>打开结果的备用键</source>
         <translation>Second key to open a result</translation>
     </message>
@@ -7199,6 +7250,18 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>序号提示</source>
         <translation>Number key hints</translation>
+    </message>
+    <message>
+        <source>字母直达</source>
+        <translation>Letter jump</translation>
+    </message>
+    <message>
+        <source>轻按一下数字键用的那个键（搜索框是 Ctrl，剪贴板是 Alt，按上面的设置）再松开，每一行前面出现一个字母，按字母直接打开这一行（剪贴板里是粘贴），第九行以后也有；加 Shift 是打开所在位置（剪贴板里是粘贴为纯文本）。再按一下或按 Esc 退出。启动器和剪贴板共用</source>
+        <translation>Tap the number keys&apos; modifier by itself (Ctrl in the search box, Alt in the clipboard, as set above): every row gets a letter, and the letter opens that row (pastes it, in the clipboard), the rows past the ninth too; with Shift it shows where the file is (pastes as plain text). The tap again or Esc leaves. Shared by the launcher and the clipboard</translation>
+    </message>
+    <message>
+        <source>快捷键;字母;单手;vim;vi;提示;跳转;直达;hint</source>
+        <translation>shortcut;letter;one hand;vim;vi;hint;jump</translation>
     </message>
     <message>
         <source>启动器和剪贴板共用；隐藏提示不影响数字快捷键</source>
@@ -9689,6 +9752,18 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Some features have not been restored</translation>
     </message>
     <message>
+        <source>翻译插件未启用</source>
+        <translation>The Translate plugin is not on</translation>
+    </message>
+    <message>
+        <source>请在设置 → 插件 → 插件库中安装并启用“翻译”，填好翻译服务。</source>
+        <translation>Install and turn on Translate in Settings → Plugins → Plugin library, and fill in its service.</translation>
+    </message>
+    <message>
+        <source>翻译插件未启用，请在设置 → 插件 → 插件库中安装并启用“翻译”</source>
+        <translation>The Translate plugin is not on: install and turn it on in Settings → Plugins → Plugin library</translation>
+    </message>
+    <message>
         <source>网页搜索插件未启用</source>
         <translation>Web search plugin is not enabled</translation>
     </message>
@@ -10321,6 +10396,22 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>改备注…</source>
         <translation>Edit the note…</translation>
+    </message>
+    <message>
+        <source>修改文字…</source>
+        <translation>Edit the text…</translation>
+    </message>
+    <message>
+        <source>已保存修改</source>
+        <translation>Saved</translation>
+    </message>
+    <message>
+        <source>已有一条内容相同的记录</source>
+        <translation>Another entry already has this text</translation>
+    </message>
+    <message>
+        <source>内容不能为空</source>
+        <translation>The text cannot be empty</translation>
     </message>
     <message>
         <source>移到新分组…</source>
@@ -13601,6 +13692,10 @@ Content index: %5</translation>
             <numerusform>%n hour</numerusform>
             <numerusform>%n hours</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>打开网址 · %1</source>
+        <translation>Open the address · %1</translation>
     </message>
     <message>
         <source>%1 %2</source>
