@@ -2164,7 +2164,7 @@ Window {
                     title: qsTr("让其他软件把 Win顺 当作 Everything 搜索")
                     keywords: qsTr("Everything;兼容;Directory Opus;DOpus;Total Commander;TC;es.exe;SDK;IPC").split(";")
                     description: qsTr("Directory Opus、Total Commander 等软件里的 Everything 搜索由 Win顺 回答，不用再装 Everything")
-                    tip: qsTr("Everything 自己在运行时仍由它回答。打开后，本机的程序都可以通过这个接口查到索引里的文件名")
+                    tip: qsTr("Everything 自己在运行时仍由它回答。打开后，本机的程序都可以通过这个接口查到索引里的文件名；“不搜索的文件夹”也会建索引给它们查，只是不出现在 Win顺 自己的结果里")
 
                     ToggleSwitch {
                         dpr: window.dpr
@@ -2273,20 +2273,26 @@ Window {
                     }
                 }
 
-                Repeater {
-                    model: 2
+                Repeater { // the menu's order: favorites, recent, open
+                    model: [
+                        { title: qsTr("直接显示收藏夹"), words: qsTr("文件夹菜单;收藏;收藏夹;数量;更多;展开;inline;favorites"),
+                          group: "folderMenuFavorites", setting: "folderMenuFavoritesInline" },
+                        { title: qsTr("直接显示最近的文件夹"), words: qsTr("文件夹菜单;最近;已打开;数量;更多;展开;inline;recent;folders"),
+                          group: "folderMenuRecent", setting: "folderMenuRecentInline" },
+                        { title: qsTr("直接显示已打开的文件夹"), words: qsTr("文件夹菜单;最近;已打开;数量;更多;展开;inline;recent;folders"),
+                          group: "folderMenuWindows", setting: "folderMenuWindowsInline" }
+                    ]
                     delegate: SettingRow {
                         id: inlineFoldersRow
-                        required property int index
-                        readonly property bool recent: index === 0
-                        readonly property int count: recent ? window.editor.folderMenuRecentInline : window.editor.folderMenuWindowsInline
+                        required property var modelData
+                        readonly property int count: window.editor[modelData.setting]
                         sub: true
-                        title: recent ? qsTr("直接显示最近的文件夹") : qsTr("直接显示已打开的文件夹")
+                        title: modelData.title
                         description: qsTr("0：收进二级菜单；1–10：直接显示前几个，其余放进“更多…”")
-                        keywords: qsTr("文件夹菜单;最近;已打开;数量;更多;展开;inline;recent;folders").split(";")
+                        keywords: modelData.words.split(";")
                         InputBox {
-                            objectName: inlineFoldersRow.recent ? "folderMenuRecentInline" : "folderMenuWindowsInline"
-                            enabled: window.editor.folderMenu && (inlineFoldersRow.recent ? window.editor.folderMenuRecent : window.editor.folderMenuWindows)
+                            objectName: inlineFoldersRow.modelData.setting
+                            enabled: window.editor.folderMenu && window.editor[inlineFoldersRow.modelData.group]
                             width: 72
                             dpr: window.dpr
                             horizontalAlignment: TextInput.AlignHCenter
@@ -2294,10 +2300,8 @@ Window {
                             validator: IntValidator { bottom: 0; top: 10 }
                             onEditingFinished: {
                                 const count = parseInt(text, 10)
-                                if (!isNaN(count) && count >= 0 && count <= 10) {
-                                    if (inlineFoldersRow.recent) window.editor.folderMenuRecentInline = count
-                                    else window.editor.folderMenuWindowsInline = count
-                                }
+                                if (!isNaN(count) && count >= 0 && count <= 10)
+                                    window.editor[inlineFoldersRow.modelData.setting] = count
                                 text = Qt.binding(() => String(inlineFoldersRow.count))
                             }
                         }
@@ -3366,7 +3370,10 @@ Window {
                     title: qsTr("不搜索的文件夹")
                     keywords: qsTr("排除;忽略;隐藏;黑名单;exclude").split(";")
                     values: window.editor.excludedPaths
-                    description: qsTr("这些文件夹里的内容都不出现在结果里")
+                    // GitHub #351: indexed all the same for the programs asking over the Everything interface.
+                    description: window.editor.everythingCompat
+                        ? qsTr("这些文件夹里的内容都不出现在结果里。“让其他软件把 Win顺 当作 Everything 搜索”开着时仍建索引，其他软件照样查得到（如 Total Commander 的文件夹大小）")
+                        : qsTr("这些文件夹里的内容都不出现在结果里")
 
                     FlatButton {
                         dpr: window.dpr
@@ -6098,6 +6105,13 @@ Window {
 
     PluginReadmeDialog {
         id: readmeDialog
+        z: 1
+        anchors.fill: parent
+        plugins: window.editor.plugins
+        frame: window.frame
+    }
+
+    PluginNotesDialog {
         z: 1
         anchors.fill: parent
         plugins: window.editor.plugins

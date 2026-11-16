@@ -1,3 +1,4 @@
+#include "TestJunction.h"
 #include "AppCatalog.h"
 #include "AppLogo.h"
 #include "AutostartRun.h"
@@ -834,40 +835,6 @@ private:
     Kind m_kind;
 };
 
-// Junctions need no elevation; every path and target belongs to the test.
-bool makeJunction(const QString& link, const QString& target)
-{
-    if (!QDir().mkpath(link))
-        return false;
-    const auto linkPath = QDir::toNativeSeparators(link).toStdWString();
-    const auto targetPath = QDir::toNativeSeparators(target).toStdWString();
-    const std::wstring substitute = L"\\??\\" + targetPath;
-    struct JunctionData {
-        DWORD tag;
-        WORD bytes;
-        WORD reserved;
-        WORD substituteOffset;
-        WORD substituteLength;
-        WORD printOffset;
-        WORD printLength;
-        wchar_t names[1];
-    };
-    const auto nameBytes = (substitute.size() + 1 + targetPath.size() + 1) * sizeof(wchar_t);
-    std::vector<std::byte> buffer(offsetof(JunctionData, names) + nameBytes);
-    auto* data = reinterpret_cast<JunctionData*>(buffer.data());
-    data->tag = IO_REPARSE_TAG_MOUNT_POINT;
-    data->bytes = WORD(buffer.size() - 8);
-    data->substituteLength = WORD(substitute.size() * sizeof(wchar_t));
-    data->printOffset = WORD((substitute.size() + 1) * sizeof(wchar_t));
-    data->printLength = WORD(targetPath.size() * sizeof(wchar_t));
-    std::memcpy(data->names, substitute.c_str(), (substitute.size() + 1) * sizeof(wchar_t));
-    std::memcpy(reinterpret_cast<std::byte*>(data->names) + data->printOffset, targetPath.c_str(), (targetPath.size() + 1) * sizeof(wchar_t));
-    win32::UniqueHandle handle(::CreateFileW(linkPath.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
-        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr));
-    DWORD returned = 0;
-    return handle.valid() && ::DeviceIoControl(handle.get(), FSCTL_SET_REPARSE_POINT, data, DWORD(buffer.size()), nullptr, 0, &returned, nullptr);
-}
-
 using FolderState = IndexService::FolderStatus::State;
 
 // The chosen folders' states, in their order.
@@ -1383,6 +1350,11 @@ private slots:
         QCOMPARE(pathFromText(u"\\\\server\\share\\folder\\"_s), u"\\\\server\\share\\folder"_s);
         QCOMPARE(pathFromText(u"%SystemRoot%\\System32"_s), qEnvironmentVariable("SystemRoot") + u"\\System32"_s);
         QCOMPARE(pathFromText(u"C:\\100%NOSUCHVARIABLE%\\x"_s), u"C:\\100%NOSUCHVARIABLE%\\x"_s);
+        // A variable named in Chinese, with a letter the ANSI code page has no place for (it read "WS_TEST_?"): found as any is.
+        const std::wstring name = L"WS_TEST_\u53d8\u91cf\u0167";
+        ::SetEnvironmentVariableW(name.c_str(), L"D:\\\u503c");
+        const auto unset = qScopeGuard([&] { ::SetEnvironmentVariableW(name.c_str(), nullptr); });
+        QCOMPARE(pathFromText(u"%WS_TEST_\u53d8\u91cf\u0167%\\x"_s), u"D:\\\u503c\\x"_s);
         QVERIFY(pathFromText(u"Users\\me"_s).isEmpty()); // relative
         QVERIFY(pathFromText(u"\\\\server"_s).isEmpty()); // no share
         QVERIFY(pathFromText(u"C:\\a?b"_s).isEmpty());
@@ -3535,6 +3507,131 @@ private slots:
             pipe.isEmpty() ? "direct" : "service");
         service.shutdown();
         QVERIFY(QFileInfo::exists(target + u"\\o.txt"_s));
+    }
+
+    // GitHub #350: where a directory link leads, read off its reparse point
+    // without following it.
+    void directoryLinkTargets()
+    {
+        QTemporaryDir tree;
+        QVERIFY(tree.isValid());
+        MadeLinks made; // one leads to a whole volume: never cleaned up through it
+        const QString t = QDir::toNativeSeparators(tree.path());
+        QVERIFY(QDir(t).mkpath(u"目标/sub"_s));
+        const QString target = t + u"\\目标"_s;
+        const QString junction = made << t + u"\\联接"_s;
+        QVERIFY(makeJunction(junction, target));
+        QCOMPARE(QString::fromStdWString(directoryLinkTarget(junction.toStdWString())), target);
+        QVERIFY(directoryLinkTarget(target.toStdWString()).empty()); // no link
+        QVERIFY(directoryLinkTarget((t + u"\\missing"_s).toStdWString()).empty());
+
+        // A volume mounted in a folder: by its drive letter when it has one.
+        wchar_t volume[64] = {};
+        QVERIFY(::GetVolumeNameForVolumeMountPointW((t.left(2) + u"\\"_s).toStdWString().c_str(), volume, 64));
+        const QString mounted = made << t + u"\\卷"_s;
+        QVERIFY(makeJunction(mounted, QString::fromWCharArray(volume))); // "\\?\Volume{…}\"
+        QCOMPARE(QString::fromStdWString(directoryLinkTarget(mounted.toStdWString())), t.left(2).toUpper());
+
+        // Symbolic links (mklink /d), where this account may make them
+        // (Developer Mode, or elevated): relative and to a share.
+        const QString relative = made << t + u"\\相对"_s;
+        if (!::CreateSymbolicLinkW(relative.toStdWString().c_str(), L"目标\\sub",
+                SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+            qInfo("No symbolic links here (error %lu): junctions only", ::GetLastError());
+            return;
+        }
+        QCOMPARE(QString::fromStdWString(directoryLinkTarget(relative.toStdWString())), target + u"\\sub"_s);
+        const QString share = made << t + u"\\共享"_s;
+        QVERIFY(::CreateSymbolicLinkW(share.toStdWString().c_str(), L"\\\\nas\\docs\\年度",
+            SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE));
+        QCOMPARE(QString::fromStdWString(directoryLinkTarget(share.toStdWString())), u"\\\\nas\\docs\\年度"_s);
+    }
+
+    // GitHub #350: a link to what the index holds nowhere else (a folder on a
+    // disk it leaves out) is walked under its own path: found in the MFT,
+    // and in the journal when made later; remembered in scope.json. One to
+    // what it holds is not (found where it is).
+    void directoryLinksFoundWithLiveMft()
+    {
+        if (!qEnvironmentVariableIsSet("WINSHUN_TEST_REAL_VOLUMES"))
+            QSKIP("Opt in to reading the real MFT with WINSHUN_TEST_REAL_VOLUMES=1");
+        const QString otherDisk = qEnvironmentVariable("WINSHUN_TEST_OTHER_DISK_DIR");
+        if (otherDisk.isEmpty())
+            QSKIP("Set WINSHUN_TEST_OTHER_DISK_DIR to a folder on another disk than %TEMP%");
+        QTemporaryDir tree;
+        QTemporaryDir store;
+        QTemporaryDir elsewhere(otherDisk + u"/links-XXXXXX"_s);
+        QVERIFY(tree.isValid() && store.isValid() && elsewhere.isValid());
+        MadeLinks made;
+        QVERIFY(makeScopeTree(tree.path()));
+        const QString t = QDir::toNativeSeparators(tree.path());
+        const QString away = QDir::toNativeSeparators(elsewhere.path());
+        QVERIFY(away.left(2).compare(t.left(2), Qt::CaseInsensitive) != 0);
+        QVERIFY(QDir(away).mkpath(u"later"_s));
+        for (const QString& file : {u"away.txt"_s, u"later/later.txt"_s}) {
+            QFile f(QDir(away).filePath(file));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+        }
+        const std::wstring root = t.left(2).toStdWString();
+        const QString pipe = qEnvironmentVariable("WINSHUN_TEST_LINK_PIPE");
+        std::shared_ptr<ntfs::VolumeAccess> access;
+        if (pipe.isEmpty()) {
+            access = std::make_shared<ntfs::DirectVolumeAccess>();
+        } else {
+            auto throughService = pipe == u"default"
+                ? std::make_shared<ntfs::ServiceVolumeAccess>()
+                : std::make_shared<ntfs::ServiceVolumeAccess>(pipe.toStdWString());
+            QVERIFY2(throughService->probe(), qPrintable(QString::fromStdWString(throughService->lastError())));
+            access = std::move(throughService);
+        }
+        const auto volumes = listLocalVolumes(false, {}, std::vector<std::wstring>{root});
+        QVERIFY(!volumes.empty() && volumes.front().ntfs);
+        if (!access->queryJournal(root, volumes.front().serial) && pipe.isEmpty())
+            QSKIP("Direct NTFS journal access requires an elevated test process");
+        QTest::failOnWarning(QRegularExpression(u"^WinShun: cannot read the MFT.*"_s));
+
+        const QString alias = made << t + u"\\docs\\远处"_s;
+        QVERIFY(makeJunction(alias, away));
+        const QString nearby = made << t + u"\\docs\\近处"_s;
+        QVERIFY(makeJunction(nearby, t + u"\\other"_s));
+        // The other disk is not chosen (and not excluded: a whole drive excluded
+        // is not to be reached through a link either).
+        auto rules = branchRules(t);
+        std::erase_if(rules.excludedPaths, [&](const std::wstring& p) { return win32::equalsIgnoreCase(p, away.left(2).toStdWString()); });
+        auto options = walkedOptions(std::nullopt, rules);
+        options.selectedDrives = std::vector<std::wstring>{root};
+        options.volumeAccess = access;
+        {
+            IndexService service(store.path(), options);
+            service.start();
+            QTRY_VERIFY_WITH_TIMEOUT(allReady(service), 120'000);
+            QTRY_VERIFY_WITH_TIMEOUT(indexedIn(service, alias + u"\\away.txt"_s), 20'000);
+            QVERIFY(indexedIn(service, alias + u"\\later\\later.txt"_s));
+            QVERIFY(indexedIn(service, t + u"\\other\\o.txt"_s));
+            QVERIFY(!indexedIn(service, nearby + u"\\o.txt"_s));
+            // Followed live under the link, and a link made since.
+            QFile added(away + u"\\new.txt"_s);
+            QVERIFY(added.open(QIODevice::WriteOnly));
+            added.close();
+            QTRY_VERIFY_WITH_TIMEOUT(indexedIn(service, alias + u"\\new.txt"_s), 30'000);
+            const QString later = made << t + u"\\pics\\后来"_s;
+            QVERIFY(makeJunction(later, away + u"\\later"_s));
+            QTRY_VERIFY_WITH_TIMEOUT(indexedIn(service, later + u"\\later.txt"_s), 30'000);
+            service.shutdown();
+        }
+        {
+            QFile scope(QDir(store.path()).filePath(u"scope.json"_s));
+            QVERIFY(scope.open(QIODevice::ReadOnly));
+            const QJsonArray links = QJsonDocument::fromJson(scope.readAll()).object().value(u"links"_s).toArray();
+            QCOMPARE(links.size(), 2);
+        } // closed: the next start writes it again
+        // A start from the snapshot knows them without reading the MFT again.
+        IndexService again(store.path(), options);
+        again.start();
+        QTRY_VERIFY_WITH_TIMEOUT(allReady(again) && indexedIn(again, alias + u"\\away.txt"_s)
+                && indexedIn(again, t + u"\\pics\\后来\\later.txt"_s), 60'000);
+        again.shutdown();
+        qInfo("Live %s: links found in the MFT and the journal, remembered", pipe.isEmpty() ? "direct" : "service");
     }
 
     void chosenFoldersOnly()
@@ -6429,6 +6526,28 @@ private slots:
         ntfs::FileRecord file;
         QVERIFY(ntfs::parseFileRecord(fileBytes.data(), fileBytes.size(), file));
         QVERIFY(file.sizeKnown && file.size == 300);
+        // GitHub #350: a junction is told from a cloud folder by its tag.
+        const auto reparse = [](std::uint32_t tag) {
+            std::vector<std::byte> value(8);
+            std::memcpy(value.data(), &tag, sizeof tag);
+            return value;
+        };
+        RecordBuilder junctionBuilder(0x0003);
+        junctionBuilder.standardInformation(FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT);
+        junctionBuilder.fileName(5, u"联接", 1);
+        junctionBuilder.resident(0xC0, reparse(IO_REPARSE_TAG_MOUNT_POINT));
+        std::vector<std::byte> junctionBytes = junctionBuilder.finish();
+        ntfs::FileRecord junction;
+        QVERIFY(ntfs::parseFileRecord(junctionBytes.data(), junctionBytes.size(), junction));
+        QVERIFY(junction.nameSurrogate && !folder.nameSurrogate);
+        RecordBuilder cloudBuilder(0x0003);
+        cloudBuilder.standardInformation(FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT);
+        cloudBuilder.fileName(5, u"OneDrive", 1);
+        cloudBuilder.resident(0xC0, reparse(IO_REPARSE_TAG_CLOUD_6));
+        std::vector<std::byte> cloudBytes = cloudBuilder.finish();
+        ntfs::FileRecord cloud;
+        QVERIFY(ntfs::parseFileRecord(cloudBytes.data(), cloudBytes.size(), cloud));
+        QVERIFY(!cloud.nameSurrogate);
 
         BlockWriter bw;
         bw.begin(1000);
@@ -6437,7 +6556,9 @@ private slots:
         bw.add(folder, false); // garbage on the volume
         bw.add(ext, true);
         bw.add(file, true);
-        QCOMPARE(bw.count(), 5u);
+        bw.add(junction, true);
+        bw.add(cloud, true);
+        QCOMPARE(bw.count(), 7u);
         const std::span<const std::byte> frame = bw.finish(12345);
         Type type {};
         std::uint32_t length = 0;
@@ -6449,11 +6570,11 @@ private slots:
         BlockReader br;
         QVERIFY(br.load(std::vector<std::byte>(payload)));
         QCOMPARE(br.firstRecord(), 1000u);
-        QCOMPARE(br.count(), 5u);
+        QCOMPARE(br.count(), 7u);
         QCOMPARE(br.bytesDone(), std::uint64_t {12345});
         ntfs::FileRecord out;
         QVERIFY(br.record(0, out));
-        QVERIFY(out.inUse && out.directory && !out.hasAttributeList);
+        QVERIFY(out.inUse && out.directory && !out.hasAttributeList && !out.nameSurrogate);
         QCOMPARE(out.baseRecord, 0u);
         QCOMPARE(out.attributes, std::uint32_t {FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE});
         QCOMPARE(out.modified, folder.modified);
@@ -6475,7 +6596,11 @@ private slots:
         QVERIFY(br.record(4, out));
         QVERIFY(out.sizeKnown);
         QCOMPARE(out.size, std::uint64_t {300});
-        QVERIFY(!br.record(5, out)); // past the end
+        QVERIFY(br.record(5, out));
+        QVERIFY(out.directory && out.nameSurrogate);
+        QVERIFY(br.record(6, out));
+        QVERIFY(out.directory && !out.nameSurrogate);
+        QVERIFY(!br.record(7, out)); // past the end
 
         // The other end at minor 1: no sizes in the records, either way.
         BlockWriter old;
@@ -9359,6 +9484,82 @@ private slots:
         QCOMPARE(search(u"report"_s, u"F:\\ws182"_s, true).names, (L {u"report-top.txt"_s}));
         QCOMPARE(search(u"report"_s, u"G:\\"_s, true).names, (L {u"report-g.txt"_s}));
         QCOMPARE(search(u"report"_s, u"F:\\ws182\\gone"_s, true).names, L {});
+    }
+
+    // GitHub #351: with the Everything compatibility on, the folders excluded
+    // stay in the index and Win顺's own searches leave them out, with all
+    // that is in them; what asks the index directly (the Everything
+    // interface) still finds them.
+    void hiddenFolders()
+    {
+        constexpr FileTime T = 1'700'000'000;
+        FileIndex index;
+        const auto dir = [&](EntryId parent, const char* name) { return index.add(parent, name, EntryFlag::Directory); };
+        const auto file = [&](EntryId folder, const char* name, FileTime when) {
+            const EntryId id = index.add(folder, name, 0);
+            index.setModified(id, when);
+            return id;
+        };
+        const EntryId c = index.addRoot("C:");
+        const EntryId work = dir(c, "work");
+        const EntryId skipped = dir(work, "Skipped"); // the rule says "skipped"
+        const EntryId inSkipped = file(skipped, "report.txt", T + 10);
+        const EntryId deep = file(dir(skipped, "deep"), "report.md", T + 20);
+        const EntryId similar = file(dir(work, "Skipped2"), "report.txt", T + 1);
+        const EntryId modules = dir(work, "node_modules");
+        const EntryId inModules = file(dir(modules, "pkg"), "report.js", T + 30);
+        const EntryId git = dir(work, ".git");
+        const EntryId objects = dir(git, "objects");
+        const EntryId inObjects = file(objects, "report", T + 40);
+        const EntryId otherObjects = dir(work, "objects"); // not in a .git
+        const EntryId inOther = file(otherObjects, "report.txt", T + 2);
+        const EntryId kept = file(work, "report.doc", T + 3);
+        const EntryId d = index.addRoot("D:"); // a whole drive by its root
+        const EntryId onD = file(dir(d, "x"), "report.txt", T + 50);
+
+        CrawlRules rules;
+        rules.excludedPaths = {L"C:\\work\\skipped", L"D:"};
+        rules.excludedNames = {L"node_modules", L".git\\objects"};
+        const auto hidden = std::make_shared<const HiddenFolders>(rules);
+        HiddenFolders::Memo memo;
+        const auto hides = [&](EntryId id) { return hidden->hides(index, index.scan(id), memo); };
+        for (const EntryId id : {skipped, inSkipped, deep, modules, inModules, objects, inObjects, d, onD})
+            QVERIFY2(hides(id), qPrintable(index.path(id)));
+        for (const EntryId id : {c, work, similar, git, otherObjects, inOther, kept})
+            QVERIFY2(!hides(id), qPrintable(index.path(id)));
+        // Asked again (known now), and with a fresh memo: the same.
+        QVERIFY(hides(deep) && !hides(similar));
+        HiddenFolders::Memo fresh;
+        QVERIFY(hidden->hides(index, index.scan(inModules), fresh));
+        QVERIFY(hidden->hidesPath(L"C:\\work\\skipped\\deep\\report.md"));
+        QVERIFY(!hidden->hidesPath(L"C:\\work\\skipped2\\report.txt"));
+
+        // A search: what the index has, but for those.
+        ParsedQuery query = ws::parseQuery(u"report"_s);
+        QVERIFY(NameMatcher(query).match(index, index.scan(inSkipped)) >= 0); // the Everything interface's
+        query.hiddenFolders = hidden;
+        const NameMatcher matcher(query);
+        for (const EntryId id : {inSkipped, deep, inModules, inObjects, onD})
+            QCOMPARE(matcher.match(index, index.scan(id)), -1);
+        for (const EntryId id : {similar, inOther, kept})
+            QVERIFY(matcher.match(index, index.scan(id)) >= 0);
+        WorkerPool pool(2);
+        const NameSearchOutput found = searchNames(index, matcher, {.limit = 50}, pool, {});
+        std::vector<EntryId> ids;
+        for (const NameHit& hit : found.hits)
+            ids.push_back(hit.id);
+        std::ranges::sort(ids);
+        std::vector<EntryId> expected {similar, inOther, kept};
+        std::ranges::sort(expected);
+        QCOMPARE(ids, expected);
+        // The files written last too.
+        const NewestOutput newest = ws::newestFiles(index,
+            {.limit = 10, .perFolder = 5, .perTree = 10, .notAfter = T + 100, .hiddenFolders = hidden}, pool, {});
+        ids.clear();
+        for (const NameHit& hit : newest.hits)
+            ids.push_back(hit.id);
+        std::ranges::sort(ids);
+        QCOMPARE(ids, expected);
     }
 
     void newestFiles()

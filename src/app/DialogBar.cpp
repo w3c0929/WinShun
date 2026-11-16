@@ -354,10 +354,12 @@ void DialogBar::setDialog(HWND dialog)
         m_movingTo.reset();
         m_moveTimeout.stop();
         const filedialog::Kind kind = filedialog::kind(dialog);
+        const bool opens = filedialog::opensFiles(dialog, kind);
         const bool elevated = integrity::higherThanOurs(dialog);
         const bool copyOnly = elevated && !m_elevatedNavAvailable;
-        if (kind != m_kind || copyOnly != m_copyOnly || elevated != m_elevated) {
+        if (kind != m_kind || opens != m_opens || copyOnly != m_copyOnly || elevated != m_elevated) {
             m_kind = kind;
+            m_opens = opens;
             m_copyOnly = copyOnly;
             m_elevated = elevated;
             emit dialogKindChanged();
@@ -1057,9 +1059,13 @@ QVariantList DialogBar::menuItems(int row) const
     const SearchResult* r = m_results.at(row);
     if (!r || r->isApp())
         return {};
-    items.append(entry(Go, tr("转到"), u"Enter"_s, r->isDir ? u"\uE8B7"_s : u"\uE8A5"_s)); // Folder, Document
-    if (!r->isDir && canOpen())
-        items.append(entry(GoAndOpen, tr("直接打开"), u"Ctrl+Enter"_s, u"\uE8E5"_s)); // OpenFile
+    // Enter opens a file where the dialog opens files; Ctrl+Enter only goes there (#353).
+    if (!r->isDir && canOpen()) {
+        items.append(entry(GoAndOpen, tr("打开"), u"Enter"_s, u"\uE8E5"_s)); // OpenFile
+        items.append(entry(Go, tr("转到"), u"Ctrl+Enter"_s, u"\uE8A5"_s)); // Document
+    } else {
+        items.append(entry(Go, tr("转到"), u"Enter"_s, r->isDir ? u"\uE8B7"_s : u"\uE8A5"_s)); // Folder, Document
+    }
     if (r->isDir && r->path.compare(m_browsed, Qt::CaseInsensitive) != 0)
         items.append(entry(Enter, tr("在列表中展开"), u"Tab"_s, QChar(0xE76C))); // ChevronRight
     items.append(entry(CopyPath, tr("复制路径"), u"Ctrl+Shift+C"_s, QChar(0xE8C8))); // Copy

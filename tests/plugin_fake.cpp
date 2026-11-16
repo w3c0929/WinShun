@@ -2,15 +2,17 @@
 // No Qt, static C runtime (it is started by WinShunPluginHost.exe as any
 // plugin is). The first argument is the role, the rest its options:
 //
-//   --once [--n N] [--text] [--gbk] [--fail] [--slow MS] [--long BYTES] [--echo-env] [--action] [--rerun S]
+//   --once [--n N] [--text] [--gbk] [--fail] [--fail-ansi] [--slow MS] [--long BYTES] [--echo-env] [--action] [--rerun S]
 //       A once plugin: reads WS_* and prints JSON items (or plain text,
-//       or N items, or a line BYTES long, or exits 3, or the argv, its own
+//       or N items, or a line BYTES long, or exits 3 (--fail-ansi: with its
+//       message on stderr in the ANSI code page), or the argv, its own
 //       path and the environment it got, or the effects of WS_ACTION, with
 //       WS_TRIGGER and WS_FILES when files came); asks to be run again
 //       after S seconds with --rerun.
 //
 // Started as python.exe is (-u -X utf8 main.py first), it skips those.
 //   --serve [--partial] [--slow MS] [--crash N] [--hang] [--tool NAME] [--error] [--chatty] [--rerun S] [--toast] [--late N]
+//           [--translate | --needs-setup]
 //           [--refresh MS [--refresh-burst K] [--refresh-first]]
 //       A resident plugin: JSON-RPC on stdio. Answers initialize, query
 //       (two query/partial first with --partial; after MS; never with
@@ -24,7 +26,9 @@
 //       --refresh-burst), or preceded by one with --refresh-first), cancel
 //       (counted), action (the files and trigger of a `files` one in its
 //       notify), settingsChanged (remembered), appearance (remembered and
-//       counted: data.appearance, data.looks), shutdown.
+//       counted: data.appearance, data.looks), shutdown. As a translate
+//       plugin: "T:<text>" as its copy text with --translate, a row "setup"
+//       with --needs-setup.
 //   --probe
 //       A once plugin whose one item carries the facts about its process
 //       (token, job, mitigations, may it start a process, read the
@@ -138,6 +142,16 @@ int onceMain()
         err("something went wrong: 出错了");
         return 3;
     }
+    if (has(L"--fail-ansi")) {
+        // stderr as a batch file's echo or Qt's default message handler write
+        // it: the bytes of the ANSI code page, not UTF-8.
+        const std::wstring text = L"something went wrong: Résumé 出错了";
+        const int n = ::WideCharToMultiByte(CP_ACP, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+        std::string bytes(static_cast<std::size_t>(n), '\0');
+        ::WideCharToMultiByte(CP_ACP, 0, text.data(), static_cast<int>(text.size()), bytes.data(), n, nullptr, nullptr);
+        err(bytes);
+        return 3;
+    }
     if (has(L"--long")) {
         const std::size_t n = std::strtoull(lite::utf8(value(L"--long")).c_str(), nullptr, 10);
         std::string line(n, 'x');
@@ -158,7 +172,7 @@ int onceMain()
         const int n = ::WideCharToMultiByte(CP_OEMCP, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
         std::string bytes(static_cast<std::size_t>(n), '\0');
         ::WideCharToMultiByte(CP_OEMCP, 0, text.data(), static_cast<int>(text.size()), bytes.data(), n, nullptr, nullptr);
-        out("{\"items\":[{\"title\":" + json::quote(bytes) + "}]}");
+        out("{\"items\":[{\"title\":\"" + bytes + "\"}]}"); // by hand: json::quote() would not let bytes that are not UTF-8 through
         return 0;
     }
     if (has(L"--echo-env")) {
@@ -301,6 +315,16 @@ struct Server {
                 }
                 const long long queryId = params["queryId"].toInt();
                 const std::string text = params["text"].toString();
+                if (has(L"--needs-setup")) { // a translate plugin with no service yet (GitHub #340)
+                    respond(id, json::Value::Object {{"items", json::Value::Array {json::Value(item("setup", "set up a service", ""))}}});
+                    continue;
+                }
+                if (has(L"--translate")) { // ... and one that translates: the row's copy text
+                    json::Value::Object t = item("source", "T:" + text, "");
+                    t["copy"] = "T:" + text;
+                    respond(id, json::Value::Object {{"items", json::Value::Array {json::Value(std::move(t))}}});
+                    continue;
+                }
                 if (has(L"--chatty")) {
                     notify("winshun/log", {{"level", "info"}, {"text", "query " + text}});
                     notify("winshun/notify", {{"text", "hello from fake 你好"}});

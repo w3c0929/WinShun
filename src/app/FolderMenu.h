@@ -84,7 +84,7 @@ public:
     void setOptions(bool yieldToListary, bool explorer, bool desktop);
     // Which groups it lists (GitHub #51); one left out is not even gathered.
     void setGroups(bool favorites, bool recent, bool windows);
-    void setInlineCounts(int recent, int windows);
+    void setInlineCounts(int favorites, int recent, int windows);
     // Pure menu presentation: keeps action IDs intact across the direct rows and More page.
     static QVariantList groupEntries(const QString& title, const QString& glyph, const QVariantList& children, int inlineCount = 0);
     // Which actions it offers under the lists (GitHub #200).
@@ -128,6 +128,9 @@ public:
     }
 
     Q_INVOKABLE QRectF screenArea(QPointF globalPos) const;
+    // Where the system's pointer is: unlike a row's mapToGlobal, the same
+    // while the pointer rests, though pages move the window (GitHub #348).
+    Q_INVOKABLE QPoint cursorPos() const;
     Q_INVOKABLE void prepareMenuWindow(QWindow* menu) const;
     Q_INVOKABLE void trigger(int index);
     // The folders inside `folder`, for the page a folder's row opens (GitHub
@@ -190,6 +193,7 @@ private:
     std::atomic<bool> m_listFavorites {true};
     std::atomic<bool> m_listRecent {true};
     std::atomic<bool> m_listWindows {true};
+    int m_favoritesInline = 0;
     int m_recentInline = 0;
     int m_windowsInline = 0;
     std::atomic<bool> m_itemSearch {true};

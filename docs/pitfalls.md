@@ -1,5 +1,23 @@
 # 踩坑记录
 
+## 目录链接：测试清理顺着联接删，MFT 经服务没有重解析标签（2026-11-16，#350）
+
+- **`QTemporaryDir` 会顺着联接删进目标**：它析构时 `QDir::removeRecursively()` 把联接当普通文件夹往里走。一次测试在临时目录里建了指向 C 盘卷根的联接（测 `\??\Volume{…}` 的解析），又建了指向 `\\nas\…` 的符号链接，后者让清理时的 stat 卡到 300 秒被 QtTest 杀掉，碰巧没走到卷根；联接本身的目标文件夹已经被删了。现在测试建的链接都登记在 `MadeLinks`（`tests/TestJunction.h`），声明在临时目录之后，先用 `RemoveDirectoryW` 单删链接再让 `QTemporaryDir` 清理。手工清理残留也一样：先 `[IO.Directory]::Delete(链接, $false)` 删掉每个 `ReparsePoint`，再递归删目录。
+- **经服务读 MFT 拿不到重解析标签**：服务传给程序的是解析好的精简记录（`volproto::BlockWriter`），只有属性、名字、大小，没有 `$REPARSE_POINT` 的标签，于是“是联接/符号链接”还是“OneDrive 云文件夹”分不出来，链接一个都找不到；提权直接读 MFT 时却正常。现在记录的标志字节多一位 `kRecordNameSurrogate`（旧端忽略），服务和主程序要一起更新。
+- **日志里看不到后建的联接**：`mklink /j` 是先建空文件夹、再设重解析点，第二步的记录原因是 `USN_REASON_REPARSE_POINT_CHANGE`，原先的 `kReasonMask` 不含它，整条被过滤掉。`mklink /d`（符号链接）一步建成，不受影响。
+- **QTRY 超时看着像卡死**：`QTRY_VERIFY_WITH_TIMEOUT` 条件到时不成立时，还会再等两倍时间来报告“后来成立了没有”，180 秒的等待实际要 540 秒才失败，被函数超时杀掉时只看得到“卡住”。先拆开等待条件、缩短超时，再判断是不是真卡。
+
+## 乱码：UTF-8 被当成 GBK 读（2026-11-16，#346）
+
+- **现象**：备份路径 `D:\BaiduSyncdisk\tourbox预设\Winshun设置备份` 显示成 `tourbox棰勮…\Winshun璁剧疆澶囦唤`。这是 UTF-8 字节被按系统代码页（中文 Windows 是 936/GBK）解码的典型样子。Win顺 自己的读写全是 UTF-16/UTF-8，没能复现；推测是选文件夹时某个外壳扩展返回了这样的路径。
+- **防护**：`core/Mojibake.h` 的 `utf8ReadAsAnsi()` 识别并还原这种乱码，`ungarbledPath()` 只在还原后的路径确实存在时采用（乱码文件夹已被建出来时也优先用真的）。选文件夹/文件对话框（`ShellDialogs.cpp` 的 `onDisk()`）拿到不存在的路径时先还原、再试外壳的解析名，都不行就当作没选；读设置时备份文件夹、索引文件夹也会还原。
+- **规则**（`tst_encoding` 检查，按需运行 `ctest -R ^tst_encoding$`）：
+  - 文本文件一律 UTF-8；含中文的 `.ps1/.psm1/.psd1` 必须带 BOM（Windows PowerShell 5.1 否则按 ANSI 读，中文字符串会吞掉后面的引号和代码）；`.bat/.cmd` 只用 ASCII；含非 ASCII 的 `.rc` 写 `#pragma code_page(65001)`。
+  - 代码里文字走 QString 和 W 函数；`fromLocal8Bit`、`CP_ACP`、`CP_OEMCP` 等只用在数据确实是那个代码页的地方（旧剪贴板格式、zip 旧文件名、写给 cmd 的 .bat、Everything 的 ANSI 协议……），并把文件和理由加进 `tst_encoding.cpp` 的 `kCodePageUsers`；不再用了就从名单删掉，测试会提醒。禁止任何 A 后缀的 Win32 调用。
+  - 读子进程的输出要想清楚它用什么编码：Qt 默认的消息处理器在设了 `QT_FORCE_STDERR_LOGGING` 时按 ANSI 写 stderr，插件进程里要装 UTF-8 的处理器；插件运行器把不是 UTF-8 的 stderr 按 ANSI 转过来，控制行里绝不放非法 UTF-8。
+  - 测试里不要用 `cmd /c mklink` 建联接（cmd 按控制台代码页输出，日志里是乱码）：用 `tests/TestJunction.h` 的 `makeJunction()`。
+  - 开发命令：用 `scripts/devshell.ps1` 进 MSVC 环境（它先把 vswhere 放进 PATH，否则 VsDevCmd 在 GBK 控制台里报错，读回来是乱码）。
+
 ## 界面字体：Windows 列得出来的字体，Qt（FreeType）按名字不一定画得出来（#325 第二轮，2026-11-15）
 
 - **现象**：0.29.0 把界面字体的名单改成问 Windows（`EnumFontFamiliesEx`）之后，选“霞鹜文楷”（常规体）预览不对，重启后是后备字体；它的 Light、Medium 正常。
@@ -1334,6 +1352,12 @@
   - 不逐帧量。变化后马上量一次，之后每 125 毫秒量一次，直到安定；这些没安定的读数只在图标或托盘真压到框上时才用（马上变窄或藏起来），不拿来变宽、挪位置。最后一个事件过去约 1 秒、相隔约 250 毫秒的两次读数一样，才算安定，再按它放；事件一直不停，最多等约 4 秒。
   - 不再往资源管理器里放 DLL。安装、卸载时删 `%ProgramData%\WinShun\tap`；被资源管理器占着的那份登记成重启后删（`MoveFileEx` 加 `MOVEFILE_DELAY_UNTIL_REBOOT`），删不掉也不让安装失败。设置里旧的 `Taskbar/StartGap` 和 `state.ini` 的 `[SearchBox]` 读到就删。
 - **怎么查**：scratchpad 里的 `tbmotion`（一个不抢前台的窗口进出任务栏，同时每毫秒读一次框的 `GetWindowRect`，逐帧记下屏幕上任务栏那一条）和 `tbcrowd`（一个个加按钮把任务栏挤满再拿走；每个窗口一个 AppUserModelID，免得合并成一个按钮）。
+
+### 图标居中、选了“自动”，整框却偶尔跑到托盘旁边
+
+- **现象**（2026-11-16 用户报，0.31.1）：任务栏图标居中、位置选“自动”，搜索框偶尔整个跑到右边托盘旁，带输入框，过几秒到十几秒又回到最左边。日志 `Taskbar box: now box (1430,1540 360x48), settled, 3208 ms after the change`，7 秒后 `now box (12,…), crowded`；前一天也有一次（1485 → 12）。托盘左边按真实图标算只放得下“仅图标”形态，放得下 360 像素整框，说明那次读数里没有图标。
+- **原因**：任务栏重建自己时，UI 自动化里的 `TaskbarFrame` 会短暂一个子元素都没有（或只剩一个横跨任务栏的容器，被当成“不是图标”跳过）。没有图标的读数原来照样算“量到了”，`stretchFor` 按“没读到图标就当整条都空”取了图标右边那一段，框就放到托盘左边；连着两次都空，还被当成安定的读数。等下一次读到真图标压在框上（crowded），才挪回去。
+- **做法**：Windows 11 的 `TaskbarFrame` 里总有开始按钮，一个图标都没读到就不算读数（`measured = false`，日志 `no icons in the TaskbarFrame`），丢掉缓存的 frame 重新找：已放好的框原地不动，一秒后再量（最多 20 次，原有的重试）。经典任务栏另有兜底（没有按钮时按第一个按钮会出现的位置算），不受影响。
 
 ### 任务栏上的框描边发虚
 

@@ -108,6 +108,12 @@ Item {
 
     readonly property bool contentMode: line > 0 // a content match (also mixed into 全部)
     readonly property bool current: ListView.isCurrentItem
+    // The name's line: a rename's box goes beside it, never over it, its text
+    // starting where the name does (GitHub #335).
+    readonly property real nameLeft: textColumn.x
+    readonly property real nameRight: textColumn.x + textColumn.width // short of the size, the date and the buttons
+    readonly property real nameTop: textColumn.y
+    readonly property real nameBottom: textColumn.y + nameLine.height
     // With rows selected, the background marks them; the current row keeps only its accent pill.
     readonly property int selectedCount: ListView.view ? ListView.view.model.selectedCount : 0
     readonly property var results: ListView.view ? ListView.view.model : null // the ResultModel
@@ -344,6 +350,7 @@ Item {
         spacing: row.compact ? 2 : 4
 
         Item {
+            id: nameLine
             width: parent.width
             height: row.upToPixel(title.implicitHeight) // the line below on a whole pixel too
 
@@ -519,6 +526,7 @@ Item {
         // scroll bar and touch still scroll it); the other rows scroll as before.
         property point pressedAt: Qt.point(0, 0)
         property bool draggedOut: false
+        property int dragButton: Qt.NoButton // the button that pressed, which drags
 
         anchors.fill: parent
         hoverEnabled: true
@@ -528,7 +536,9 @@ Item {
                 row.nameTip.dismiss()
             draggedOut = false
             pressedAt = Qt.point(mouse.x, mouse.y)
-            preventStealing = mouse.button === Qt.LeftButton && !row.isApp && !row.offline && !row.missing
+            dragButton = mouse.button
+            // The right button too: Explorer then asks what to do with the drop (#338).
+            preventStealing = (mouse.button & (Qt.LeftButton | Qt.RightButton)) !== 0 && !row.isApp && !row.offline && !row.missing
                               && mouse.source === Qt.MouseEventNotSynthesized
         }
         // The wheel hides the tip even where the list does not scroll (Windows' own tips do);
@@ -544,7 +554,7 @@ Item {
                 row.hoverMoved(row.index, area.mapToGlobal(mouse.x, mouse.y))
                 return
             }
-            if (!preventStealing || draggedOut || !(mouse.buttons & Qt.LeftButton))
+            if (!preventStealing || draggedOut || !(mouse.buttons & dragButton))
                 return
             if (Math.hypot(mouse.x - pressedAt.x, mouse.y - pressedAt.y) < Application.styleHints.startDragDistance)
                 return

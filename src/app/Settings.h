@@ -175,7 +175,8 @@ struct Settings {
     bool folderMenuFavorites = true;
     bool folderMenuRecent = true;
     bool folderMenuWindows = true; // folders open in other windows
-    int folderMenuRecentInline = 0; // 0: submenu; 1..10: direct rows, then More
+    int folderMenuFavoritesInline = 0; // 0: submenu; 1..10: direct rows, then More
+    int folderMenuRecentInline = 0;
     int folderMenuWindowsInline = 0;
     // Which actions the menu offers under the lists (GitHub #200): all on is
     // what it always did. Favorite covers both adding and removing.
@@ -561,7 +562,13 @@ struct Settings {
 
     bool operator==(const Settings&) const = default;
 
+    // What the index leaves out. With everythingCompat, the folders the user
+    // excluded are not left out of it but of Win顺's own searches
+    // (hiddenRules; GitHub #351): the programs asking over the Everything
+    // interface see the disks whole (Total Commander's folder sizes). A
+    // whole drive stays out (a cloud drive mounted as a disk, GitHub #17).
     CrawlRules crawlRules() const;
+    CrawlRules hiddenRules() const; // only its excluded paths and names; none without everythingCompat
     ShareIndexer::Options shareOptions() const;
     ContentSizeLimits contentSizeLimits() const;
     QString indexDir() const; // indexFolder expanded, with native separators; dataDir() when it is empty

@@ -5,6 +5,7 @@
 #include "Query.h"
 #include "SettingsCommand.h"
 #include "StartupAccess.h"
+#include "Win32Util.h"
 
 #include "ServiceVolumeAccess.h"
 #include "platform/InputMode.h"
@@ -235,23 +236,48 @@ private slots:
         ws::Settings::useProfile(profile.path());
         ws::Settings settings;
         settings.load();
+        QCOMPARE(settings.folderMenuFavoritesInline, 0);
         QCOMPARE(settings.folderMenuRecentInline, 0);
         QCOMPARE(settings.folderMenuWindowsInline, 0);
+        settings.folderMenuFavoritesInline = 5;
         settings.folderMenuRecentInline = 3;
         settings.folderMenuWindowsInline = 10;
         QVERIFY(settings.saveChecked());
         ws::Settings restored;
         restored.load();
+        QCOMPARE(restored.folderMenuFavoritesInline, 5);
         QCOMPARE(restored.folderMenuRecentInline, 3);
         QCOMPARE(restored.folderMenuWindowsInline, 10);
         {
             QSettings ini(ws::Settings::filePath(), QSettings::IniFormat);
+            ini.setValue(u"Launcher/FolderMenuFavoritesInline"_s, 99);
             ini.setValue(u"Launcher/FolderMenuRecentInline"_s, -1);
             ini.setValue(u"Launcher/FolderMenuWindowsInline"_s, 50);
         }
         restored.load();
+        QCOMPARE(restored.folderMenuFavoritesInline, 10);
         QCOMPARE(restored.folderMenuRecentInline, 0);
         QCOMPARE(restored.folderMenuWindowsInline, 10);
+    }
+
+    void garbledBackupFolder() // GitHub #346
+    {
+        if (::GetACP() != 936)
+            QSKIP("the garbling is that of the GBK code page");
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        const QString real = QDir::toNativeSeparators(profile.filePath(u"tourbox预设/Winshun设置备份"_s));
+        QVERIFY(QDir().mkpath(real));
+        const QByteArray utf8 = real.toUtf8(); // as a program that read it in GBK had it
+        QString garbled(::MultiByteToWideChar(936, 0, utf8.constData(), int(utf8.size()), nullptr, 0), Qt::Uninitialized);
+        ::MultiByteToWideChar(936, 0, utf8.constData(), int(utf8.size()), reinterpret_cast<LPWSTR>(garbled.data()),
+            int(garbled.size()));
+        QVERIFY(garbled != real);
+        QSettings(ws::Settings::filePath(), QSettings::IniFormat).setValue(u"Backup/Folder"_s, garbled);
+        ws::Settings settings;
+        settings.load();
+        QCOMPARE(settings.backupFolder, real);
     }
 
     void uiFontPreference()
@@ -794,6 +820,35 @@ private slots:
         ws::Settings read;
         read.load();
         QVERIFY(read.everythingCompat);
+    }
+
+    // GitHub #351: with the Everything compatibility on, the folders excluded
+    // are indexed for the programs asking over it and left out of Win顺's
+    // own searches; a whole drive stays out of the index all the same.
+    void everythingCompatKeepsExcludedFoldersIndexed()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        ws::Settings settings;
+        settings.load();
+        settings.excludedPaths = {u"D:\\Work\\Skipped"_s, u"Q:\\"_s};
+        settings.excludedNames = {u"node_modules"_s};
+        const auto has = [](const std::vector<std::wstring>& list, const wchar_t* item) {
+            return std::ranges::any_of(list, [&](const std::wstring& s) { return ws::win32::equalsIgnoreCase(s, item); });
+        };
+        QVERIFY(has(settings.crawlRules().excludedPaths, L"D:\\Work\\Skipped"));
+        QVERIFY(has(settings.crawlRules().excludedNames, L"node_modules"));
+        QVERIFY(settings.hiddenRules().excludedPaths.empty() && settings.hiddenRules().excludedNames.empty());
+
+        settings.everythingCompat = true;
+        const ws::CrawlRules indexed = settings.crawlRules();
+        QVERIFY(!has(indexed.excludedPaths, L"D:\\Work\\Skipped"));
+        QVERIFY(has(indexed.excludedPaths, L"Q:"));
+        QVERIFY(indexed.excludedNames.empty());
+        const ws::CrawlRules hidden = settings.hiddenRules();
+        QCOMPARE(hidden.excludedPaths, std::vector<std::wstring> {L"D:\\Work\\Skipped"});
+        QCOMPARE(hidden.excludedNames, std::vector<std::wstring> {L"node_modules"});
     }
 
     void opusTyping()

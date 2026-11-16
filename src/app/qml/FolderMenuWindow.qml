@@ -13,12 +13,13 @@ Window {
     property var trail: []
     // A folder being read, its page not up yet: { folder, text, from, byPointer }.
     property var pending: null
-    // The pointer on a row's arrow opens its page after a moment; where it
-    // was (on the screen) when the page last changed: rows that come under a
-    // pointer at rest open nothing.
+    // The pointer on a row's arrow opens its page after a moment; where the
+    // system's pointer was when the menu or its page last changed: rows that
+    // come under a pointer at rest open nothing (a page swapped in under it
+    // would open the next one, and so on down, GitHub #348). The system's,
+    // not a row's mapToGlobal: that moves with the window and its fractions.
     property int dwellRow: -1
-    property point pointerAt
-    property point settledAt
+    property point restingCursor
     property Item hoveredEntry: null
     property string hoveredText
     property point popupAnchor
@@ -38,7 +39,7 @@ Window {
     readonly property int preferredWidth: Theme.metrics.size === "compact" ? 300 : Theme.metrics.size === "roomy" ? 400 : 360
     width: availableArea.width > 0 ? Math.min(preferredWidth, availableArea.width - 16) : preferredWidth
     height: Math.min(listHeight + 2 * padding + headingHeight, maxHeight)
-    onHeightChanged: if (visible) place()
+    onHeightChanged: if (visible) y = within(popupTop)
     onHighlightedChanged: {
         flick.currentIndex = highlighted // the list's highlight follows it
         Qt.callLater(ensureVisible)
@@ -70,6 +71,15 @@ Window {
         }
     }
 
+    // Where the first page went: beside the pointer, flipped where the
+    // screen ends. Other pages keep its top edge (a shorter page flipped no
+    // longer would jump below the pointer, #349), moved up only to stay on
+    // the screen; going back puts the first page where it was.
+    property real popupTop
+    function within(y) {
+        const area = availableArea
+        return area.width > 0 ? Math.max(area.y + 8, Math.min(y, area.y + area.height - height - 8)) : y
+    }
     function place() {
         let x = popupAnchor.x
         let y = popupAnchor.y
@@ -78,10 +88,10 @@ Window {
             if (x + width > area.x + area.width) x -= width
             if (y + height > area.y + area.height) y -= height
             x = Math.max(area.x + 8, Math.min(x, area.x + area.width - width - 8))
-            y = Math.max(area.y + 8, Math.min(y, area.y + area.height - height - 8))
         }
         menu.x = x
-        menu.y = y
+        menu.y = within(y)
+        popupTop = menu.y
     }
     function forget() {
         trail = []
@@ -96,6 +106,7 @@ Window {
         hoveredEntry = null
         flick.contentY = 0
         forget()
+        restingCursor = folderMenu.cursorPos()
         popupAnchor = pos
         availableArea = folderMenu.screenArea(pos)
         flick.forceLayout()
@@ -123,7 +134,7 @@ Window {
     }
     function enter(target, from, byPointer) {
         dwell.stop()
-        settledAt = pointerAt
+        restingCursor = folderMenu.cursorPos()
         trail = trail.concat([{ page: page, highlight: from }])
         page = target
         if (!byPointer) highlighted = step(-1, 1)
@@ -154,7 +165,7 @@ Window {
         pending = null
         slow.stop()
         dwell.stop()
-        settledAt = pointerAt
+        restingCursor = folderMenu.cursorPos()
         if (trail.length === 0) {
             page = null
             return
@@ -177,9 +188,9 @@ Window {
             if (byKeys) highlighted = step(-1, 1)
         }
     }
-    function pointed(i, at) {
-        pointerAt = at
-        if (at.x === settledAt.x && at.y === settledAt.y) return
+    function pointed(i) {
+        const at = folderMenu.cursorPos()
+        if (at.x === restingCursor.x && at.y === restingCursor.y) return
         if (dwellRow === i && dwell.running) return
         dwellRow = i
         dwell.restart()
@@ -433,12 +444,7 @@ Window {
                     if (menu.highlighted === entry.index) menu.highlighted = -1
                     if (menu.hoveredEntry === entry) menu.hoveredEntry = null
                 }
-                onClicked: mouse => {
-                    menu.pointerAt = mapToGlobal(mouse.x, mouse.y)
-                    menu.activate(entry.index)
-                }
-                // Where the pointer is, for a page opened by a key: see settledAt.
-                onPositionChanged: mouse => menu.pointerAt = mapToGlobal(mouse.x, mouse.y)
+                onClicked: menu.activate(entry.index)
 
                 MouseArea {
                     id: arrow
@@ -453,13 +459,10 @@ Window {
                     Accessible.ignored: !entry.branch
                     Accessible.onPressAction: menu.open(entry.index, false)
                     // Coming onto it counts as well: a quick move may arrive in one step.
-                    onEntered: menu.pointed(entry.index, mapToGlobal(mouseX, mouseY))
-                    onPositionChanged: mouse => menu.pointed(entry.index, mapToGlobal(mouse.x, mouse.y))
+                    onEntered: menu.pointed(entry.index)
+                    onPositionChanged: menu.pointed(entry.index)
                     onExited: menu.unpointed(entry.index)
-                    onClicked: mouse => {
-                        menu.pointerAt = mapToGlobal(mouse.x, mouse.y)
-                        menu.open(entry.index, true)
-                    }
+                    onClicked: menu.open(entry.index, true)
                 }
             }
         }

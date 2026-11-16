@@ -907,7 +907,7 @@ capture::CaptureOcr& CaptureApp::captureOcr()
                 else if (state == u"service")
                     self->m_captureOcr->setTranslation(ticket, Translated::NoService, {});
                 else if (state == u"plugin")
-                    self->m_captureOcr->setTranslation(ticket, Translated::NoPlugin, {});
+                    self->m_captureOcr->setTranslation(ticket, answer.value(u"off"_s).toBool() ? Translated::PluginOff : Translated::NoPlugin, {});
                 else
                     self->m_captureOcr->setTranslation(ticket, Translated::Failed, error.isEmpty() ? answer.value(u"message"_s).toString() : error);
             });
@@ -1128,7 +1128,7 @@ void CaptureApp::translatePin(capture::PinWindow* pin, bool own)
                 return;
             const QImage translated = capture::translatedPicture(image, blocks, translations, QGuiApplication::font());
             if (p->setTranslation(translated, translations.join(u'\n'), p->revision()))
-                p->note(self->tr("Tab 看原文"));
+                p->note(CaptureApp::tr("Tab 看原文")); // static: lupdate reads no tr() through self
             self->m_idleTrim->poke();
         };
         m_protocol.tool(u"translate_text"_s, {{u"text"_s, text}},

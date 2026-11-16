@@ -5,6 +5,7 @@
 // crashes and restarts, encodings, and (run elevated) the token, job and
 // permissions a plugin process gets.
 
+#include "TestJunction.h"
 #include "Catalog.h"
 #include "Details.h"
 #include "Gallery.h"
@@ -27,6 +28,7 @@
 #include "Updates.h"
 #include "WebShortcut.h"
 #include "WebSearchProvider.h"
+#include "TranslateText.h"
 #include "ZeroCode.h"
 #include "KnownFolderOverride.h"
 
@@ -90,6 +92,7 @@ struct Spec {
     QJsonObject commandExtra; // triggers, run, actions …
     QJsonArray commands; // instead of the one command
     QJsonArray settings; // the declared settings
+    QJsonObject extra; // more of the manifest's own fields (translate …)
 };
 
 QByteArray manifestFor(const Spec& s)
@@ -110,6 +113,8 @@ QByteArray manifestFor(const Spec& s)
         m.insert(u"permissions"_s, QJsonArray::fromStringList(s.permissions));
     if (!s.settings.isEmpty())
         m.insert(u"settings"_s, s.settings);
+    for (auto it = s.extra.begin(); it != s.extra.end(); ++it)
+        m.insert(it.key(), it.value());
     if (!s.commands.isEmpty())
         m.insert(u"commands"_s, s.commands);
     else {
@@ -404,12 +409,6 @@ QByteArray sigFileOf(const QList<std::pair<QString, QByteArray>>& entries)
     return toJson(QJsonObject {{u"schema"_s, 1}, {u"file"_s, u"index.json"_s}, {u"signatures"_s, signatures}});
 }
 
-// A junction at `link` to `target` (a plugin folder in development, as mklink /J makes it).
-bool makeJunction(const QString& link, const QString& target)
-{
-    QDir().mkpath(QFileInfo(link).path());
-    return QProcess::execute(u"cmd"_s, {u"/c"_s, u"mklink"_s, u"/J"_s, QDir::toNativeSeparators(link), QDir::toNativeSeparators(target)}) == 0;
-}
 
 QString versionAt(const QString& pluginDir)
 {
@@ -1053,6 +1052,42 @@ private slots:
         QVERIFY2(m.has_value(), qPrintable(error));
     }
 
+    // GitHub #340: any plugin may say which command translates; the
+    // screenshot's 翻译 asks the official one first, then the others.
+    void translators()
+    {
+        QString error;
+        const QByteArray resident = R"({"manifest":1,"id":"a.b","name":"X","version":"1","runtime":{"mode":"resident","program":"python","script":"m.py"},"translate":%1,"commands":[{"id":"tr","keyword":"x"},{"id":"go","run":{"folder":"C:\\"}}]})";
+        const auto m = Manifest::parse(QString::fromLatin1(resident).arg(u"\"tr\""_s).toUtf8(), &error);
+        QVERIFY2(m.has_value(), qPrintable(error));
+        QCOMPARE(m->translate, u"tr"_s);
+        QVERIFY(!Manifest::parse(QString::fromLatin1(resident).arg(u"\"nope\""_s).toUtf8(), &error));
+        QVERIFY2(error.contains(u"translate"_s), qPrintable(error));
+        QVERIFY(!Manifest::parse(QString::fromLatin1(resident).arg(u"true"_s).toUtf8(), &error));
+        QVERIFY(!Manifest::parse(QString::fromLatin1(resident).arg(u"\"go\""_s).toUtf8(), &error)); // zero-code: nothing to answer with
+        QVERIFY2(error.contains(u"零代码"_s), qPrintable(error));
+
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString user = dir.filePath(u"user"_s);
+        const auto put = [&](const QString& id, const QString& extra, const QString& command = u"tr"_s) {
+            const QString json = uR"({"manifest":1,"id":"%1","name":"X","version":"1","runtime":{"mode":"resident","program":"python","script":"m.py"}%2,"commands":[{"id":"%3","keyword":"%3"}]})"_s
+                                     .arg(id, extra, command);
+            return writeFile(user + u'/' + id + u"/plugin.json"_s, json.toUtf8());
+        };
+        QVERIFY(put(u"a.other"_s, u",\"translate\":\"ot\""_s, u"ot"_s));
+        QVERIFY(put(u"a.plain"_s, {})); // a "tr" of its own, not saying it translates
+        QVERIFY(put(u"winshun.translate"_s, {})); // 2.2.x: says nothing, "tr" is its translation
+        Catalog catalog(user, {});
+        catalog.scan();
+        const std::vector<Catalog::Translator> found = catalog.translators();
+        QCOMPARE(found.size(), 2u);
+        QCOMPARE(found[0].pluginId, u"winshun.translate"_s);
+        QCOMPARE(found[0].commandId, u"tr"_s);
+        QCOMPARE(found[1].pluginId, u"a.other"_s);
+        QCOMPARE(found[1].commandId, u"ot"_s);
+    }
+
     void manifestProgramEscape()
     {
         QString error;
@@ -1186,10 +1221,8 @@ private slots:
         // A link inside the folder: never confirmed, never matched.
         const QString target = QDir::toNativeSeparators(temp.path() + u"/elsewhere"_s);
         QVERIFY(QDir().mkpath(target));
-        QProcess mklink;
-        mklink.start(u"cmd.exe"_s, {u"/c"_s, u"mklink"_s, u"/J"_s, folder + u"\\linked"_s, target});
-        QVERIFY(mklink.waitForFinished(10000));
-        QVERIFY2(QFileInfo(folder + u"\\linked"_s).exists(), mklink.readAllStandardOutput().constData());
+        QVERIFY(makeJunction(folder + u"\\linked"_s, target));
+        QVERIFY(QFileInfo(folder + u"\\linked"_s).exists());
         QVERIFY(!elevation::confirmFolder(store, u"a.b"_s, folder, &error));
         QVERIFY2(error.contains(u"linked"_s), qPrintable(error));
         QCOMPARE(elevation::check(store, u"a.b"_s, folder).check, elevation::Check::Changed);
@@ -1305,9 +1338,7 @@ private slots:
         const QString tree = r.dir;
         const QString key = QFileInfo(tree).path();
         const auto junction = [](const QString& link, const QString& target) {
-            QProcess mklink;
-            mklink.start(u"cmd.exe"_s, {u"/c"_s, u"mklink"_s, u"/J"_s, QDir::toNativeSeparators(link), QDir::toNativeSeparators(target)});
-            return mklink.waitForFinished(10000) && QFileInfo(link).exists();
+            return makeJunction(link, target) && QFileInfo(link).exists();
         };
         // Each level in turn moved aside and a junction to it put in its place.
         for (const QString& level : {QDir::toNativeSeparators(store.root), QDir::toNativeSeparators(key), QDir::toNativeSeparators(tree)}) {
@@ -2258,6 +2289,83 @@ private slots:
             QCOMPARE(result->items[0].subtitle, target);
         }
         QVERIFY(f.startedPids.empty());
+    }
+
+    // GitHub #340: the screenshot's 翻译 through whichever translate plugin
+    // can: one with no service hands over to the next.
+    void translateTextInTurn()
+    {
+        const auto translate = [](Host& host, const QString& text) {
+            std::optional<QJsonObject> answer;
+            translateText(host, text, [&](const QJsonObject& a) { answer = a; });
+            return QTest::qWaitFor([&] { return answer.has_value(); }, 10000) ? *answer : QJsonObject {};
+        };
+        Fixture f;
+        QCOMPARE(translate(*f.host, u"hi"_s).value(u"state"_s), u"plugin"_s); // none installed
+        QVERIFY(!translate(*f.host, u"hi"_s).contains(u"off"_s));
+
+        Spec unset; // installed first, so first in the catalog: no service yet
+        unset.id = u"a.unset"_s;
+        unset.args = {u"--needs-setup"_s};
+        unset.keywords = {u"us"_s};
+        unset.extra = {{u"translate"_s, u"main"_s}};
+        QVERIFY(!f.install(unset).isEmpty());
+        QCOMPARE(translate(*f.host, u"hi"_s).value(u"state"_s), u"service"_s);
+
+        Spec other;
+        other.id = u"b.other"_s;
+        other.args = {u"--translate"_s};
+        other.keywords = {u"ot"_s};
+        other.extra = {{u"translate"_s, u"main"_s}};
+        QVERIFY(!f.install(other).isEmpty());
+        const QJsonObject done = translate(*f.host, u"你好\n世界"_s);
+        QCOMPARE(done.value(u"state"_s), u"ok"_s);
+        QCOMPARE(done.value(u"text"_s), u"T:你好\n世界"_s);
+
+        // Both off: installed, but switched off; the settings can turn one on.
+        f.host->setEnabled(unset.id, false);
+        f.host->setEnabled(other.id, false);
+        const QJsonObject off = translate(*f.host, u"hi"_s);
+        QCOMPARE(off.value(u"state"_s), u"plugin"_s);
+        QVERIFY(off.value(u"off"_s).toBool());
+        QVERIFY(f.host->catalog().translators().size() == 2u);
+    }
+
+    // GitHub #344: a program's words looked for as paths; the chosen one is %s.
+    void zeroCodeSuggest()
+    {
+        QString error;
+        const QString json = uR"({"manifest":1,"id":"a.b","name":"X","version":"1","commands":[{"id":"c","keyword":"c","run":{"program":"x.exe","args":%1,"suggest":%2}}]})"_s;
+        const auto parsed = [&](const QString& args, const QString& suggest) { return Manifest::parse(json.arg(args, suggest).toUtf8(), &error); };
+        for (const QString suggest : {u"files"_s, u"folders"_s, u"paths"_s}) {
+            const auto m = parsed(u"\"-n %s\""_s, u'"' + suggest + u'"');
+            QVERIFY2(m.has_value(), qPrintable(error));
+            QCOMPARE(m->commands[0].run.suggest, suggest);
+        }
+        QVERIFY(!parsed(u"\"%s\""_s, u"\"apps\""_s));
+        QVERIFY2(error.contains(u"suggest"_s), qPrintable(error));
+        QVERIFY(!parsed(u"\"-n\""_s, u"\"files\""_s)); // nowhere to put the path
+        QVERIFY2(error.contains(u"%s"_s), qPrintable(error));
+
+        Run run;
+        run.args = u"%s"_s;
+        QCOMPARE(zeroCodePathArgument(run, u"D:/项目/a.txt"_s), u"D:\\项目\\a.txt"_s);
+        QCOMPARE(zeroCodePathArgument(run, u"D:\\My Projects"_s), u"\"D:\\My Projects\""_s);
+        run.args = u"--goto \"%s\""_s; // quoted already
+        QCOMPARE(zeroCodePathArgument(run, u"D:\\My Projects"_s), u"D:\\My Projects"_s);
+        Command command;
+        command.run.kind = Run::Kind::Program;
+        command.run.program = u"C:\\x.exe"_s;
+        command.run.args = u"-n %s"_s;
+        command.run.suggest = u"paths"_s;
+        QCOMPARE(runZeroCode(command, zeroCodePathArgument(command.run, u"D:\\My Projects"_s), u"zh"_s)[0].open.args,
+            u"-n \"D:\\My Projects\""_s);
+
+        // The sample's code and np look for paths.
+        const auto go = Manifest::load(QString::fromUtf8(WINSHUN_SOURCE_PLUGINS) + u"/winshun.go/plugin.json"_s, &error);
+        QVERIFY2(go.has_value(), qPrintable(error));
+        QCOMPARE(go->command(u"code")->run.suggest, u"paths"_s);
+        QCOMPARE(go->command(u"np")->run.suggest, u"files"_s);
     }
 
     void zeroCodeRedirectedStartup()
@@ -3451,8 +3559,10 @@ private slots:
                 {u"runtime"_s, QJsonObject {{u"mode"_s, u"once"_s}, {u"program"_s, u"python"_s}}}, {u"url"_s, url}, {u"sha256"_s, hash},
                 {u"size"_s, static_cast<double>(size)}};
         };
+        QJsonObject withNotes = entry(u"test.lib"_s, u"test.lib-1.2.0.wsplugin"_s, sha.toUpper(), bytes.size());
+        withNotes.insert(u"notes"_s, QJsonObject {{u"zh"_s, u"修好了 **一个** 问题。"_s}, {u"en"_s, u"Fixed **one** problem."_s}}); // GitHub #337
         const QJsonArray entries {
-            entry(u"test.lib"_s, u"test.lib-1.2.0.wsplugin"_s, sha.toUpper(), bytes.size()),
+            withNotes,
             entry(u"test.new"_s, package, sha, bytes.size(), u"9.0"_s),
             entry(u"Bad Id"_s, package, sha, bytes.size()), // left out: the id
             entry(u"test.nohash"_s, package, QString(), bytes.size()), // left out: no SHA-256
@@ -3471,6 +3581,9 @@ private slots:
         QCOMPARE(lib->sha256, sha); // lower-cased
         QCOMPARE(lib->url, QDir::toNativeSeparators(package)); // beside the list
         QCOMPARE(lib->permissions, (QStringList {u"network"_s, u"files:read"_s}));
+        QCOMPARE(lib->notes.pick(u"zh_CN"_s), u"修好了 **一个** 问题。"_s);
+        QCOMPARE(lib->notes.pick(u"en"_s), u"Fixed **one** problem."_s);
+        QVERIFY(index->find(u"test.new"_s)->notes.isEmpty()); // none in the list: no 更新内容
         QVERIFY(lib->program == Program::Python);
         QVERIFY(!gallery::parse("[]", listPath, &error));
         QVERIFY(!gallery::parse(R"({"schema":2,"plugins":[]})", listPath, &error));
@@ -5459,7 +5572,13 @@ private slots:
         QCOMPARE(data.value(u"WS_SETTINGS"_s).toString(), u"{}"_s);
         QCOMPARE(QJsonDocument::fromJson(data.value(u"WS_FILTERS"_s).toString().toUtf8()).object(), filters);
         QCOMPARE(data.value(u"FAKE_EXTRA"_s).toString(), u"额外"_s);
-        QVERIFY(data.value(u"PYTHONIOENCODING"_s).toString().isEmpty()); // an exe, not python
+        // An exe, not python: nothing added to the user's own environment (which may set it).
+        const auto registryValue = [](const QString& key) {
+            return QSettings(key, QSettings::NativeFormat).value(u"PYTHONIOENCODING"_s).toString();
+        };
+        const QString userIo = registryValue(u"HKEY_CURRENT_USER\\Environment"_s);
+        QCOMPARE(data.value(u"PYTHONIOENCODING"_s).toString(),
+            userIo.isEmpty() ? registryValue(u"HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"_s) : userIo);
         // The regex trigger: the whole text, and the groups.
         QVERIFY(f.host->query(u"12+34"_s, Scope::All, 2));
         QVERIFY(f.waitFinal(2));
@@ -5767,6 +5886,38 @@ private slots:
         QVERIFY(f.host->query(u"ut 中文查询"_s, Scope::All, 3));
         QVERIFY(f.waitFinal(3));
         QCOMPARE(f.finalFor(3)->items[0].title, u"once: 中文查询"_s);
+    }
+
+    void stderrAnsi()
+    {
+        // A plugin whose stderr is in the ANSI code page (a batch file's echo, a
+        // PowerShell parse error, Qt's default message handler) is not UTF-8.
+        // The runner puts that stderr into a JSON control line, which the host
+        // drops when it is not valid: the stderr line and the exit with it,
+        // so the failure never came. It must come, with the text readable.
+        const std::wstring wide = u"something went wrong: Résumé 出错了"_s.toStdWString();
+        const int bytes = ::WideCharToMultiByte(CP_ACP, 0, wide.data(), static_cast<int>(wide.size()), nullptr, 0, nullptr, nullptr);
+        std::string ansi(static_cast<std::size_t>(bytes), '\0');
+        ::WideCharToMultiByte(CP_ACP, 0, wide.data(), static_cast<int>(wide.size()), ansi.data(), bytes, nullptr, nullptr);
+        const int chars = ::MultiByteToWideChar(CP_ACP, 0, ansi.data(), bytes, nullptr, 0);
+        std::wstring back(static_cast<std::size_t>(chars), L'\0');
+        ::MultiByteToWideChar(CP_ACP, 0, ansi.data(), bytes, back.data(), chars);
+        const QString expected = QString::fromStdWString(back);
+        qInfo() << "ANSI code page" << ::GetACP() << "gives back" << expected;
+
+        Fixture f;
+        Spec spec;
+        spec.mode = u"once"_s;
+        spec.role = u"--once"_s;
+        spec.args = {u"--fail-ansi"_s};
+        spec.runtimeExtra = {{u"debounceMs"_s, 0}};
+        QVERIFY(!f.install(spec).isEmpty());
+        QVERIFY(f.host->query(u"fk x"_s, Scope::All, 1));
+        QVERIFY(f.waitFailure(1));
+        const QString failure = f.failureOf(1);
+        QVERIFY2(failure.contains(u"退出码 3"_s), qPrintable(failure));
+        QVERIFY2(failure.contains(expected), qPrintable(failure));
+        QVERIFY2(!failure.contains(QChar(0xFFFD)) || expected.contains(QChar(0xFFFD)), qPrintable(failure));
     }
 
     // ---- the job and the permissions ---------------------------------------------
@@ -6332,14 +6483,11 @@ private slots:
             reinterpret_cast<LPCWSTR>((elsewhere + u"\\secret.txt"_s).utf16()), nullptr));
         QVERIFY(fileInFolder(data + u"\\link.txt"_s, data).isEmpty());
         // A junction in the folder to a folder elsewhere (no administrator needed).
-        QProcess mklink;
-        mklink.start(u"cmd.exe"_s, {u"/c"_s, u"mklink"_s, u"/J"_s, data + u"\\out"_s, elsewhere});
-        QVERIFY(mklink.waitForFinished(10000) && mklink.exitCode() == 0);
+        QVERIFY(makeJunction(data + u"\\out"_s, elsewhere));
         QVERIFY(QFileInfo::exists(data + u"\\out\\secret.txt"_s));
         QVERIFY(fileInFolder(data + u"\\out\\secret.txt"_s, data).isEmpty());
         // The data folder itself reached through a junction: still its own.
-        mklink.start(u"cmd.exe"_s, {u"/c"_s, u"mklink"_s, u"/J"_s, root + u"\\moved"_s, data});
-        QVERIFY(mklink.waitForFinished(10000) && mklink.exitCode() == 0);
+        QVERIFY(makeJunction(root + u"\\moved"_s, data));
         QVERIFY(!fileInFolder(data + u"\\details\\mail.msg"_s, root + u"\\moved"_s).isEmpty());
         QVERIFY(::RemoveDirectoryW(reinterpret_cast<LPCWSTR>((data + u"\\out"_s).utf16())));
         QVERIFY(::RemoveDirectoryW(reinterpret_cast<LPCWSTR>((root + u"\\moved"_s).utf16())));

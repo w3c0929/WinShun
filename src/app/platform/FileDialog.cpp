@@ -197,17 +197,26 @@ bool send(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     return ::SendMessageTimeoutW(hwnd, msg, wParam, lParam, SMTO_ABORTIFHUNG, 2000, &result) != 0;
 }
 
+// A dialog's accept button that opens rather than saves: "打开(&O)", "開啟",
+// "&Open".
+bool saysOpen(std::wstring label)
+{
+    std::erase(label, L'&');
+    const auto has = [&label](std::wstring_view word) { return label.find(word) != std::wstring::npos; };
+    return has(L"打开") || has(L"打開") || has(L"開啟") || ::_wcsnicmp(label.c_str(), L"Open", 4) == 0;
+}
+
 // What a control of another program holds: GetWindowText does not ask
-// another program's controls (WM_GETTEXT).
-std::wstring controlText(HWND hwnd)
+// another program's controls (WM_GETTEXT). Each message waits `timeout` ms at most.
+std::wstring controlText(HWND hwnd, UINT timeout = 2000)
 {
     DWORD_PTR length = 0;
-    if (!::SendMessageTimeoutW(hwnd, WM_GETTEXTLENGTH, 0, 0, SMTO_ABORTIFHUNG, 2000, &length))
+    if (!::SendMessageTimeoutW(hwnd, WM_GETTEXTLENGTH, 0, 0, SMTO_ABORTIFHUNG, timeout, &length))
         return {};
     std::wstring text(length + 1, L'\0');
     DWORD_PTR copied = 0;
     if (!::SendMessageTimeoutW(hwnd, WM_GETTEXT, text.size(), reinterpret_cast<LPARAM>(text.data()), SMTO_ABORTIFHUNG,
-            2000, &copied))
+            timeout, &copied))
         return {};
     text.resize(std::min<std::size_t>(copied, length));
     return text;
@@ -335,10 +344,14 @@ bool goByName(HWND dialog, const std::wstring& folder)
     if (!isFolder(folder) || !setFileBoxText(dialog, box, target)
         || !send(dialog, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), reinterpret_cast<LPARAM>(ok)))
         return false;
-    // A dialog of Windows Vista and later goes there after OK returns, and
-    // then clears the box.
+    // Both styles go there after OK returns and then clear the box: Windows
+    // Vista's and later shows the folder in its crumbs, the Windows XP style
+    // only empties the box (some 40 ms on). A name put back before that
+    // would be cleared with it.
     if (crumbs)
         waitFor([&] { return caption(crumbs) != shown; }, 1500ms);
+    else
+        waitFor([&] { return controlText(box, 250) != target; }, 1500ms);
     setFileBoxText(dialog, box, typed);
     return true;
 }
@@ -567,9 +580,7 @@ Kind probe(HWND hwnd)
     ComPtr<IUIAutomationElement> accept;
     waitFor([&] { return (accept = dialog.acceptButton()) != nullptr; }, 500ms);
     const std::wstring label = accept ? Dialog::nameOf(accept.Get()) : std::wstring(); // "保存(S)", "打开(O)"
-    const bool open = label.find(L"打开") != std::wstring::npos || label.find(L"開啟") != std::wstring::npos
-        || ::_wcsnicmp(label.c_str(), L"Open", 4) == 0;
-    return open ? Kind::Open : Kind::Save;
+    return saysOpen(label) ? Kind::Open : Kind::Save;
 }
 
 bool goTo(HWND hwnd, const std::wstring& folder)
@@ -814,6 +825,25 @@ bool accept(HWND dialog)
         return dialogrules::accept(dialog);
     const HWND ok = ::GetDlgItem(dialog, IDOK);
     return ok && ::PostMessageW(dialog, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), reinterpret_cast<LPARAM>(ok));
+}
+
+bool opensFiles(HWND dialog, Kind kind)
+{
+    if (kind == Kind::Open)
+        return true;
+    if (kind != Kind::Legacy)
+        return false;
+    // A button's caption is kept by Windows: read without a message to a
+    // program that may be busy (measured across programs). One that keeps
+    // its own (answering WM_GETTEXT itself) is asked, briefly: this runs on
+    // the GUI thread as the dialog comes to the front.
+    const HWND ok = ::GetDlgItem(dialog, IDOK);
+    if (!ok)
+        return false;
+    wchar_t label[64] {};
+    if (::GetWindowTextW(ok, label, static_cast<int>(std::size(label))) > 0)
+        return saysOpen(label);
+    return saysOpen(controlText(ok, 250));
 }
 
 } // namespace ws::filedialog

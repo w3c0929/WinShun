@@ -4701,6 +4701,48 @@ void checkFileGallery(Launcher& launcher, IndexService& index, QQmlEngine* engin
             QCoreApplication::sendEvent(window, &press);
             QCoreApplication::sendEvent(window, &release);
         };
+        const auto pressKey = [&](int code) {
+            if (code == Qt::Key_F2) { // taken by the search field in use
+                auto* panelField = visualNamed(window->contentItem(), u"panelSearchField"_s);
+                auto* field = panelField && panelField->isVisible() ? panelField : visualNamed(window->contentItem(), u"searchField"_s);
+                if (field)
+                    field->forceActiveFocus();
+            }
+            QKeyEvent down(QEvent::KeyPress, code, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &down);
+            QKeyEvent up(QEvent::KeyRelease, code, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &up);
+            pump(60);
+        };
+        // GitHub #335: the rename box beside the current row's name, never
+        // over it (a delegate without nameTop/nameBottom is one line), and
+        // inside the list.
+        const auto renameBesideName = [&](QObject* list) {
+            auto* box = visualNamed(window->contentItem(), u"renameBox"_s);
+            auto* listItem = qobject_cast<QQuickItem*>(list);
+            auto* item = list ? list->property("currentItem").value<QQuickItem*>() : nullptr;
+            if (!box || !box->isVisible() || !item || !listItem)
+                return false;
+            const QVariant top = item->property("nameTop");
+            const QVariant bottom = item->property("nameBottom");
+            const qreal nameTop = item->mapToScene(QPointF(0, top.isValid() ? top.toReal() : 0)).y();
+            const qreal nameBottom = item->mapToScene(QPointF(0, bottom.isValid() ? bottom.toReal() : item->height())).y();
+            const qreal boxTop = box->mapToScene(QPointF(0, 0)).y();
+            const qreal boxBottom = boxTop + box->height();
+            const qreal listTop = listItem->mapToScene(QPointF(0, 0)).y();
+            const qreal listBottom = listTop + listItem->height();
+            // Where the row says where its name starts, the box's text starts there too.
+            const QVariant left = item->property("nameLeft");
+            const bool aligned = !left.isValid()
+                || std::abs(item->mapToScene(QPointF(left.toReal(), 0)).x()
+                       - box->mapToScene(QPointF(box->property("textInset").toReal(), 0)).x()) <= 1;
+            // Within its row or tile across, not over the next tile.
+            const qreal boxLeft = box->mapToScene(QPointF(0, 0)).x();
+            const bool across = boxLeft >= item->mapToScene(QPointF(0, 0)).x() - 1
+                && boxLeft + box->width() <= item->mapToScene(QPointF(item->width(), 0)).x() + 1;
+            return aligned && across && (boxTop >= nameBottom - 1 || boxBottom <= nameTop + 1) && boxTop >= listTop - 1
+                && boxBottom <= listBottom + 1;
+        };
         grid->setProperty("currentIndex", 5);
         const QString chosen = launcher.results()->pathAt(5);
         click(visualNamed(window->contentItem(), u"fileViewList"_s));
@@ -4741,6 +4783,7 @@ void checkFileGallery(Launcher& launcher, IndexService& index, QQmlEngine* engin
             check(file.exists() && box && box->isVisible() && box->property("text").toString() == file.fileName()
                     && box->property("inputFocused").toBool(),
                 "F2 did not open the rename box with the file's name");
+            check(renameBesideName(view), "the rename box covers the name in the panel's list");
             if (box && box->isVisible())
                 check(saveGrab(window, output.filePath(u"rename-box.png"_s)), "could not save the rename box's picture");
             if (box && box->isVisible()) {
@@ -4773,6 +4816,10 @@ void checkFileGallery(Launcher& launcher, IndexService& index, QQmlEngine* engin
         settle(window);
         check(launcher.gallery() && launcher.results()->pathAt(grid->property("currentIndex").toInt()) == chosen,
             "switching back to gallery lost the current file");
+        pressKey(Qt::Key_F2);
+        check(renameBesideName(grid), "the rename box covers the name on a gallery tile");
+        check(saveGrab(window, output.filePath(u"rename-box-gallery.png"_s)), "could not save the gallery's rename box");
+        pressKey(Qt::Key_Escape);
         launcher.setResultOptions(KindOrder::FilesFirst, true, false, false, u"ctrl"_s);
         check(launcher.results()->data(launcher.results()->index(0), ResultModel::ThumbnailRole).toString().isEmpty()
             && !launcher.results()->data(launcher.results()->index(0), ResultModel::GalleryThumbnailRole).toString().isEmpty(),
@@ -4792,6 +4839,31 @@ void checkFileGallery(Launcher& launcher, IndexService& index, QQmlEngine* engin
         window->resize(640, 480);
         settle(window);
         check(saveGrab(window, output.filePath(u"files-large-icons-compact.png"_s)), "could not render minimum width");
+
+        // The box's own list, two lines a row: under the name, over its
+        // folder; on the last row, above the name.
+        launcher.setGallery(false);
+        launcher.setPanel(false);
+        window->resize(900, 600);
+        settle(window);
+        auto* list = window->property("view").value<QObject*>();
+        if (list) {
+            for (const int row : {0, list->property("count").toInt() - 1}) {
+                list->setProperty("currentIndex", row);
+                settle(window);
+                pressKey(Qt::Key_F2);
+                check(renameBesideName(list), row == 0 ? "the rename box covers the name in the box's list"
+                                                       : "the rename box covers the name on the box's last row");
+                check(saveGrab(window, output.filePath(row == 0 ? u"rename-box-list.png"_s : u"rename-box-list-last.png"_s)),
+                    "could not save the box list's rename box");
+                pressKey(Qt::Key_Escape);
+            }
+        } else {
+            check(false, "no list in the box");
+        }
+        launcher.setPanel(true);
+        settle(window);
+        say(u"rename box beside the name: panel list, gallery tile, the box's first and last row"_s);
     }
     launcher.setGallery(false);
     settle(window);
@@ -5656,6 +5728,97 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
     }
     query({}); // let the last search settle before its controller and engine go away
     say(u"launcher prefix, panel-sort and favorite Tab regressions: real controllers/engine over isolated fixtures"_s);
+
+    // GitHub #344: a program command's words looked for as paths, listed
+    // above its own row; the first one current, Enter named by the command.
+    {
+        const QString suggestFolder = temporary.filePath(u"plugins/test.suggest"_s);
+        QDir().mkpath(suggestFolder);
+        QFile suggest(QDir(suggestFolder).filePath(u"plugin.json"_s));
+        check(suggest.open(QIODevice::WriteOnly), "could not create the isolated suggest plugin");
+        suggest.write(R"({"manifest":1,"id":"test.suggest","name":"Suggest fixture","version":"1.0.0","commands":[
+            {"id":"open","keyword":"edit","title":"用编辑器打开","run":{"program":"C:\\none\\editor.exe","args":"%s","suggest":"paths"}},
+            {"id":"dir","keyword":"indir","title":"在终端打开","run":{"program":"C:\\none\\term.exe","args":"-d %s","suggest":"folders"}},
+            {"id":"txt","keyword":"note","title":"用记事本打开","run":{"program":"C:\\none\\note.exe","args":"%s","suggest":"files"}}]})");
+        suggest.close();
+        plugin::Host host({.userPluginDir = temporary.filePath(u"plugins"_s)});
+        host.catalog().scan();
+        host.setEnabled(u"test.suggest"_s, true);
+        launcher.setPluginHost(&host);
+        launcher.setPanel(false);
+        const auto rows = [&] {
+            QStringList names;
+            for (int i = 0; i < launcher.results()->count(); ++i) {
+                const SearchResult* r = launcher.results()->at(i);
+                names.append(r->isPlugin() ? u"[" + r->name + u"]" : r->name);
+            }
+            return names;
+        };
+        const auto settled = [&](const QString& text) {
+            query(text);
+            pump(100);
+            query(text); // the plugin's row and the names', both in
+        };
+        settled(u"edit 报告"_s);
+        const QStringList paths = rows();
+        check(paths.size() == 4 && paths.last() == u"[用编辑器打开]" && !paths.first().startsWith(u'['),
+            "#344: paths were not listed above the command's row");
+        check(paths.contains(u"报告资料"_s) && paths.contains(u"报告.txt"_s), "#344: a file or a folder was missing");
+        check(launcher.currentRow() == 0 && launcher.keyHints().value(u"enter"_s).toString() == u"用编辑器打开",
+            "#344: the first path was not current, or Enter did not say what it does");
+        say(u"#344 edit 报告: %1; Enter: %2"_s.arg(paths.join(u", "_s), launcher.keyHints().value(u"enter"_s).toString()));
+        settled(u"indir 报告"_s);
+        check(rows() == QStringList({u"报告资料"_s, u"[在终端打开]"_s}), "#344: folders only listed something else");
+        say(u"#344 indir 报告: %1"_s.arg(rows().join(u", "_s)));
+        settled(u"note 报告"_s);
+        check(!rows().contains(u"报告资料"_s) && rows().contains(u"报告.txt"_s) && rows().last() == u"[用记事本打开]",
+            "#344: files only listed a folder");
+        say(u"#344 note 报告: %1"_s.arg(rows().join(u", "_s)));
+        settled(u"edit "_s);
+        check(rows() == QStringList({u"[用编辑器打开]"_s}), "#344: the keyword alone listed paths");
+        query({});
+        launcher.setPluginHost(nullptr);
+    }
+    // ... and Enter on one: the program started with that path as %s.
+    {
+        const QString picked = QDir::toNativeSeparators(temporary.filePath(u"picked.txt"_s));
+        const QString folder = temporary.filePath(u"plugins/test.pick"_s);
+        QDir().mkpath(folder);
+        QFile manifest(QDir(folder).filePath(u"plugin.json"_s));
+        check(manifest.open(QIODevice::WriteOnly), "could not create the isolated pick plugin");
+        const QJsonObject run {{u"program"_s, u"%SystemRoot%\\System32\\cmd.exe"_s},
+            {u"args"_s, u"/d /c echo %s>\""_s + picked + u'"'}, {u"suggest"_s, u"paths"_s}};
+        manifest.write(QJsonDocument(QJsonObject {{u"manifest"_s, 1}, {u"id"_s, u"test.pick"_s}, {u"name"_s, u"Pick fixture"_s},
+            {u"version"_s, u"1.0.0"_s}, {u"permissions"_s, QJsonArray {u"processes"_s}},
+            {u"commands"_s, QJsonArray {QJsonObject {{u"id"_s, u"pick"_s}, {u"keyword"_s, u"pick"_s}, {u"title"_s, u"交给 cmd"_s}, {u"run"_s, run}}}}})
+                .toJson());
+        manifest.close();
+        plugin::Host host({.userPluginDir = temporary.filePath(u"plugins"_s)});
+        host.catalog().scan();
+        host.setEnabled(u"test.pick"_s, true);
+        launcher.setPluginHost(&host);
+        query(u"pick outside"_s);
+        pump(100);
+        query(u"pick outside"_s);
+        const SearchResult* first = launcher.results()->at(0);
+        check(first && !first->isPlugin() && first->name == u"outside.csv", "#344: the path was not the first row");
+        launcher.trigger(0, Launcher::Open);
+        QElapsedTimer wait;
+        wait.start();
+        QByteArray got;
+        while (wait.elapsed() < 5000 && got.trimmed().isEmpty()) {
+            pump(50);
+            QFile out(picked);
+            if (out.open(QIODevice::ReadOnly))
+                got = out.readAll();
+        }
+        // An ASCII path: the same in whatever code page cmd writes.
+        check(QString::fromLatin1(got.trimmed()) == QDir::toNativeSeparators(first ? first->path : QString()),
+            "#344: Enter did not hand the path over");
+        say(u"#344 Enter on %1: the program got \"%2\""_s.arg(first ? first->path : QString(), QString::fromLatin1(got.trimmed())));
+        query({});
+        launcher.setPluginHost(nullptr);
+    }
 
     const QString pluginFolder = temporary.filePath(u"plugins/test.columns"_s);
     QDir().mkpath(pluginFolder);
@@ -10355,7 +10518,7 @@ bool probeSettingsReopen(App& app, const QStringList& args, const QDir& out, QJs
 // (taken and deleted as they come) open its windows for a look at them:
 //   show [text] | hide | clip | settings [place] | style <fluent|brand|tactile>
 //   | theme <light|dark|system> | set <SettingsEditor property> <value>
-//   | windows (their places into windows.json)
+//   | windows (their places into windows.json) | press <objectName> (its clicked())
 // Each batch done is counted in <folder>\ack.txt.
 int runLive(App& app, const QDir& out)
 {
@@ -10473,6 +10636,22 @@ int runLive(App& app, const QDir& out)
                 QFile json(out.filePath(u"windows.json"_s));
                 if (json.open(QIODevice::WriteOnly))
                     json.write(QJsonDocument(list).toJson());
+            } else if (verb == u"press") { // press <objectName>: its clicked(), as a click would, to look at what it opens
+                // By the items on show (a list's rows are not QObject children of the list).
+                const std::function<QQuickItem*(QQuickItem*)> find = [&](QQuickItem* item) -> QQuickItem* {
+                    if (item->objectName() == rest && item->isVisible())
+                        return item;
+                    for (QQuickItem* child : item->childItems())
+                        if (QQuickItem* found = find(child))
+                            return found;
+                    return nullptr;
+                };
+                for (QWindow* window : QGuiApplication::topLevelWindows()) {
+                    auto* quick = qobject_cast<QQuickWindow*>(window);
+                    QQuickItem* found = quick && window->isVisible() ? find(quick->contentItem()) : nullptr;
+                    if (found && QMetaObject::invokeMethod(found, "clicked"))
+                        break;
+                }
             } else if (verb == u"parts") { // parts.txt: every style part alive in the visible windows
                 QStringList found;
                 const std::function<void(QQuickItem*, int)> walk = [&](QQuickItem* item, int depth) {

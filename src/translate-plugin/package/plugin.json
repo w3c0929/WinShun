@@ -2,7 +2,7 @@
   "manifest": 1,
   "id": "winshun.translate",
   "name": {"zh": "翻译", "en": "Translate"},
-  "version": "2.2.2",
+  "version": "2.2.3",
   "description": {"zh": "tr 翻译、dict AI 词典，支持 DeepL、微软翻译及 OpenAI 兼容模型服务；使用自己的密钥", "en": "tr translation and dict AI dictionary with your own DeepL, Microsoft Translator or OpenAI-compatible service key"},
   "author": "LingCore",
   "homepage": "https://github.com/LingCore/WinShun",
@@ -10,6 +10,7 @@
   "minWinShun": "0.17.0",
   "runtime": {"mode": "resident", "program": "WinShunTranslate.exe", "timeoutMs": 10000, "idleExitSec": 900, "debounceMs": 100},
   "permissions": ["network"],
+  "translate": "tr",
   "commands": [{
     "id": "tr",
     "keyword": ["tr", "fy"],

@@ -5,6 +5,7 @@
 #include "ContentIndexer.h"
 #include "Crawler.h"
 #include "FileIndex.h"
+#include "HiddenFolders.h"
 #include "Ntfs.h"
 #include "RemoteContent.h"
 #include "ShareIndexer.h"
@@ -149,6 +150,10 @@ public:
         // Explicit directory links are walked in addition to whole-disk indexing,
         // also when the MFT and journals are read by the service or administrator.
         std::vector<std::wstring> extraFolders;
+        // GitHub #351: folders the index holds and Win顺's own searches
+        // leave out (hiddenFolders()): the excluded ones, with the
+        // Everything compatibility on. Only its excluded paths and names.
+        CrawlRules hidden;
         // Each chosen folder is walked again this often (folderVerifyDue).
         // 0: only at startup, as rescanOnStartup says.
         std::chrono::hours folderVerifyEvery {24};
@@ -235,6 +240,8 @@ public:
     std::shared_ptr<FileIndex> index() const { return m_index.load(); }
     // Its entry ids are the index's: look things up with the index's read lock held.
     std::shared_ptr<const ContentIndex> contentIndex() const { return m_content; }
+    // Options::hidden, for searches to ask of what they find; null: none.
+    std::shared_ptr<const HiddenFolders> hiddenFolders() const { return m_hidden.load(); }
     bool readingContent() const noexcept { return m_contentIndexer->reading(); }
     // Content searches hand it what they read (ContentIndexer::Intake).
     ContentIndexer* contentIndexer() const noexcept { return m_contentIndexer.get(); }
@@ -307,7 +314,9 @@ private:
 
     std::shared_ptr<const Crawler> crawler() const { return m_crawler.load(); }
     std::shared_ptr<const Scope> scope() const { return m_scope.load(); }
-    void replaceScope(); // the worker is stopped; keeps track of removed supplemental roots
+    // Keeps track of removed supplemental roots. The worker is stopped, or
+    // is the caller (links found, GitHub #350).
+    void replaceScope();
     // Only the chosen folders now (foldersOnly()), as `scope` has them.
     bool foldersOnly(const Scope& scope) const;
     void launch(Pass pass);
@@ -349,8 +358,19 @@ private:
         const std::vector<JournalPosition>& journals, const std::vector<bool>& known);
     void setReading(const std::wstring& root, bool reading);
     void setReadingPercent(const std::wstring& root, int percent);
+    // `links`: the paths of the directory links on it (GitHub #350).
     bool syncFromMft(const VolumeInfo& volume, EntryId root, const Crawler& crawler, bool lowPriority,
-        std::stop_token stop);
+        std::stop_token stop, std::vector<std::wstring>& links);
+    // GitHub #350: whether the index holds a directory link's target nowhere
+    // else, so that it is walked under the link (m_autoLinks): a folder on a
+    // disk not indexed, a volume with no drive letter, a share not among the
+    // network shares. Never a folder excluded, nor the link in one.
+    bool linkWanted(std::wstring_view link, const Crawler& crawler) const;
+    // Worker thread: the links found on the volumes `read` (roots) replace
+    // what was known of them; those not seen before are walked (`walkNow`)
+    // or left to the walk of the pass under way. True when that changed.
+    bool takeLinks(std::stop_token stop, const std::vector<std::wstring>& read, const std::vector<std::wstring>& found,
+        bool walkNow);
     std::unique_ptr<Followed> follow(std::size_t volume);
     bool readJournal(Followed& f, std::stop_token stop);
     bool catchUp(Followed& f, std::stop_token stop);
@@ -399,6 +419,7 @@ private:
     std::atomic<std::shared_ptr<const Crawler>> m_crawler; // replaced whole when the rules change
     std::atomic<std::shared_ptr<const Scope>> m_scope; // ... when the chosen folders do
     std::atomic<std::shared_ptr<FileIndex>> m_index;
+    std::atomic<std::shared_ptr<const HiddenFolders>> m_hidden; // Options::hidden
     std::atomic<State> m_state {State::Idle};
     std::atomic<bool> m_refreshing {false};
     // Which volumes are followed is known (contentVolumes): from a little
@@ -427,6 +448,13 @@ private:
     // whole again once they are not chosen any more); kept in scope.json.
     std::vector<std::wstring> m_scopedVolumes;
     std::vector<std::wstring> m_removedExtra; // descendants to discard when an explicit link is removed
+    // GitHub #350: the directory links found on the volumes read from their
+    // MFT (or made since, as their journals tell) whose targets the index
+    // holds nowhere else; walked under their own paths as the explicit ones
+    // (Options::extraFolders) are. Kept in scope.json; m_linksKnown false
+    // until a read of every followed volume has looked for them.
+    std::vector<std::wstring> m_autoLinks;
+    bool m_linksKnown = false;
     std::vector<std::wstring> m_verifyOwed; // chosen folders owed a walk as soon as can be
     std::vector<std::wstring> m_overflowed; // ... whose watcher lost events: walked a moment later (resyncFoldersSoon)
 

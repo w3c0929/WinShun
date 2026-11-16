@@ -12,6 +12,7 @@
 #include "WebDav.h"
 #include "Win32Util.h"
 #include "ExplorerLanguage.h" // windowsIsChinese
+#include "Mojibake.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -935,6 +936,7 @@ void Settings::load()
     folderMenuFavorites = readOrDefault(s, u"Launcher/FolderMenuFavorites"_s, d.folderMenuFavorites);
     folderMenuRecent = readOrDefault(s, u"Launcher/FolderMenuRecent"_s, d.folderMenuRecent);
     folderMenuWindows = readOrDefault(s, u"Launcher/FolderMenuWindows"_s, d.folderMenuWindows);
+    folderMenuFavoritesInline = std::clamp(readOrDefault(s, u"Launcher/FolderMenuFavoritesInline"_s, d.folderMenuFavoritesInline), 0, 10);
     folderMenuRecentInline = std::clamp(readOrDefault(s, u"Launcher/FolderMenuRecentInline"_s, d.folderMenuRecentInline), 0, 10);
     folderMenuWindowsInline = std::clamp(readOrDefault(s, u"Launcher/FolderMenuWindowsInline"_s, d.folderMenuWindowsInline), 0, 10);
     if (!folderMenuFavorites && !folderMenuRecent && !folderMenuWindows) // a menu of nothing: back to all (#51)
@@ -1050,7 +1052,8 @@ void Settings::load()
     }
 
     autoUpdate = readOrDefault(s, u"Update/Automatic"_s, d.autoUpdate);
-    backupFolder = readOrDefault(s, u"Backup/Folder"_s, d.backupFolder);
+    // Picked folders some program garbled before they were kept (#346): as they were.
+    backupFolder = ungarbledPath(readOrDefault(s, u"Backup/Folder"_s, d.backupFolder));
 
     excludedPaths = readOrDefault(s, u"Index/ExcludedPaths"_s, d.excludedPaths);
     excludedNames = readOrDefault(s, u"Index/ExcludedNames"_s, d.excludedNames);
@@ -1073,7 +1076,7 @@ void Settings::load()
     indexAccess = readOrDefault(s, u"Index/Access"_s, d.indexAccess).trimmed().toLower();
     if (indexAccess != u"service" && indexAccess != u"direct" && indexAccess != u"walk")
         indexAccess = d.indexAccess;
-    indexFolder = readOrDefault(s, u"Index/Folder"_s, d.indexFolder).trimmed();
+    indexFolder = ungarbledPath(readOrDefault(s, u"Index/Folder"_s, d.indexFolder).trimmed());
     // GitHub #52. Whole disks were all there was: an older file without the
     // key goes on so (written, so that it stays so), a new install starts
     // with auto.
@@ -1341,6 +1344,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/FolderMenuFavorites"_s, folderMenuFavorites);
     s.setValue(u"Launcher/FolderMenuRecent"_s, folderMenuRecent);
     s.setValue(u"Launcher/FolderMenuWindows"_s, folderMenuWindows);
+    s.setValue(u"Launcher/FolderMenuFavoritesInline"_s, folderMenuFavoritesInline);
     s.setValue(u"Launcher/FolderMenuRecentInline"_s, folderMenuRecentInline);
     s.setValue(u"Launcher/FolderMenuWindowsInline"_s, folderMenuWindowsInline);
     s.setValue(u"Launcher/FolderMenuItemSearch"_s, folderMenuItemSearch);
@@ -1511,12 +1515,23 @@ ContentSizeLimits Settings::contentSizeLimits() const
     return limits;
 }
 
+namespace {
+
+bool isWholeDrive(std::wstring_view path)
+{
+    return path.size() == 2 && path[1] == L':';
+}
+
+} // namespace
+
 CrawlRules Settings::crawlRules() const
 {
     CrawlRules rules;
     for (const QString& p : excludedPaths) {
-        if (!p.trimmed().isEmpty())
-            rules.excludedPaths.push_back(normalizePath(p));
+        if (p.trimmed().isEmpty())
+            continue;
+        if (std::wstring path = normalizePath(p); !everythingCompat || isWholeDrive(path))
+            rules.excludedPaths.push_back(std::move(path));
     }
     // Our own files churn constantly. Not when they are a drive's root (an
     // empty drive chosen for the index): that would leave the whole drive out.
@@ -1529,7 +1544,7 @@ CrawlRules Settings::crawlRules() const
     if (!indexFolder.isEmpty())
         ownFolder(indexDir());
     for (const QString& n : excludedNames) {
-        if (!n.trimmed().isEmpty())
+        if (!n.trimmed().isEmpty() && !everythingCompat)
             rules.excludedNames.push_back(normalizeName(n));
     }
     for (const QString& p : kLowPriorityPaths) {
@@ -1539,6 +1554,24 @@ CrawlRules Settings::crawlRules() const
     }
     for (const QString& n : kLowPriorityNames)
         rules.lowPriorityNames.push_back(normalizeName(n));
+    return rules;
+}
+
+CrawlRules Settings::hiddenRules() const
+{
+    CrawlRules rules;
+    if (!everythingCompat)
+        return rules;
+    for (const QString& p : excludedPaths) {
+        if (p.trimmed().isEmpty())
+            continue;
+        if (std::wstring path = normalizePath(p); !isWholeDrive(path))
+            rules.excludedPaths.push_back(std::move(path));
+    }
+    for (const QString& n : excludedNames) {
+        if (!n.trimmed().isEmpty())
+            rules.excludedNames.push_back(normalizeName(n));
+    }
     return rules;
 }
 

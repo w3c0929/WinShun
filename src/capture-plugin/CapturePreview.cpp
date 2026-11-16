@@ -493,6 +493,7 @@ int runOcr(const QStringList& args)
             {u"failed"_s, Translated::Failed, u"接口返回 401: Incorrect API key provided"_s},
             {u"service"_s, Translated::NoService, QString()},
             {u"plugin"_s, Translated::NoPlugin, QString()},
+            {u"off"_s, Translated::PluginOff, QString()},
         };
         for (const auto& [state, outcome, text] : states) {
             if (!translate)
@@ -761,6 +762,7 @@ int runToolbarDrag(const QStringList& args)
         bar->setProperty("keysOpen", true);
         settle(window);
         check(bar->property("keysOpen").toBool(), "the full key list did not open");
+        grab(u"toolbar-keys"); // the rows the settings' 按键 tab lists too (CaptureKeyList)
         session.setHiddenButtons({u"help"_s});
         settle(window);
         check(!help->isVisible() && !bar->property("keysOpen").toBool(), "hiding help left its button or list visible");

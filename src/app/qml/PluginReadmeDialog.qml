@@ -47,23 +47,35 @@ Item {
         id: card
         anchors.centerIn: parent
         width: Math.min(800, parent.width - 40)
-        height: parent.height - 40
+        height: Math.min(parent.height - 40, Math.max(160, scroll.y + body.contentHeight + 24)) // a short one in a card, not on a page
         Hook { anchors.fill: parent; part: Theme.menuFrame; dpr: dialog.dpr }
         MouseArea { anchors.fill: parent }
-        Text {
+        Row { // whose it is, then what: the name leads, 使用说明 under it in weight
             x: 20; y: 17
             width: parent.width - 128
-            text: qsTr("%1 · 使用说明").arg(dialog.title)
-            textFormat: Text.PlainText
-            elide: Text.ElideRight
-            color: Theme.text
-            font.pixelSize: Theme.fontTitle
-            font.weight: Theme.fontStrong
+            spacing: 10
+            Text {
+                id: titleText
+                width: Math.min(implicitWidth, parent.width - kindText.implicitWidth - parent.spacing)
+                text: dialog.title
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                color: Theme.text
+                font.pixelSize: Theme.fontTitle
+                font.weight: Theme.fontStrong
+            }
+            Text {
+                id: kindText
+                anchors.baseline: titleText.baseline
+                text: qsTr("使用说明")
+                color: Theme.subtext
+                font.pixelSize: Theme.fontCaption
+            }
         }
         RowAction {
             objectName: "closePluginReadme"
             anchors.right: parent.right; anchors.rightMargin: 14; y: 10
-            glyph: "\uE711"; text: "Esc"; tip: qsTr("关闭说明（Esc / Q）"); dpr: dialog.dpr
+            glyph: "\uE711"; text: "Esc"; tip: qsTr("关闭（Esc / Q）"); dpr: dialog.dpr
             onClicked: dialog.close()
         }
         Flickable {

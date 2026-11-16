@@ -193,6 +193,7 @@ set(qml_files
     qml/ContextMenu.qml
     qml/QueryHistoryPicker.qml
     qml/PluginReadmeDialog.qml
+    qml/PluginNotesDialog.qml
     qml/DialogBarWindow.qml
     qml/DialogBarRow.qml
     qml/FolderMenuWindow.qml
