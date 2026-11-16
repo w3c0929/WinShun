@@ -8,6 +8,7 @@
 #include "SystemTheme.h"
 #include "platform/WindowEffects.h"
 
+#include <QCursor>
 #include <QDir>
 #include <memory>
 #include <QGuiApplication>
@@ -74,6 +75,14 @@ using namespace Qt::StringLiterals;
 
 class FolderMenuTest : public QObject {
     Q_OBJECT
+
+    // The menu reads the system's pointer (FolderMenu::cursorPos), not the
+    // synthetic event's place: put the real pointer there too.
+    static void movePointer(QWindow* window, const QPoint& at)
+    {
+        QCursor::setPos(window->mapToGlobal(at));
+        QTest::mouseMove(window, at);
+    }
 
     static QQuickItem* visualItem(QQuickItem* root, const QString& name)
     {
@@ -611,6 +620,8 @@ private slots:
         for (const QString& name : {u"工作/2月"_s, u"工作/10月"_s, u"工作/24年"_s, u"工作/25年/a一月"_s, u"工作/25年/b二月"_s})
             QVERIFY(root.mkpath(name));
         const QString work = QDir::toNativeSeparators(root.filePath(u"工作"_s));
+        const QPoint realPointer = QCursor::pos();
+        const auto restorePointer = qScopeGuard([realPointer] { QCursor::setPos(realPointer); });
         const HWND previous = ::GetForegroundWindow();
         auto restore = qScopeGuard([previous] {
             if (previous && ::IsWindow(previous))
@@ -723,8 +734,8 @@ private slots:
         // pointer, still at rest on another arrow now, opens nothing further.
         QTRY_VERIFY(arrow(3).x() > 0);
         const QPoint at = arrow(3);
-        QTest::mouseMove(window, QPoint(90, at.y())); // from the row's name onto its arrow in one step
-        QTest::mouseMove(window, at);
+        movePointer(window, QPoint(90, at.y())); // from the row's name onto its arrow in one step
+        movePointer(window, at);
         QTest::qWait(150);
         QCOMPARE(folder(), work); // not at once
         QTRY_COMPARE(folder(), work + u"\\25年"_s);
