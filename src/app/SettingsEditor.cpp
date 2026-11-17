@@ -1129,7 +1129,7 @@ void SettingsEditor::setTaskbarIcon(const QString& style)
 
 void SettingsEditor::setUiSize(const QString& size)
 {
-    if (m_settings.uiSize == size || (size != u"compact" && size != u"standard" && size != u"roomy"))
+    if (m_settings.uiSize == size || (size != u"dense" && size != u"compact" && size != u"standard" && size != u"roomy"))
         return;
     m_settings.uiSize = size;
     commit();
@@ -1430,6 +1430,14 @@ void SettingsEditor::setExplorerMenu(bool on)
     if (m_settings.explorerMenu == on)
         return;
     m_settings.explorerMenu = on;
+    commit();
+}
+
+void SettingsEditor::setUriProtocol(bool on)
+{
+    if (m_settings.uriProtocol == on)
+        return;
+    m_settings.uriProtocol = on;
     commit();
 }
 

@@ -161,6 +161,14 @@ add_test(NAME tst_pluginkeywords COMMAND $<TARGET_FILE:WinShun>
     --preview-plugins "${CMAKE_CURRENT_BINARY_DIR}/plugin-keywords.png" --keyword-check --scale 1.5)
 set_tests_properties(tst_pluginkeywords PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+# Numbers with a range (GitHub #359): a card's sliders moved by keys (the
+# focus kept, a held key saved once) and by the pointer, their boxes typed
+# into, a value the plugin sends, a box with a minimum only; the tracks and
+# boxes lined up; each time the box, the slider, the INI and the plugin.
+add_test(NAME tst_pluginsliders COMMAND $<TARGET_FILE:WinShun>
+    --preview-plugins "${CMAKE_CURRENT_BINARY_DIR}/plugin-sliders.png" --slider-check --scale 1.5)
+set_tests_properties(tst_pluginsliders PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 # Combo menus share the theme frame, corner setting, inner padding and control gap.
 foreach(combo_style IN ITEMS fluent brand tactile liquid)
@@ -1052,6 +1060,10 @@ target_link_libraries(tst_favorites PRIVATE wscore Qt6::Test)
 qt_add_executable(tst_commandlaunch tst_commandlaunch.cpp)
 target_link_libraries(tst_commandlaunch PRIVATE wscore Qt6::Test)
 
+# winshun:// links (GitHub #358): what a link asks for (core/WinShunUri).
+qt_add_executable(tst_winshunuri tst_winshunuri.cpp)
+target_link_libraries(tst_winshunuri PRIVATE wscore Qt6::Test)
+
 # The plugins that left the setup for the plugin library (GitHub #138,
 # src/app/MovedPlugins): the screenshot's settings moved to its plugin.
 qt_add_executable(tst_movedplugins tst_movedplugins.cpp ${PROJECT_SOURCE_DIR}/src/app/MovedPlugins.cpp
@@ -1463,6 +1475,17 @@ set_tests_properties(tst_cloudbackup PROPERTIES
 add_executable(plugin_fake plugin_fake.cpp)
 target_link_libraries(plugin_fake PRIVATE wsplugin_lite)
 set_target_properties(plugin_fake PROPERTIES AUTOMOC OFF MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_executable(sdk_settings_demo sdk_settings_demo.cpp)
+target_include_directories(sdk_settings_demo PRIVATE ${PROJECT_SOURCE_DIR}/src/plugins-sdk)
+target_link_libraries(sdk_settings_demo PRIVATE winshun_options)
+set_target_properties(sdk_settings_demo PROPERTIES AUTOMOC OFF WIN32_EXECUTABLE FALSE
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+qt_add_executable(tst_pluginsdk tst_pluginsdk.cpp)
+target_include_directories(tst_pluginsdk PRIVATE ${PROJECT_SOURCE_DIR}/src/plugins-sdk)
+target_link_libraries(tst_pluginsdk PRIVATE winshun_options Qt6::Test)
+target_compile_definitions(tst_pluginsdk PRIVATE WINSHUN_SDK_SETTINGS_DEMO="$<TARGET_FILE:sdk_settings_demo>")
+add_dependencies(tst_pluginsdk sdk_settings_demo)
+set_target_properties(tst_pluginsdk PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
 qt_add_executable(tst_plugin tst_plugin.cpp)
 qt_add_executable(plugin_qt plugin_qt.cpp)
 target_link_libraries(plugin_qt PRIVATE winshun_options Qt6::Quick)
@@ -1502,6 +1525,9 @@ add_test(NAME tst_favorites COMMAND tst_favorites)
 add_test(NAME tst_commandlaunch COMMAND tst_commandlaunch)
 set_tests_properties(tst_commandlaunch PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+add_test(NAME tst_winshunuri COMMAND tst_winshunuri)
+set_tests_properties(tst_winshunuri PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 add_test(NAME tst_color COMMAND tst_color)
 add_test(NAME tst_elide COMMAND tst_elide)
 add_test(NAME tst_savedfile COMMAND tst_savedfile)
@@ -1515,6 +1541,9 @@ add_test(NAME tst_semantic COMMAND tst_semantic)
 add_test(NAME tst_mcp COMMAND tst_mcp)
 add_test(NAME tst_cli COMMAND tst_cli)
 add_test(NAME tst_plugin COMMAND tst_plugin -o -,txt)
+add_test(NAME tst_pluginsdk COMMAND tst_pluginsdk -o -,txt)
+set_tests_properties(tst_pluginsdk PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 # Importing clipboard history (Ditto, text, CSV): the reader with a real store.
 qt_add_executable(tst_clipimport tst_clipimport.cpp ${PROJECT_SOURCE_DIR}/src/app/ClipImport.cpp
     ${PROJECT_SOURCE_DIR}/src/app/ClipImage.cpp

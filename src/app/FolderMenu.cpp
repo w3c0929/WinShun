@@ -24,12 +24,14 @@
 #include <QThreadPool>
 #include <QGuiApplication>
 #include <QJsonObject>
+#include <QQuickWindow>
 #include <QScreen>
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QTimer>
 #include <QWindow>
 
+#include <dwmapi.h>
 #include <shellscalingapi.h>
 #include <tlhelp32.h>
 
@@ -940,7 +942,7 @@ void FolderMenu::listFolder(const QString& folder)
 
 QPoint FolderMenu::cursorPos() const
 {
-    return QCursor::pos();
+    return m_cursorSource ? m_cursorSource() : QCursor::pos();
 }
 
 QRectF FolderMenu::screenArea(QPointF globalPos) const
@@ -958,6 +960,103 @@ void FolderMenu::prepareMenuWindow(QWindow* menu) const
     const bool dark = QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
     win::styleFramelessWindow(menu);
     win::setDarkFrame(menu, dark);
+}
+
+void FolderMenu::showColumn(QWindow* column)
+{
+    auto* window = qobject_cast<QQuickWindow*>(column);
+    if (!window)
+        return;
+    if (!window->isVisible()) {
+        prepareMenuWindow(window);
+        // Cloaked (DWM does not show it) until a frame with what it shows
+        // now; a frame that does not come is waited for a moment only.
+        win::setCloaked(window, true);
+        const std::uint64_t show = ++m_columnShows;
+        window->setProperty("_ws_columnShow", QVariant::fromValue(show));
+        const auto reveal = [window = QPointer(window), show] {
+            if (window && window->isVisible() && window->property("_ws_columnShow").toULongLong() == show)
+                win::setCloaked(window, false);
+        };
+        connect(window, &QQuickWindow::frameSwapped, this, reveal,
+            static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::SingleShotConnection));
+        QTimer::singleShot(250ms, this, reveal);
+        window->show();
+    }
+    window->raise(); // over a column before it it may overlap
+}
+
+void FolderMenu::hideColumn(QWindow* column) const
+{
+    if (!column || !column->isVisible())
+        return;
+    win::setCloaked(column, true); // gone with the next composition, no fade
+    column->hide();
+}
+
+namespace {
+
+// The edge Windows draws around a menu window, in the screen's pixels, inside
+// the window: DWM's own on Windows 11 (2 px at 150 %), WindowEdge's on
+// Windows 10 (Theme.edge).
+int frameBorder(HWND window, qreal dpr)
+{
+    constexpr DWORD kVisibleFrameBorderThickness = 37; // DWMWA_VISIBLE_FRAME_BORDER_THICKNESS, Windows 11
+    UINT thickness = 0;
+    if (SUCCEEDED(::DwmGetWindowAttribute(window, kVisibleFrameBorderThickness, &thickness, sizeof thickness))
+        && thickness > 0)
+        return static_cast<int>(thickness);
+    return std::max(1, qRound(dpr));
+}
+
+} // namespace
+
+void FolderMenu::placeColumn(QWindow* column, QWindow* before, QPointF at, int side, qreal rowOffset, bool level,
+    QRectF area) const
+{
+    if (!column)
+        return;
+    const bool native = before && QGuiApplication::platformName() == u"windows"_s;
+    if (!native || !column->handle()) {
+        column->setPosition(at.toPoint()); // made there; elsewhere, Qt's pixels are all there is
+        if (!native)
+            return;
+    }
+    const auto self = reinterpret_cast<HWND>(column->winId());
+    const auto previous = reinterpret_cast<HWND>(before->winId());
+    RECT beside {}, own {};
+    if (!::GetWindowRect(previous, &beside) || !::GetWindowRect(self, &own)) {
+        column->setPosition(at.toPoint());
+        return;
+    }
+    // Qt's pixels to the screen's as Qt maps them: the screen's corner is
+    // the same in both.
+    const QScreen* screen = before->screen();
+    const QPointF origin = screen ? QPointF(screen->geometry().topLeft()) : QPointF();
+    const qreal factor = screen ? screen->devicePixelRatio() : before->devicePixelRatio();
+    const auto onScreen = [&](QPointF p) {
+        return QPoint(qRound(origin.x() + (p.x() - origin.x()) * factor), qRound(origin.y() + (p.y() - origin.y()) * factor));
+    };
+    const int width = own.right - own.left;
+    const int height = own.bottom - own.top;
+    QPoint to = onScreen(at);
+    const int border = frameBorder(previous, before->devicePixelRatio());
+    if (side > 0)
+        to.setX(beside.right - border);
+    else if (side < 0)
+        to.setX(beside.left - width + border);
+    if (level)
+        to.setY(beside.top + qRound(rowOffset * before->devicePixelRatio()));
+    if (area.width() > 0 && area.height() > 0) { // a pixel either way stays inside the work area
+        const QPoint low = onScreen(area.topLeft());
+        const QPoint high = onScreen(area.bottomRight());
+        to.setX(std::max(low.x(), std::min(to.x(), high.x() - width)));
+        to.setY(std::max(low.y(), std::min(to.y(), high.y() - height)));
+    }
+    if (to != QPoint(own.left, own.top)) {
+        ::SetWindowPos(self, nullptr, to.x(), to.y(), 0, 0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
+    }
 }
 
 } // namespace ws

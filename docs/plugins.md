@@ -116,7 +116,7 @@ Start-WinShunPlugin -Name 'me.ps' -OnQuery {
 |---|---|---|
 | `winshun.py` | `query()`、`settings()`、`item(...)`、`reply(items)`、`is_action()` / `action_request()` / `effects(...)` | `serve(on_query, on_action=None, on_settings=None, on_details=None)`；处理函数收到 `(q, plugin)`，`plugin.partial()`、`plugin.log()`、`plugin.notify_user()`、`plugin.toast()`、`plugin.progress()`、`plugin.refresh()`、`plugin.tool(name, **args)`、`plugin.settings` |
 | `WinShun.psm1` | `Get-WinShunQuery`、`Get-WinShunSettings`、`New-WinShunItem`、`Send-WinShunReply`、`Send-WinShunEffects` | `Start-WinShunPlugin -OnQuery {…} -OnAction {…} -OnDetails {…}`、`Send-WinShunPartial`、`Write-WinShunLog`、`Send-WinShunNotify`、`Send-WinShunToast`、`Send-WinShunProgress`、`Invoke-WinShunTool` |
-| `winshun.h` | `winshun::onceQuery()`、`onceSettings()`、`once(items)`、`onceAction()` / `onceEffects()` | 派生 `winshun::Plugin`，重写 `query()`（和 `queryResult()`、`action()`、`settingsChanged()`、`initialized()`、`shuttingDown()`、`appearanceChanged()`、`details()`），`serve()`；成员 `partial()`、`log()`、`notifyUser()`、`toast()`、`progress()`、`refresh()`、`tool()`、`settings()`；这些成员可以在别的线程里调（发送有锁；`tool()` 在别的线程里调时由 `serve()` 所在的线程把回答交给它，可以给一个 `canceled` 标志，插件要停时置位，调用马上返回错误） |
+| `winshun.h` | `winshun::onceQuery()`、`onceSettings()`、`once(items)`、`onceAction()` / `onceEffects()` | 派生 `winshun::Plugin`，重写 `query()`（和 `queryResult()`、`action()`、`settingsChanged()`、`showSettings()`、`initialized()`、`shuttingDown()`、`appearanceChanged()`、`details()`），`serve()`；成员 `partial()`、`log()`、`notifyUser()`、`toast()`、`progress()`、`refresh()`、`updateSettings()`、`tool()`、`settings()`；这些成员可以在别的线程里调（发送有锁；`tool()` 在别的线程里调时由 `serve()` 所在的线程把回答交给它，可以给一个 `canceled` 标志，插件要停时置位，调用马上返回错误） |
 
 effects 的辅助：Python `winshun.hide() / keep() / notify(text) / copy(text) / set_query(text) / open_path(path) / open_url(url) / replace(items)`；PowerShell `New-WinShunEffect -Hide / -Keep / -Notify / -Copy / -SetQuery / -OpenPath / -OpenUrl / -Replace`；C++ `winshun::effect::hide()` 等。
 
@@ -170,7 +170,7 @@ effects 的辅助：Python `winshun.hide() / keep() / notify(text) / copy(text) 
 | `title`、`description`、`hint` | 显示名、一句话、关键字模式下输入框的占位文字（都是文字） |
 | `icon` | 见"图标" |
 | `keyword` | 字符串或数组。输入**关键字 + 空格**进入关键字模式；单独输入关键字时列表第一行是这条命令的提示行（Enter 或 Tab 进入，↓ 到名字结果）；输入两个字以上、是关键字开头的（`uu` 对 `uuid`），也在应用之后、文件之前多一行（光标不动，按 Tab 就补全成 `uuid `；最多两行，候选太多就不出）；提示行只在“全部”范围出，“文件”“文件夹”里只有文件和文件夹；用户可以在设置里改 |
-| `triggers` | 关键字以外的触发方式：`{"regex": "…", "minLength": 1, "maxLength": 64}`（整个输入匹配时，结果推进"全部"；`match` 是捕获组）、`{"push": {"minLength": 2, "maxItems": 3}}`（每键都发，常驻 + eager 才合适）、`{"files": {"kind": "any", "max": 1000, "extensions": ["jpg"], "title": {"zh": "用局域网发送…", "en": "Send over LAN…"}}}`（文件、文件夹结果的右键菜单里多一项 `title`，多选时对整个选择；`kind` 是 `file` / `folder` / `any`，`max` 默认 20、最多 1000，`extensions` 只管文件。选了它：一次 `action`，`trigger` 是 `files`、`action` 是 `files`、`files` 是这些完整路径，没有 item） |
+| `triggers` | 关键字以外的触发方式：`{"regex": "…", "minLength": 1, "maxLength": 64}`（整个输入匹配时，结果推进"全部"；`match` 是捕获组）、`{"push": {"minLength": 2, "maxItems": 3}}`（每键都发，常驻 + eager 才合适）、`{"files": {"kind": "any", "max": 1000, "extensions": ["jpg"], "title": {"zh": "用局域网发送…", "en": "Send over LAN…"}}}`（文件、文件夹结果的右键菜单里多一项 `title`，多选时对整个选择；`kind` 是 `file` / `folder` / `any`，`max` 默认 20、最多 1000，`extensions` 只管文件；还可以有 `"if"`：一个 `bool` 设置项的 key，设置开着这项才出现在菜单里，见"设置项"。选了它：一次 `action`，`trigger` 是 `files`、`action` 是 `files`、`files` 是这些完整路径，没有 item） |
 | `mode` | `list`（默认）或 `instant`：单独输入关键字、不用加空格，就向插件发 `query`，它返回的结果排在列表最前面，后面照常是按这个词找到的文件和程序（关键字后面加了空格，列表才只剩这个命令的结果；GitHub #242）。打开窗口、改东西这类动作仍然放在 `action` 里（用户按 Enter 时）：`query` 在用户打字时就会来，他可能只是想找名字里有这几个字母的文件 |
 | `contentSearch` | `true`：作为内容检索提供者，必须有 `runtime`；收到 `trigger: "content"`，见下面“内容检索提供者” |
 | `actions` | `[{"id": "kill", "title": "结束", "key": "Enter"}, …]`：顺序决定 Enter / Ctrl+Enter / Shift+Enter；右键菜单列全部；不写就只有一个 `default` |
@@ -264,7 +264,7 @@ Win顺 → 插件：
 
 `winshun/refresh`：显示着的列表自己变了（比如来了一个请求、一次传输结束了），不必等 `rerun` 的秒数，Win顺 马上再问一次同样的查询；两次查询之间至少隔 0.1 秒，连着发几条只多问一次（正在回答时来的，答完再问）。只在上一次回答要了 `rerun`、列表还开着时起作用，别的时候什么都不做；旧版 Win顺 不认识它，也不碍事。先写好下一次查询要读的状态，再发它。C++ SDK 是 `refresh()`，Python 是 `plugin.refresh()`。
 
-`winshun/settings/update`（0.30.0 起）：插件让用户在搜索框里改了自己的设置时，用它告诉 Win顺，设置页的卡片和设置文件跟着变，两边显示同一个值。只能改自己清单里声明的设置，类型只限 `text`、`number`、`bool`、`choice`，值的 JSON 类型要对得上（`number` 给数字、`bool` 给布尔值、`choice` 给它的某个选项）；`password`、`folder`、`file`、`hotkey` 不能这样改，对不上的项会被忽略。值确实变了，插件会照常收到 `settingsChanged`；发来的值和原来一样时什么也不会发生。更早的 Win顺 不认识这条通知，会忽略它，所以插件仍要自己记住这个值。
+`winshun/settings/update`（0.30.0 起）：插件让用户在搜索框里改了自己的设置时，用它告诉 Win顺，设置页的卡片和设置文件跟着变，两边显示同一个值。C++ SDK 用 `Plugin::updateSettings(Json values)` 发送这条通知。只能改自己清单里声明的设置，类型只限 `text`、`number`、`bool`、`choice`，值的 JSON 类型要对得上（`number` 给数字、`bool` 给布尔值、`choice` 给它的某个选项）；`password`、`folder`、`file`、`hotkey` 不能这样改，对不上的项会被忽略。有范围的 `number`（见“设置项”，0.33.0 起）先拉回范围、取到最近的一步再保存。值确实变了，插件会照常收到 `settingsChanged`；发来的值和原来一样时什么也不会发生。更早的 Win顺 不认识这条通知，会忽略它，所以插件仍要自己记住这个值。
 
 系统通知（`toast`）要 `notifications` 权限，没有就当底栏提示。每个插件最多每 2 秒一条，等着的只留最新的；正文截到 200 个字。标题前面 Win顺 总会加上插件的名字，插件去不掉，免得被当成 Win顺 自己的通知：随 Win顺 装的插件是「局域网传输：…」，自己装的插件不管叫什么都套上「插件「名字」：…」；名字看不出字来（只有空格、填充符这类）时改用 id。名字最多 24 个字，连名字一共 63 个字；没有正文就拿标题当正文。看不见的字符（控制字符、改文字方向的字符、零宽字符、填充符）会被去掉。`click` 是点通知时做的 effects，只认三种、每种一个，别的（网址、`notify`、`hide`、`keep`、`replace`）都丢掉，日志里记一笔：`setQuery` 只能填这个插件自己的关键词（会先打开搜索框）；`open` 只能打开盘符开头的文件或文件夹（`C:\…`，不带参数和工作目录；网址、`\\服务器\共享` 这类路径不行，映射成盘符的网络盘照样能开），照样受 processes 权限约束；`reveal {path}`（同样只认盘符开头的路径）在文件管理器里打开它所在的文件夹并选中它，只是选中、不启动程序，不要 processes 权限，文件已经不在了就打开它所在的文件夹。`open` 和 `reveal` 合起来只做排在前面的那一个：想兼容不认识 `reveal` 的旧版 Win顺，就写 `[{"type":"reveal","path":文件}, {"type":"open","path":文件夹}]`，旧版会丢掉 `reveal`、照旧打开文件夹；`copy` 要 `clipboard:write` 权限。Win顺 自己的通知还在时，插件的通知先等它过去（一般 6 秒，最多 8 秒；等了 60 秒还没轮到就不发）；点哪条通知只做那条自己的事，刚被别的插件的通知顶掉时点的，什么都不做。通知会留在操作中心：**别把文件名、聊天内容这类私人的字写进去**。
 
@@ -296,7 +296,7 @@ C++ SDK 的 `initialized()` 在回答完 `initialize` 后调一次：`eager` 插
   - `uiStyle` 是界面风格（`fluent` / `brand` / `tactile`）。`nativeLook` 是这个风格算好的颜色和圆角，给不用 Win顺 QML 自己画界面的插件照着画（休息提醒就是这样）；旧版 Win顺 没有这一项，Win顺 刚启动、界面还没建好的那一下也可能没有，没有就按自己原来的样子画。颜色是 `#AARRGGBB` 字符串；圆角是逻辑像素，已经按"圆角/直角"设置算过（直角时都是 0）；`rounded` 是圆角设置本身，插件自己算的胶囊形（高度的一半）直角时也要变成 0；`dark` 是这套颜色对应的深浅色。字段：`style` `dark` `rounded`；圆角 `cardRadius` `controlRadius` `largeControlRadius` `smallControlRadius` `menuRadius` `menuItemRadius` `menuPadding`；颜色 `background` `layer` `page` `windowEdge` `divider` `text` `subtext` `faint` `hover` `pressed` `tagFill` `control` `controlHover` `controlBorder` `inputFocused` `menuBackground` `menuHover` `menuEdge` `accent`（字、图标、线）`accentFill`（白字底）`accentLine` `accentText`（彩色底上的字）`textSelection` `caret`（风格自己的光标色，没有时透明）`danger` `dangerFill`。开着透明效果时 `layer`、`hover` 等可能是半透明的，画在不透明的底上要先叠到 `background` 上。以后可能加字段，不认识的忽略。
 - **托盘子菜单**（`trayMenu`）：右键按下托盘图标时，Win顺 发 `trayMenu`，松开时菜单弹出，所以要马上回答（几毫秒）；赶不上的，下次弹菜单时用。子菜单在剪贴板那几项下面，标题是 manifest 的 `trayMenu`。`items` 每项 `{id, title, checked, enabled, children}`，`{}` 是分隔线，最多两层；`title` 里 `\t` 后面的字靠右显示（快捷键）；没有项就不出这个子菜单。用户选了一项，Win顺 发 `menu` 通知，`id` 是那一项的。
 - **图片**（`pictures`）：用户在剪贴板历史的图片上、结果里的图片文件上选"贴到屏幕"（`pin`）或"编辑"（`edit`），Win顺 发 `picture`。`file` 是图片文件；来自剪贴板历史时还有 `clipId`，有标注工程时有 `project`，`screenshot` 表示它是截的图。这些文件是 Win顺 的：读，不要改、不要删。几个插件都声明同一项时，交给第一个开着的。
-- **设置窗口**（`settingsWindow`）：卡片上的"设置"按钮发 `showSettings`；插件没在运行时按钮提示稍后再试。
+- **设置窗口**（`settingsWindow`）：卡片上的"设置"按钮发 `showSettings`；插件没在运行时按钮提示稍后再试。C++ SDK 插件覆写 protected 的 `showSettings()`，在其中打开自己的窗口；SDK 会立即回答空结果，不等待窗口创建。
 - **前台**：`action`（用户在结果上按了 Enter 或点了动作，一次性插件为此起的进程也算）、`menu`、`picture`、`showSettings` 是用户刚点的，Win顺 发之前允许插件把自己的窗口放到前台（`AllowSetForegroundWindow`）；AI 和命令行发来的 `_run` 不算，插件别为它们抢前台。常驻插件的进程是在用户第一次打出关键字时起的，那时搜索框在前台：**起进程时别让任何窗口拿到前台，隐藏的也不行**，否则搜索框会当成用户点了别处而收起。Tk 会激活它建的第一个窗口（`withdraw()` 过的也一样），Python + Tk 的插件要把建窗口那段包在 `LockSetForegroundWindow(1)` … `LockSetForegroundWindow(2)` 里（`try/finally`），等 `action` 来了再显示。Win顺 发出的请求按插件的 `timeoutMs` 等回答，等不到就当失败。
 - **快捷键**（`winshun/hotkeys`）：插件自己用 `RegisterHotKey` 注册的快捷键，变了就发一次全部（`[]` 是都放了）。Win顺 就把它们让出来：接管 Win+S 时的 Win+Shift+S、剪贴板的 Ctrl/Alt+数字。进程结束等于发了 `[]`。插件启动时 Win顺 可能还占着其中一个，所以注册失败也照样报上，过一会儿（300 毫秒）再注册一次。
 
@@ -452,7 +452,21 @@ manifest 的 `permissions` 是数组：`["processes", "clipboard:read", {"files:
 
 `settings[]`：`{"key", "type", "title", "hint", "default", "options"}`，`type` ∈ `text | password | bool | number | choice | folder | file | hotkey`。Win顺 用自己的控件画在卡片上，值存在 `WinShun.ini` 的 `[Plugin.<id>] Setting.<key>=`；**`password` 型存 Windows 凭据管理器**，不进 INI，不进日志（消息记录里打码）。`choice` 的 `options` 是字符串数组或 `[{"value": "deepl", "title": {"zh": …, "en": …}}]`。
 
-插件看到的是合并后的 JSON（声明的默认值 + 用户的值）：一次性在 `WS_SETTINGS`，常驻在 `initialize` 的 `settings`，改了再发 `settingsChanged`。
+`number` 可以再写 `min`、`max`、`step` 和 `unit`（0.33.0 起）：
+
+```json
+{"key": "pause", "type": "number", "title": {"zh": "停顿多久再翻译", "en": "Pause before translating"},
+ "default": 400, "min": 100, "max": 2000, "step": 50, "unit": "ms"}
+```
+
+- `min` 和 `max` 都写时，卡片上是滑块，旁边的框里是数值，也可以直接输入。方向键走一步，PageUp/PageDown 走约十分之一，Home/End 到两头；松开鼠标或按键时才保存，按住不放也只保存一次。滚轮照常滚动设置页。只写其中一个时仍是输入框。
+- `step` 是步长，值取 `min + n × step`（没有 `min` 时从 0 算），`max` 本身也可以取到，最后一步可能短一些。有滑块时默认 1，要小数就写 `"step": 0.1` 这样；数值按步长的小数位显示（0.40、0.45）。
+- `unit` 显示在数值后面，字符串或 `{"zh": …, "en": …}`。
+- 不管值从哪来（卡片上输入的、`winshun/settings/update` 发来的、设置文件里手改的），都先拉回 `min`～`max`、取最近的一步，插件拿到的值总在范围内。设置文件里不是数字时用默认值。`default` 也一样处理；有滑块却没写 `default` 时，默认值是 `min`。
+- 写错时插件无法使用，卡片上写明哪一项：这几个要是数字，`min` 要小于 `max`，`step` 要大于 0 且不大于 `max − min`，有这些字段时 `default` 要是数字。
+- 更早的 Win顺 忽略这几个字段：照旧显示输入框，不限制范围，没写 `default` 时也不会拿 `min` 当默认值。要支持老版本，写上 `default`，插件自己再检查一次范围；或者写上 `"minWinShun": "0.33.0"`。
+
+插件看到的是合并后的 JSON（声明的默认值 + 用户的值）：一次性在 `WS_SETTINGS`，常驻在 `initialize` 的 `settings`，改了再发 `settingsChanged`。`files` 触发可以用 `"if"` 指向一个 `bool` 设置项：设置开着，这项才出现在右键菜单里（0.33.0 起；更早的宿主忽略这个字段，项常显）。
 
 ## 给 AI 用
 

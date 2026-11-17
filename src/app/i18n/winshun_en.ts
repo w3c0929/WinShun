@@ -587,6 +587,10 @@
         <translation>“Search here with WinShun” in Explorer’s right-click menu</translation>
     </message>
     <message>
+        <source>winshun:// 链接</source>
+        <translation>winshun:// links</translation>
+    </message>
+    <message>
         <source>在资源管理器里直接打字搜索</source>
         <translation>Type to search in File Explorer</translation>
     </message>
@@ -2420,10 +2424,6 @@
 </context>
 <context>
     <name>FolderMenuWindow</name>
-    <message>
-        <source>返回</source>
-        <translation>Back</translation>
-    </message>
     <message>
         <source>没有子文件夹</source>
         <translation>No folders inside</translation>
@@ -5068,8 +5068,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Tab;Shift+Tab;favorite;folder;scope;keyboard</translation>
     </message>
     <message>
-        <source>在“全部”范围中，默认切换搜索范围；也可进入选中的收藏文件夹继续搜索。Shift+Tab 仍反向切换范围。</source>
-        <translation>In All, Tab switches search scopes by default. You can choose to browse the selected favorite folder instead. Shift+Tab still switches scopes backward.</translation>
+        <source>在“全部”范围中，列表自动选中的收藏文件夹（如第一行）默认切换搜索范围，也可改为进入它继续搜索。用 ↑ ↓ 或单击选中的文件夹，按 Tab 都会进入。Shift+Tab 仍反向切换范围。</source>
+        <translation>In All, Tab on a favorite folder the list selected by itself (such as the first row) switches search scopes by default; you can have it browse that folder instead. A folder you chose with ↑ ↓ or a click is always browsed. Shift+Tab still switches scopes backward.</translation>
     </message>
     <message>
         <source>切换范围</source>
@@ -5390,6 +5390,22 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>右键文件夹、文件夹空白处或磁盘，只在那里面搜；Windows 11 在“显示更多选项”里</source>
         <translation>Right-click a folder, a folder’s empty space or a drive to search only in it; on Windows 11 it is under “Show more options”</translation>
+    </message>
+    <message>
+        <source>winshun:// 链接</source>
+        <translation>winshun:// links</translation>
+    </message>
+    <message>
+        <source>链接;协议;网址;URL;网页;笔记;Obsidian;scheme;protocol;winshun</source>
+        <translation>link;links;protocol;URL;web page;note;Obsidian;scheme;winshun</translation>
+    </message>
+    <message>
+        <source>网页、笔记软件里的 winshun://search/关键词 链接点一下就用 Win顺 搜索</source>
+        <translation>A winshun://search/keyword link in a web page or a notes app searches with WinShun when clicked</translation>
+    </message>
+    <message>
+        <source>winshun://search/合同 打开搜索框并填好“合同”；winshun://settings 打开设置。链接只会打字或打开设置，不会打开或运行文件</source>
+        <translation>winshun://search/report opens the search box with “report” typed; winshun://settings opens the settings. A link only types words or shows the settings; it never opens or runs files</translation>
     </message>
     <message>
         <source>在资源管理器或桌面弹出文件夹快捷菜单</source>
@@ -6207,8 +6223,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Size</translation>
     </message>
     <message>
-        <source>缩放;大小;字号;字体大小;行高;紧凑;宽松;scale;size;zoom;font</source>
-        <translation>scale;size;zoom;font;text size;row height;compact;roomy;density</translation>
+        <source>缩放;大小;字号;字体大小;行高;密集;紧凑;宽松;一行;小字;scale;size;zoom;font;dense;compact</source>
+        <translation>scale;size;zoom;font;text size;row height;dense;compact;roomy;density;one line</translation>
     </message>
     <message>
         <source>紧凑</source>
@@ -7439,8 +7455,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Liquid glass</translation>
     </message>
     <message>
-        <source>搜索框、剪贴板和对话框旁搜索框的文字和行高；设置窗口不变。剪贴板可在“剪贴板”页单独设置</source>
-        <translation>Text size and line height of the search bar, the clipboard and the search bar by file dialogs; the Settings window is unchanged. The clipboard can be set separately on the Clipboard page</translation>
+        <source>搜索框、剪贴板和对话框旁搜索框的文字和行高；设置窗口不变。密集是每条结果一行的小字。剪贴板可在“剪贴板”页单独设置</source>
+        <translation>Text size and line height of the search bar, the clipboard and the search bar by file dialogs; the Settings window is unchanged. Dense is one small line per result. The clipboard can be set separately on the Clipboard page</translation>
     </message>
     <message>
         <source>索引范围;范围;整个磁盘;选中的文件夹;工作文件夹;普通用户;没有管理员权限;scope</source>
@@ -8518,6 +8534,14 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Select several rows; Ctrl+click and Shift+click too</translation>
     </message>
     <message>
+        <source>进入用 ↑ ↓ 或单击选中的文件夹，列出里面的内容；路径输入一半时补全文件夹</source>
+        <translation>Go into the folder chosen with ↑ ↓ or a click and list what is in it; completes a folder in a half-typed path</translation>
+    </message>
+    <message>
+        <source>返回上一级：退出文件夹，回到进入前的搜索</source>
+        <translation>Up a level: out of the folder, back to the search before it</translation>
+    </message>
+    <message>
         <source>范围与筛选</source>
         <translation>Scope and filters</translation>
     </message>
@@ -8584,6 +8608,10 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>展开为搜索面板，或收回搜索框</source>
         <translation>Expand to the search panel, or collapse it</translation>
+    </message>
+    <message>
+        <source>搜索面板铺满屏幕，再按一次还原</source>
+        <translation>Fill the screen with the search panel; again to restore it</translation>
     </message>
     <message>
         <source>钉住：点别处、打开文件后都不收起；再按一次取消</source>
@@ -12040,6 +12068,10 @@ Content index: %5</translation>
     <message>
         <source>切换范围</source>
         <translation>Scope</translation>
+    </message>
+    <message>
+        <source>返回上一级</source>
+        <translation>Up a level</translation>
     </message>
     <message>
         <source>打开位置</source>

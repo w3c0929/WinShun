@@ -611,6 +611,7 @@ void Placement::enterPanel(QScreen* screen)
     m_dropped = false;
     setTaskbar({}); // the spot stays in m_taskbarSpot for leavePanel's caller
     m_panel = true;
+    m_panelUnfilled.reset();
     const QRect rect = panelRect(screen ? screen : m_window->screen());
     m_place = rect.topLeft();
     m_window->setGeometry(rect);
@@ -621,6 +622,33 @@ void Placement::leavePanel()
     if (!m_panel)
         return;
     m_panel = false;
+    m_panelUnfilled.reset();
+}
+
+void Placement::togglePanelFill()
+{
+    if (!m_window || !m_panel || m_moving || m_sizing || m_windowSizing)
+        return;
+    QScreen* screen = m_window->screen();
+    if (!screen)
+        return;
+    // The work area to the physical pixel: in logical pixels at 150 % it
+    // rounds one over or (inwards) one short, a seam at the edges.
+    const NativeArea native = nativeArea(screen);
+    const QRect work = native.work;
+    if (work.isEmpty())
+        return;
+    const HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
+    RECT now {};
+    ::GetWindowRect(hwnd, &now);
+    if (QRect(QPoint(now.left, now.top), QPoint(now.right - 1, now.bottom - 1)) == work) {
+        // Filled: back to where it was, or to its own spot.
+        m_window->setGeometry(m_panelUnfilled.value_or(panelRect(screen)));
+        m_panelUnfilled.reset();
+        return;
+    }
+    m_panelUnfilled = m_window->geometry();
+    ::SetWindowPos(hwnd, nullptr, work.x(), work.y(), work.width(), work.height(), SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
 }
 
 void Placement::savePanel()

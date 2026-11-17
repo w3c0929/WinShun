@@ -326,7 +326,7 @@ Column {
         group: 0
         content: Component {
             GroupPage {
-                recordingHotkey: hotkeyRecorder.recording || ocrHotkeyRow.recording
+                recordingHotkey: hotkeyRecorder.recording || ocrHotkeyRow.recording || translateHotkeyRow.recording
 
                 SettingsSection {
                     page: 0
@@ -395,8 +395,8 @@ Column {
                     }
 
                     SettingRow {
-                        title: qsTr("截图时显示快捷键提示")
-                        description: qsTr("停下来时在屏幕左下角列出此刻能用的按键，一按鼠标就消失，挡路时自动让开。关闭后截图时按 ? 仍可临时显示")
+                        title: qsTr("截图和贴图时显示快捷键提示")
+                        description: qsTr("截图或点了贴图后停下来时，在屏幕左下角列出此刻能用的按键，一按鼠标就消失，挡路时自动让开。关闭后按 ? 仍可临时显示")
 
                         ToggleSwitch {
                             dpr: card.dpr
@@ -434,6 +434,24 @@ Column {
                             checked: card.editor.captureOcrBubble
                             onToggled: (on) => card.editor.captureOcrBubble = on
                         }
+                    }
+                }
+
+                SettingsSection { // 截图翻译 (#356): the same picking, the words translated in place when it ends
+                    page: 0
+                    tab: 0
+                    width: parent.width
+                    title: qsTr("截图翻译")
+                    glyph: String.fromCharCode(0xE8C1) // Translate
+
+                    HotkeyRow {
+                        id: translateHotkeyRow
+                        objectName: "captureTranslateHotkey"
+                        title: qsTr("快捷键")
+                        description: qsTr("按下后直接拖选区域或单击窗口，松开鼠标就在原位置显示译文，没有截图工具条。Esc 或右键取消。用“翻译”插件里设好的服务。不设时可从托盘菜单或搜索“截图翻译”使用")
+                        hotkey: card.editor.captureTranslateHotkey
+                        error: card.editor.captureTranslateHotkeyError
+                        onRecorded: (hotkey) => card.editor.captureTranslateHotkey = hotkey
                     }
                 }
 
@@ -523,11 +541,26 @@ Column {
                     width: parent.width
                     title: qsTr("编辑图片时")
                     glyph: "" // Edit
-                    note: qsTr("贴图按“编辑”或打开图片编辑时。撤销、打码、复制等和截图时一样")
+                    note: qsTr("打开图片编辑时。贴图按“编辑”就在贴图上编辑：Enter 完成，Esc 关闭编辑、贴图保持原样。撤销、打码等和截图时一样")
 
                     FixedKeys {
                         readonly property CaptureKeyList keys: CaptureKeyList { editor: true }
                         rows: keys.commonRows.slice(0, 2).concat(keys.editorRows) // its tool keys, then its own
+                    }
+                }
+
+                // A pin's keys that are not set above (GitHub #343), as its key card lists them with the ones set.
+                SettingsSection {
+                    page: 0
+                    tab: 1
+                    width: parent.width
+                    title: qsTr("贴图窗口里的其他按键")
+                    glyph: "" // Pin
+                    note: qsTr("这些按键是固定的。点了贴图后停下来，屏幕角落会列出它的按键，按 ? 也可以")
+
+                    FixedKeys {
+                        readonly property CaptureKeyList keys: CaptureKeyList {}
+                        rows: keys.pinRows
                     }
                 }
 
@@ -554,6 +587,17 @@ Column {
                         key: "captureMagnifier"
                         title: qsTr("框选时显示放大镜")
                         description: qsTr("在指针旁放大显示像素和颜色值。关闭后，按 C 复制颜色、按 Shift 换颜色格式也一并停用。")
+                    }
+                    SettingRow { // #360: the same value Tab switches in a capture
+                        title: qsTr("框选时只检测窗口")
+                        description: qsTr("鼠标移到窗口上只框出整个窗口，不框里面的按钮、输入框等界面元素。截图时按 Tab 也能切换，下次截图沿用。")
+
+                        ToggleSwitch {
+                            dpr: card.dpr
+                            objectName: "captureWindowsOnlySwitch"
+                            checked: card.editor.captureWindowsOnly
+                            onToggled: (on) => card.editor.captureWindowsOnly = on
+                        }
                     }
                     ToggleRow {
                         key: "captureControlsUia"

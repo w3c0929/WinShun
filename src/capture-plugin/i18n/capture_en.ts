@@ -674,6 +674,14 @@
         <translation>Pick a larger / smaller area</translation>
     </message>
     <message>
+        <source>只检测窗口：开</source>
+        <translation>Windows only: on</translation>
+    </message>
+    <message>
+        <source>只检测窗口：关</source>
+        <translation>Windows only: off</translation>
+    </message>
+    <message>
         <source>微调光标 1 像素，加 Shift 10 像素</source>
         <translation>Nudge the pointer 1 px, with Shift 10 px</translation>
     </message>
@@ -785,12 +793,92 @@
 <context>
     <name>CaptureKeyList</name>
     <message>
+        <source>完成：贴图换成改好的图</source>
+        <translation>Done: the pin shows the edited picture</translation>
+    </message>
+    <message>
         <source>框选前扩大 / 缩小框选范围；有工具或选中对象时改粗细</source>
         <translation>Grows / shrinks the selection before you select; changes the size while a tool is on or an object is selected</translation>
     </message>
     <message>
+        <source>框选前开关“只检测窗口”：只框整个窗口，不框里面的按钮等界面元素；下次截图沿用</source>
+        <translation>Before you select: turns &quot;Windows only&quot; on or off, which outlines whole windows, not the buttons and other UI elements in them; the next capture keeps it</translation>
+    </message>
+    <message>
         <source>框选前按预设尺寸或比例框选；框选后输入尺寸、锁定比例、选预设</source>
         <translation>Before you select: select at a preset size or ratio; after: type a size, lock the ratio, pick a preset</translation>
+    </message>
+    <message>
+        <source>写完文字；否则关闭编辑，贴图保持原样</source>
+        <translation>Finish the text; otherwise stop editing and leave the pin as it was</translation>
+    </message>
+    <message>
+        <source>贴图的编辑键：再按一次也是完成</source>
+        <translation>The pin&apos;s Edit key: pressed again, it is Done too</translation>
+    </message>
+    <message>
+        <source>贴图的编辑键：在这里和截图时一样选工具，完成按 Enter</source>
+        <translation>The pin&apos;s Edit key: picks a tool here, as while capturing; press Enter when done</translation>
+    </message>
+    <message>
+        <source>移动贴图 1 个物理像素，按住 Shift 一次 10 个</source>
+        <translation>Move the pin by 1 physical pixel, 10 with Shift</translation>
+    </message>
+    <message>
+        <source>缩放；Ctrl+滚轮改透明度</source>
+        <translation>Zoom; Ctrl+wheel changes the opacity</translation>
+    </message>
+    <message>
+        <source>加号 / 减号</source>
+        <translation>Plus / minus</translation>
+    </message>
+    <message>
+        <source>放大 / 缩小</source>
+        <translation>Zoom in / out</translation>
+    </message>
+    <message>
+        <source>拖四角</source>
+        <translation>Drag a corner</translation>
+    </message>
+    <message>
+        <source>按比例缩放</source>
+        <translation>Resize, keeping the proportions</translation>
+    </message>
+    <message>
+        <source>中键</source>
+        <translation>Middle button</translation>
+    </message>
+    <message>
+        <source>收成小块 / 展开</source>
+        <translation>To a small tile / open again</translation>
+    </message>
+    <message>
+        <source>右键、菜单键</source>
+        <translation>Right button, Menu key</translation>
+    </message>
+    <message>
+        <source>贴图菜单：另存为、置顶、鼠标穿透、关闭其他等</source>
+        <translation>The pin&apos;s menu: Save as, Always on top, Click through, Close the others and more</translation>
+    </message>
+    <message>
+        <source>截图翻译的贴图：看原文 / 看译文</source>
+        <translation>A translated pin: show the original / the translation</translation>
+    </message>
+    <message>
+        <source>退出选择文字（关闭贴图的键改了也是）</source>
+        <translation>Stop picking text (also when another key closes a pin)</translation>
+    </message>
+    <message>
+        <source>按住 Ctrl</source>
+        <translation>Hold Ctrl</translation>
+    </message>
+    <message>
+        <source>鼠标穿透的贴图暂时可以拖动和点</source>
+        <translation>A click-through pin takes drags and clicks meanwhile</translation>
+    </message>
+    <message>
+        <source>显示 / 隐藏屏幕角落的快捷键提示</source>
+        <translation>Show / hide the shortcut hints in the screen corner</translation>
     </message>
 </context>
 <context>
@@ -948,12 +1036,28 @@
         <translation>PrtScn takes a screenshot here instead of opening the Windows Snipping Tool. It goes back to the Snipping Tool when WinShun quits and is taken again at the next start; turning this off restores the previous setting too</translation>
     </message>
     <message>
+        <source>截图和贴图时显示快捷键提示</source>
+        <translation>Show shortcut hints while capturing and on pins</translation>
+    </message>
+    <message>
+        <source>截图或点了贴图后停下来时，在屏幕左下角列出此刻能用的按键，一按鼠标就消失，挡路时自动让开。关闭后按 ? 仍可临时显示</source>
+        <translation>When you pause while capturing or after clicking a pin, lists the keys that work right now in the bottom-left corner; goes the moment you press a mouse button and moves out of the way. When off, press ? to show it for a moment</translation>
+    </message>
+    <message>
         <source>识别屏幕文字</source>
         <translation>Read text on screen</translation>
     </message>
     <message>
         <source>按下后直接拖选区域或单击窗口，松开鼠标就识别文字并复制，没有截图工具条，也不留截图。Esc 或右键取消。不设时可从托盘菜单或搜索“识别屏幕文字”使用</source>
         <translation>Press it, then drag over an area or click a window: when you let go, its text is read and copied. No screenshot toolbar, and no screenshot is kept. Esc or a right click cancels. Without a shortcut, use the tray menu or search for “Read text on screen”</translation>
+    </message>
+    <message>
+        <source>截图翻译</source>
+        <translation>Translate screen region</translation>
+    </message>
+    <message>
+        <source>按下后直接拖选区域或单击窗口，松开鼠标就在原位置显示译文，没有截图工具条。Esc 或右键取消。用“翻译”插件里设好的服务。不设时可从托盘菜单或搜索“截图翻译”使用</source>
+        <translation>Press it, then drag over an area or click a window: when you let go, its text is translated in place. No screenshot toolbar. Esc or a right click cancels. It uses the service set up in the Translate plugin. Without a shortcut, use the tray menu or search for “Translate screen region”</translation>
     </message>
     <message>
         <source>截图时</source>
@@ -970,6 +1074,18 @@
     <message>
         <source>点一下贴图再按。清除后仍可从贴图的右键菜单操作</source>
         <translation>Click a pin, then press. Cleared, its right-click menu still has the action</translation>
+    </message>
+    <message>
+        <source>打开图片编辑时。贴图按“编辑”就在贴图上编辑：Enter 完成，Esc 关闭编辑、贴图保持原样。撤销、打码等和截图时一样</source>
+        <translation>When a picture is opened for editing. Edit on a pin edits it right on the pin: Enter is Done, Esc stops editing and leaves the pin as it was. Undo, redact and the like work as while capturing</translation>
+    </message>
+    <message>
+        <source>贴图窗口里的其他按键</source>
+        <translation>Other keys on a pin</translation>
+    </message>
+    <message>
+        <source>这些按键是固定的。点了贴图后停下来，屏幕角落会列出它的按键，按 ? 也可以</source>
+        <translation>These keys are fixed. Click a pin and pause, and its keys are listed in a corner of the screen; ? lists them too</translation>
     </message>
     <message>
         <source>松开鼠标或点选窗口后立即复制，跳过标注和调整。关闭时可继续编辑，再按 Enter 复制，或按保存键保存。鼠标动作在“鼠标”分类设置。</source>
@@ -1020,6 +1136,14 @@
         <translation>Magnified pixels and the colour value beside the pointer. When off, C (copy colour) and Shift (colour format) do nothing either.</translation>
     </message>
     <message>
+        <source>框选时只检测窗口</source>
+        <translation>Detect whole windows only while selecting</translation>
+    </message>
+    <message>
+        <source>鼠标移到窗口上只框出整个窗口，不框里面的按钮、输入框等界面元素。截图时按 Tab 也能切换，下次截图沿用。</source>
+        <translation>Pointing at a window outlines the whole window, not the buttons, input boxes and other UI elements in it. Tab switches it while capturing, and the next capture keeps it.</translation>
+    </message>
+    <message>
         <source>复制截图时同时贴图</source>
         <translation>Pin screenshots when copying</translation>
     </message>
@@ -1058,10 +1182,6 @@
     <message>
         <source>编辑图片时</source>
         <translation>While editing a picture</translation>
-    </message>
-    <message>
-        <source>贴图按“编辑”或打开图片编辑时。撤销、打码、复制等和截图时一样</source>
-        <translation>After Edit on a pin, or when a picture is opened for editing. Undo, redact, copy and the like work as while capturing</translation>
     </message>
     <message>
         <source>自动框选设置、计算器等程序中的按钮和侧栏。Chrome、Edge、VS Code 这类 Chromium 程序不问（一问它们就打开屏幕阅读器模式），只框子窗口或整个窗口，可手动框选；管理员权限程序中的控件可能不可用。</source>
@@ -1219,14 +1339,6 @@
     <message>
         <source>其他程序全屏时，截图快捷键和 PrtScn 不弹出截图；仍能从菜单手动开始</source>
         <translation>While another app is full screen, the screenshot hotkey and PrtScn do not start a capture. You can still start one from the menu.</translation>
-    </message>
-    <message>
-        <source>截图时显示快捷键提示</source>
-        <translation>Show shortcut hints while capturing</translation>
-    </message>
-    <message>
-        <source>停下来时在屏幕左下角列出此刻能用的按键，一按鼠标就消失，挡路时自动让开。关闭后截图时按 ? 仍可临时显示</source>
-        <translation>When you pause, lists the keys that work right now in the bottom-left corner; goes the moment you press a mouse button and moves out of the way. When off, press ? while capturing to show it for a moment</translation>
     </message>
     <message>
         <source>优先贴剪贴板里的图片；没有新图片时，把最近截图贴回原位置并保留标注。不设时仍可从托盘菜单操作</source>
@@ -2063,6 +2175,10 @@ The unfinished recording is kept at: %1</translation>
         <translation>Read text: drag over an area, or click a window · Esc cancels</translation>
     </message>
     <message>
+        <source>截图翻译：拖选区域，或单击窗口 · Esc 取消</source>
+        <translation>Translate: drag over an area, or click a window · Esc cancels</translation>
+    </message>
+    <message>
         <source>没有保存之前的画面，可在设置 › 截图里打开</source>
         <translation>Earlier pictures are not being kept; turn this on in Settings › Screenshot</translation>
     </message>
@@ -2286,6 +2402,14 @@ The unfinished recording is kept at: %1</translation>
         <source>已关闭快捷键提示 · 按 ? 临时显示，截图设置里可重新打开</source>
         <translation>Shortcut hints off · Press ? to show them for a moment, or turn them back on in the screenshot settings</translation>
     </message>
+    <message>
+        <source>只检测窗口 · Tab 切换</source>
+        <translation>Whole windows only · Tab to switch</translation>
+    </message>
+    <message>
+        <source>检测界面元素 · Tab 切换</source>
+        <translation>UI elements too · Tab to switch</translation>
+    </message>
 </context>
 <context>
     <name>ws::capture::CountdownWindow</name>
@@ -2333,6 +2457,21 @@ click here to cancel</translation>
     <message>
         <source>诊断信息已复制</source>
         <translation>Diagnostics copied</translation>
+    </message>
+</context>
+<context>
+    <name>ws::capture::PinKeyCard</name>
+    <message>
+        <source>Ctrl+滚轮</source>
+        <translation>Ctrl+wheel</translation>
+    </message>
+    <message>
+        <source>缩放 / 透明度</source>
+        <translation>Zoom / opacity</translation>
+    </message>
+    <message>
+        <source>截图设置里可关闭</source>
+        <translation>Turn off in the capture settings</translation>
     </message>
 </context>
 <context>
@@ -2656,6 +2795,14 @@ Original video kept at: %2</translation>
         <translation>Select part of the screen; the text in it is copied</translation>
     </message>
     <message>
+        <source>截图翻译</source>
+        <translation>Translate screen region</translation>
+    </message>
+    <message>
+        <source>框选一块屏幕，在原位置显示译文</source>
+        <translation>Select part of the screen; its text is translated in place</translation>
+    </message>
+    <message>
         <source>%1 秒后截图</source>
         <translation>Capture in %1 seconds</translation>
     </message>
@@ -2853,6 +3000,10 @@ Original video kept at: %2</translation>
     <message>
         <source>识别屏幕文字</source>
         <translation>Read text on screen</translation>
+    </message>
+    <message>
+        <source>截图翻译</source>
+        <translation>Translate screen region</translation>
     </message>
     <message>
         <source>和“%1”的快捷键相同，按下时会先被它用掉</source>

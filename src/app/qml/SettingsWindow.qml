@@ -2081,6 +2081,19 @@ Window {
                     }
                 }
 
+                SettingRow { // GitHub #358
+                    title: qsTr("winshun:// 链接")
+                    keywords: qsTr("链接;协议;网址;URL;网页;笔记;Obsidian;scheme;protocol;winshun").split(";")
+                    description: qsTr("网页、笔记软件里的 winshun://search/关键词 链接点一下就用 Win顺 搜索")
+                    tip: qsTr("winshun://search/合同 打开搜索框并填好“合同”；winshun://settings 打开设置。链接只会打字或打开设置，不会打开或运行文件")
+
+                    ToggleSwitch {
+                        dpr: window.dpr
+                        checked: window.editor.uriProtocol
+                        onToggled: (on) => window.editor.uriProtocol = on
+                    }
+                }
+
                 SettingRow {
                     id: explorerTypingRow
                     title: qsTr("在资源管理器里直接打字搜索")
@@ -3016,12 +3029,12 @@ Window {
 
                 SettingRow {
                     title: qsTr("界面大小")
-                    keywords: qsTr("缩放;大小;字号;字体大小;行高;紧凑;宽松;scale;size;zoom;font").split(";")
-                    description: qsTr("搜索框、剪贴板和对话框旁搜索框的文字和行高；设置窗口不变。剪贴板可在“剪贴板”页单独设置")
+                    keywords: qsTr("缩放;大小;字号;字体大小;行高;密集;紧凑;宽松;一行;小字;scale;size;zoom;font;dense;compact").split(";")
+                    description: qsTr("搜索框、剪贴板和对话框旁搜索框的文字和行高；设置窗口不变。密集是每条结果一行的小字。剪贴板可在“剪贴板”页单独设置")
 
                     ScopeTabs {
-                        readonly property var sizes: ["compact", "standard", "roomy"]
-                        labels: [qsTr("紧凑"), qsTr("标准"), qsTr("宽松")]
+                        readonly property var sizes: ["dense", "compact", "standard", "roomy"]
+                        labels: [qsTr("密集"), qsTr("紧凑"), qsTr("标准"), qsTr("宽松")]
                         current: Math.max(0, sizes.indexOf(window.editor.uiSize))
                         onActivated: (index) => window.editor.uiSize = sizes[index]
                     }
@@ -4433,7 +4446,7 @@ Window {
                     objectName: "favoriteFolderTab"
                     title: qsTr("选中收藏文件夹时按 Tab")
                     keywords: qsTr("Tab;Shift+Tab;收藏;文件夹;范围;键盘;favorite;keyboard").split(";")
-                    description: qsTr("在“全部”范围中，默认切换搜索范围；也可进入选中的收藏文件夹继续搜索。Shift+Tab 仍反向切换范围。")
+                    description: qsTr("在“全部”范围中，列表自动选中的收藏文件夹（如第一行）默认切换搜索范围，也可改为进入它继续搜索。用 ↑ ↓ 或单击选中的文件夹，按 Tab 都会进入。Shift+Tab 仍反向切换范围。")
 
                     ScopeTabs {
                         objectName: "favoriteFolderTabChoice"

@@ -17,6 +17,7 @@
 #include "ImageOrigin.h"
 #include "Keycaps.h"
 #include "PictureFile.h"
+#include "PinKeyLook.h"
 #include "PinManager.h"
 #include "TranslateOverlay.h"
 #include "PinImage.h"
@@ -64,7 +65,7 @@ namespace ws::captureplugin {
 namespace {
 
 constexpr wchar_t kWindowClass[] = L"WinShun.Capture.Messages";
-enum Hotkey : int { CaptureKey = 1, PrintScreenKey, PinsKey, PinsRestoreKey, LastPinKey, PresentKey, OcrKey, ProbeKey = 0x0BFF };
+enum Hotkey : int { CaptureKey = 1, PrintScreenKey, PinsKey, PinsRestoreKey, LastPinKey, PresentKey, OcrKey, TranslateKey, ProbeKey = 0x0BFF };
 
 bool isDarkMode()
 {
@@ -339,6 +340,10 @@ void CaptureApp::requested(const QJsonValue& id, const QString& method, const QJ
         add(u"ocr"_s, tr("识别屏幕文字"),
             m_settings.options().ocrHotkey.isEmpty() ? tr("框选一块屏幕，识别出的文字直接复制") : tr("快捷键 %1").arg(m_settings.options().ocrHotkey),
             u"E8D2"_s, u"取字 识别 文字 提取文字 复制文字 ocr text recognize extract"_s);
+        add(u"translate"_s, tr("截图翻译"),
+            m_settings.options().translateHotkey.isEmpty() ? tr("框选一块屏幕，在原位置显示译文")
+                                                           : tr("快捷键 %1").arg(m_settings.options().translateHotkey),
+            u"E8C1"_s, u"翻译 截图翻译 屏幕翻译 译文 translate screen ocr"_s);
         add(u"delay"_s, tr("%1 秒后截图").arg(m_settings.options().delay), tr("先打开要截的菜单或提示"), u"E916"_s, u"延时 延迟 定时 delay timer later"_s);
         add(u"last"_s, tr("贴图"), tr("优先剪贴板图片，否则贴回最近截图并保留标注"), u"E718"_s, u"贴 钉 贴图 pin paste sticker"_s);
         add(u"present"_s, presenterOpen() ? tr("结束演示") : tr("演示 / 白板"),
@@ -361,6 +366,8 @@ void CaptureApp::requested(const QJsonValue& id, const QString& method, const QJ
                 togglePresenter();
             else if (item == u"ocr")
                 startOcr();
+            else if (item == u"translate")
+                startOcr(true);
             else if (m_capture)
                 m_capture->trigger();
         });
@@ -393,7 +400,8 @@ void CaptureApp::notified(const QString& method, const QJsonObject& params)
         const auto& o = m_settings.options();
         const std::pair<int, QString> shortcuts[] {{CaptureKey, o.hotkey}, {PinsKey, o.pinsHotkey},
             {PinsRestoreKey, o.pinsRestoreHotkey}, {LastPinKey, o.lastPinHotkey}, {PresentKey, o.presentHotkey},
-            {PrintScreenKey, o.printScreen ? u"PrintScreen"_s : QString()}, {OcrKey, o.ocrHotkey}};
+            {PrintScreenKey, o.printScreen ? u"PrintScreen"_s : QString()}, {OcrKey, o.ocrHotkey},
+            {TranslateKey, o.translateHotkey}};
         for (const auto& [id, shortcut] : shortcuts) {
             if (!key.isEmpty() && key == hotkeys::normalized(shortcut)) {
                 hotkey(id);
@@ -415,7 +423,7 @@ void CaptureApp::shutdown()
         m_protocol.tool(u"register_hotkeys"_s, {{u"keys"_s, QJsonArray()}});
     if (m_presenter)
         m_presenter->presenter().close();
-    for (int id = CaptureKey; id <= OcrKey; ++id)
+    for (int id = CaptureKey; id <= TranslateKey; ++id)
         ::UnregisterHotKey(m_window, id);
     m_printScreenWatch.reset(); // before the value goes back: that is not for taking again
     const QString before = m_settings.options().printScreenBefore;
@@ -500,6 +508,7 @@ void CaptureApp::apply()
                 m_settings.update([&](CaptureOptions& next) { next.sizePresets = text; });
         };
         callbacks.keyHintsKept = [this](bool on) { m_settings.setCaptureKeyHints(on); }; // the panel's 不再显示 / 一直显示
+        callbacks.windowsOnlyChanged = [this](bool on) { m_settings.setCaptureWindowsOnly(on); }; // Tab (#360): kept for the next capture
         callbacks.recording.preferences = [this] {
             const CaptureOptions& p = m_settings.options();
             return capture::Recorder::Preferences {p.recordingFolder, p.recordingSystemAudio, p.recordingMicrophone,
@@ -563,6 +572,7 @@ void CaptureApp::apply()
     m_capture->setIncludeCursor(o.cursor);
     m_capture->setHdrFile(o.hdrFile);
     m_capture->setControlDetection(o.controlsUia);
+    m_capture->setWindowsOnly(o.windowsOnly);
     m_capture->setDelay(o.delay);
     m_capture->setHistory(QDir(m_dataDir).filePath(u"capture-history"_s), o.historyCount);
     m_capture->setColorFormat(capture::colorFormatFromName(o.colorFormat));
@@ -574,6 +584,7 @@ void CaptureApp::apply()
     if (m_pins) {
         m_pins->setDoubleClick(capture::pinDoubleClickFromName(o.pinDoubleClick));
         m_pins->setKeys(o.keys);
+        m_pins->setKeyHints(o.keyHints);
     }
     if (m_editor) {
         m_editor->setKeys(o.keys);
@@ -665,7 +676,7 @@ void CaptureApp::printScreenChanged()
         // Only the note is new: the hotkeys' problems stay as they are.
         m_settings.setProblems({m_settings.captureHotkeyError(), m_settings.capturePinsHotkeyError(),
             m_settings.capturePinsRestoreHotkeyError(), m_settings.captureLastPinHotkeyError(),
-            m_settings.capturePresentHotkeyError(), m_settings.captureOcrHotkeyError(), note});
+            m_settings.capturePresentHotkeyError(), m_settings.captureOcrHotkeyError(), m_settings.captureTranslateHotkeyError(), note});
         if (!(m_settingsWindow && m_settingsWindow->isVisible()))
             notify(tr("截图"), note);
         return;
@@ -678,7 +689,7 @@ void CaptureApp::printScreenChanged()
 void CaptureApp::applyHotkeys()
 {
     const quint64 revision = ++m_hotkeyRevision;
-    for (int id = CaptureKey; id <= OcrKey; ++id)
+    for (int id = CaptureKey; id <= TranslateKey; ++id)
         ::UnregisterHotKey(m_window, id);
     if (m_settings.recordingHotkey()) {
         if (m_hostHotkeys)
@@ -715,6 +726,9 @@ void CaptureApp::applyHotkeys()
         problems.ocrHotkey = m_settings.ocrHotkeyClash();
         if (problems.ocrHotkey.isEmpty())
             problems.ocrHotkey = take(OcrKey, o.ocrHotkey);
+        problems.translateHotkey = m_settings.translateHotkeyClash();
+        if (problems.translateHotkey.isEmpty())
+            problems.translateHotkey = take(TranslateKey, o.translateHotkey);
         if (m_presenter)
             m_presenter->setHotkeyText(o.presentHotkey);
         m_settings.setProblems(problems); // shown next to each shortcut
@@ -762,6 +776,10 @@ void CaptureApp::applyHotkeys()
                     problems.ocrHotkey = clash;
                 else
                     problems.ocrHotkey = problem(o.ocrHotkey);
+                if (const QString clash = m_settings.translateHotkeyClash(); !clash.isEmpty())
+                    problems.translateHotkey = clash;
+                else
+                    problems.translateHotkey = problem(o.translateHotkey);
                 if (o.printScreen && (!error.isEmpty() || errors.contains(u"PrintScreen"_s)))
                     problems.note = hotkeyProblem(u"PrintScreen"_s);
                 m_settings.setProblems(problems);
@@ -778,7 +796,7 @@ void CaptureApp::reportHotkeyProblems(const CaptureSettings::Problems& problems)
         return;
     if (!(m_settingsWindow && m_settingsWindow->isVisible())) {
         for (const QString& error : {problems.hotkey, problems.pinsHotkey, problems.pinsRestoreHotkey, problems.lastPinHotkey,
-                 problems.presentHotkey, problems.ocrHotkey}) {
+                 problems.presentHotkey, problems.ocrHotkey, problems.translateHotkey}) {
             if (!error.isEmpty()) {
                 notify(tr("快捷键不可用"), error);
                 break;
@@ -1235,10 +1253,12 @@ void CaptureApp::quickOcrDone()
 // 识别屏幕文字 (#198): the capture with only the shade, the region's words
 // copied at once (readScreenText); held back in full screen as the
 // screenshot's hotkey is, when the user asked for that (the hotkey only).
-void CaptureApp::startOcr()
+// 截图翻译 (#356) is the same picking: its region goes to translateInPlace
+// when the mouse is let go, the toolbar's 翻译 pressed for the user.
+void CaptureApp::startOcr(bool translate)
 {
     if (m_capture)
-        m_capture->triggerOcr();
+        m_capture->triggerOcr(translate ? capture::Capture::OcrPurpose::Translate : capture::Capture::OcrPurpose::Read);
 }
 
 // Without the reader the OCR window opens instead and says how to get it (as
@@ -1366,9 +1386,15 @@ capture::PinManager& CaptureApp::pins()
         callbacks.readLines = [this](const QImage& image, double dpr, std::function<void(QList<capture::RedactLine>)> done) {
             captureOcr().scan(image, dpr, std::move(done));
         };
+        // The key card (#343) in the capture card's colours.
+        callbacks.keyCardLook = [this] {
+            ensureTheme();
+            return pinKeyCardLook(m_qml.singletonInstance<QObject*>(u"WinShun"_s, u"Theme"_s), isDarkMode(), win::roundedCorners());
+        };
         m_pins = std::make_unique<capture::PinManager>(std::move(callbacks));
         m_pins->setDoubleClick(capture::pinDoubleClickFromName(m_settings.options().pinDoubleClick));
         m_pins->setKeys(m_settings.options().keys);
+        m_pins->setKeyHints(m_settings.options().keyHints);
     }
     return *m_pins;
 }
@@ -1443,6 +1469,25 @@ capture::CaptureEditor* CaptureApp::editor()
     hooks.window.cloak = [](QQuickWindow* window, bool cloaked) { win::setCloaked(window, cloaked); };
     hooks.window.nativeRect = [](QQuickWindow* window) { return clientRectOf(window); };
     hooks.window.moveTo = [](QQuickWindow* window, QPoint topLeft) { moveClientTo(window, topLeft); };
+    // On a pin (#343): the pin grown a toolbar, so like the pin a tool window
+    // on top of the others (not in Alt+Tab or the taskbar; changed while it
+    // is hidden, so the taskbar follows) and of one size. The styles are set
+    // on the handle as it is, not by Qt's flags, which may make a new one.
+    hooks.window.pinMode = [this](QQuickWindow* window, bool pin) {
+        if (m_editFrame)
+            m_editFrame->setFixedSize(pin);
+        const auto hwnd = reinterpret_cast<HWND>(window->winId());
+        const LONG_PTR exStyle = ::GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        ::SetWindowLongPtrW(hwnd, GWL_EXSTYLE, pin ? exStyle | WS_EX_TOOLWINDOW : exStyle & ~WS_EX_TOOLWINDOW);
+        ::SetWindowPos(hwnd, pin ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    };
+    // The key list's window and the tips' (shown without the focus), as the clipboard's menus.
+    hooks.window.prepareMenu = [](QWindow* menu) {
+        menu->setProperty("_q_showWithoutActivating", true);
+        win::styleFramelessWindow(menu);
+        win::setDarkFrame(menu, isDarkMode());
+    };
     editor->setHooks(std::move(hooks));
     editor->setOcrAvailable(capture::CaptureOcr::available());
 
@@ -1629,6 +1674,7 @@ QJsonArray CaptureApp::trayMenu() const
     if (m_capture) {
         items.append(menuItem(u"capture"_s, withKey(tr("开始截图"), key)));
         items.append(menuItem(u"ocr"_s, withKey(tr("识别屏幕文字"), o.ocrHotkey)));
+        items.append(menuItem(u"translate"_s, withKey(tr("截图翻译"), o.translateHotkey)));
         QJsonObject delay {{u"title"_s, tr("延时截图")},
             {u"children"_s, QJsonArray {menuItem(u"delay3"_s, tr("3 秒"), o.delay == 3), menuItem(u"delay5"_s, tr("5 秒"), o.delay == 5),
                                  menuItem(u"delay10"_s, tr("10 秒"), o.delay == 10)}}};
@@ -1658,7 +1704,9 @@ void CaptureApp::menuChosen(const QString& id)
                 m_capture->trigger();
         });
     } else if (id == u"ocr") {
-        QTimer::singleShot(200ms, this, &CaptureApp::startOcr); // once the menu is gone from the screen
+        QTimer::singleShot(200ms, this, [this] { startOcr(); }); // once the menu is gone from the screen
+    } else if (id == u"translate") {
+        QTimer::singleShot(200ms, this, [this] { startOcr(true); });
     } else if (id == u"pinLast") {
         pinCurrentImage();
     } else if (id == u"present") {
@@ -1790,10 +1838,11 @@ void CaptureApp::hotkey(int id)
             m_capture->trigger();
         break;
     case OcrKey: // held back in full screen as the screenshot's
+    case TranslateKey:
         if (m_capture && !m_capture->busy() && m_settings.options().pauseInFullScreen
             && fullScreenShortcutBlocked(foreground::facts(), true))
             break;
-        startOcr();
+        startOcr(id == TranslateKey);
         break;
     case LastPinKey:
         pinCurrentImage();

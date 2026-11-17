@@ -138,6 +138,8 @@ struct Settings {
     QString fileManagerOpenCommand;
     QString fileManagerRevealCommand;
     bool explorerMenu = true; // "用 Win顺 搜索此处" in Explorer's right-click menu (shellmenu::)
+    // winshun:// links (GitHub #358) open Win顺 with a search typed, or its settings (shellmenu::applyUriProtocol).
+    bool uriProtocol = true;
     // Typing in a File Explorer folder window searches there with Win顺
     // (TypeToSearch), in place of Explorer's own jump to a name by its first
     // letters: off unless asked for, so that an upgrade changes nothing.
@@ -336,7 +338,7 @@ struct Settings {
     int glassTransparency = 50; // 0..100, liquid background; 50 preserves the theme's default
     int glassClarity = 50; // 0..100, liquid reading surfaces; higher is more opaque
     QString taskbarIcon = QStringLiteral("color"); // color | mono: the tray's and the taskbar box's icon (monologo)
-    QString uiSize = QStringLiteral("standard"); // compact | standard | roomy: type and row heights (uisize::)
+    QString uiSize = QStringLiteral("standard"); // dense | compact | standard | roomy: type and row heights (uisize::)
     int maxRows = 8; // MaxRows=: the most rows the search box shows before its list scrolls, 4..20 (fewer where the screen has no room)
     QString uiFont; // empty: bundled default; otherwise an installed font family
     QString corners; // round | square: defaults() picks by Windows version

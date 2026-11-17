@@ -34,7 +34,12 @@ void writeByHand(const QString& file, const QByteArray& key, const QByteArray& v
     f.close();
     const qsizetype at = text.indexOf(key + '=');
     QVERIFY(at >= 0);
-    const qsizetype end = text.indexOf('\n', at);
+    qsizetype end = text.indexOf('\n', at);
+    // The line keeps its \r\n: true -> false must change the file's size, as
+    // QSettings reads a file again only when its size or time changed, and
+    // a save a moment before may have the same time.
+    if (end > at && text[end - 1] == '\r')
+        --end;
     text.replace(at, end - at, key + '=' + value);
     QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
     f.write(text);
@@ -137,6 +142,29 @@ private slots:
         QVERIFY(CaptureOptions::load(file).keyHints);
         writeByHand(file, "KeyHints", "false");
         QVERIFY(!CaptureOptions::load(file).keyHints);
+    }
+
+    // 框选时只检测窗口 (#360): off by default; the switch and Tab in a capture
+    // (through the same setter) saved at once, for the next capture.
+    void windowsOnly()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString file = dir.filePath(u"capture.ini"_s);
+        QVERIFY(!CaptureOptions::load(file).windowsOnly);
+        ws::captureplugin::CaptureSettings settings(file);
+        QVERIFY(!settings.captureWindowsOnly());
+        QSignalSpy changed(&settings, &ws::captureplugin::CaptureSettings::changed);
+        settings.setCaptureWindowsOnly(true);
+        QCOMPARE(changed.count(), 1);
+        QVERIFY(CaptureOptions::load(file).windowsOnly);
+        settings.setCaptureWindowsOnly(true);
+        QCOMPARE(changed.count(), 1); // the same again: nothing
+        settings.setProperty("captureWindowsOnly", false); // as the switch sets it
+        QCOMPARE(changed.count(), 2);
+        QVERIFY(!CaptureOptions::load(file).windowsOnly);
+        writeByHand(file, "WindowsOnly", "true");
+        QVERIFY(CaptureOptions::load(file).windowsOnly);
     }
 
     // The capture's and the pins' keys (#187), Capture/Keys/<id>: missing is
@@ -319,6 +347,58 @@ private slots:
         settings.setCaptureOcrHotkey({});
         QVERIFY(conflict().isEmpty());
         QVERIFY(CaptureOptions::load(file).ocrHotkey.isEmpty());
+    }
+
+    // 截图翻译's hotkey (#356), Capture/TranslateHotkey: as 识别屏幕文字's, and
+    // registered after it, so it is the one that gives way to the same key; the
+    // 识别屏幕文字 key does not give way to it.
+    void translateHotkey()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString file = dir.filePath(u"capture.ini"_s);
+        QVERIFY(CaptureOptions::load(file).translateHotkey.isEmpty());
+        QVERIFY(QSettings(file, QSettings::IniFormat).contains(u"Capture/TranslateHotkey"_s));
+
+        ws::captureplugin::CaptureSettings settings(file);
+        QSignalSpy changed(&settings, &ws::captureplugin::CaptureSettings::changed);
+        QVERIFY(settings.translateHotkeyClash().isEmpty()); // none set
+        settings.setCaptureTranslateHotkey(u" Ctrl+Alt+Y "_s);
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(settings.captureTranslateHotkey(), u"Ctrl+Alt+Y"_s);
+        QCOMPARE(CaptureOptions::load(file).translateHotkey, u"Ctrl+Alt+Y"_s);
+        settings.setCaptureTranslateHotkey(u"Ctrl+Alt+Y"_s);
+        QCOMPARE(changed.count(), 1); // the same again: nothing
+        QVERIFY(settings.translateHotkeyClash().isEmpty());
+
+        // The same key as any other of the plugin's: said here (the other keeps it), written another way too.
+        settings.setCaptureHotkey(u"Alt+Ctrl+Y"_s);
+        QVERIFY(settings.translateHotkeyClash().contains(u"开始截图"_s));
+        settings.setCaptureHotkey(u"F1"_s);
+        QVERIFY(settings.translateHotkeyClash().isEmpty());
+        settings.setCaptureOcrHotkey(u"Ctrl+Alt+Y"_s);
+        QVERIFY(settings.translateHotkeyClash().contains(u"识别屏幕文字"_s));
+        QVERIFY(settings.ocrHotkeyClash().isEmpty()); // it was there first
+        settings.setCaptureOcrHotkey({});
+        settings.setCapturePrintScreen(true);
+        settings.setCaptureTranslateHotkey(u"PrintScreen"_s);
+        QVERIFY(settings.translateHotkeyClash().contains(u"PrtScn"_s));
+        settings.setCapturePrintScreen(false);
+        settings.setCapturePresentHotkey(u"F7"_s);
+        settings.setCaptureTranslateHotkey(u"F7"_s);
+        QVERIFY(settings.translateHotkeyClash().contains(u"演示"_s));
+        settings.setCaptureTranslateHotkey(u"F8"_s);
+
+        // The capture's and the pins' keys: refused on it, a conflict once it is set later.
+        QVERIFY(settings.setCaptureKey(u"Pin"_s, Qt::Key_F8, 0).contains(u"截图翻译"_s));
+        QVERIFY(settings.setCaptureKey(u"Pin"_s, Qt::Key_F9, 0).isEmpty());
+        const auto conflict = [&] { return settings.captureKeys().value(u"Pin"_s).toMap().value(u"conflict"_s).toString(); };
+        QVERIFY(conflict().isEmpty());
+        settings.setCaptureTranslateHotkey(u"F9"_s);
+        QVERIFY(conflict().contains(u"截图翻译"_s));
+        settings.setCaptureTranslateHotkey({});
+        QVERIFY(conflict().isEmpty());
+        QVERIFY(CaptureOptions::load(file).translateHotkey.isEmpty());
     }
 
     // The mouse buttons (#46): the old behaviour by default, kept across a

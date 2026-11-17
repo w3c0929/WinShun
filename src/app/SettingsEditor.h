@@ -77,6 +77,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(QString fileManagerRevealCommand READ fileManagerRevealCommand WRITE setFileManagerRevealCommand NOTIFY changed FINAL)
     Q_PROPERTY(QString fileManagerProblem READ fileManagerProblem NOTIFY changed FINAL)
     Q_PROPERTY(bool explorerMenu READ explorerMenu WRITE setExplorerMenu NOTIFY changed FINAL)
+    Q_PROPERTY(bool uriProtocol READ uriProtocol WRITE setUriProtocol NOTIFY changed FINAL)
     Q_PROPERTY(bool explorerTyping READ explorerTyping WRITE setExplorerTyping NOTIFY changed FINAL)
     Q_PROPERTY(bool desktopTyping READ desktopTyping WRITE setDesktopTyping NOTIFY changed FINAL)
     Q_PROPERTY(bool opusTyping READ opusTyping WRITE setOpusTyping NOTIFY changed FINAL)
@@ -312,7 +313,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(int glassTransparency READ glassTransparency WRITE setGlassTransparency NOTIFY changed FINAL)
     Q_PROPERTY(int glassClarity READ glassClarity WRITE setGlassClarity NOTIFY changed FINAL)
     Q_PROPERTY(QString taskbarIcon READ taskbarIcon WRITE setTaskbarIcon NOTIFY changed FINAL) // color | mono
-    Q_PROPERTY(QString uiSize READ uiSize WRITE setUiSize NOTIFY changed FINAL) // compact | standard | roomy
+    Q_PROPERTY(QString uiSize READ uiSize WRITE setUiSize NOTIFY changed FINAL) // dense | compact | standard | roomy
     Q_PROPERTY(QString uiFont READ uiFont WRITE setUiFont NOTIFY changed FINAL)
     Q_PROPERTY(QStringList uiFonts READ uiFonts CONSTANT FINAL)
     Q_PROPERTY(bool uiFontAvailable READ uiFontAvailable NOTIFY changed FINAL)
@@ -434,6 +435,8 @@ public:
     Q_INVOKABLE QString pickFileManagerProgram();
     bool explorerMenu() const { return m_settings.explorerMenu; }
     void setExplorerMenu(bool on);
+    bool uriProtocol() const { return m_settings.uriProtocol; }
+    void setUriProtocol(bool on);
     bool explorerTyping() const { return m_settings.explorerTyping; }
     void setExplorerTyping(bool on);
     bool desktopTyping() const { return m_settings.desktopTyping; }

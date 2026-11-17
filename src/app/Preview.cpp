@@ -49,6 +49,7 @@
 #include "FolderMenu.h"
 #include "Query.h"
 #include "Host.h"
+#include "Secrets.h"
 #include "platform/Integrity.h"
 #include "platform/SiteIcons.h"
 #include "platform/FileDialog.h"
@@ -365,6 +366,37 @@ int runPlugins(const QStringList& args)
         wordsHost->catalog().scan();
         wordsHost->setEnabled(wordsPlugin, true);
     }
+    // --slider-check (GitHub #359): the same over one plugin whose numbers
+    // have ranges; its card's sliders moved by keys and by the pointer, its
+    // boxes typed into, a value sent by the plugin; the INI, what the plugin
+    // is told and the card read each time.
+    const bool sliderCheck = args.contains(u"--slider-check"_s) && !keywordCheck;
+    const QString rangesPlugin = u"test.ranges"_s;
+    std::unique_ptr<plugin::Host> rangesHost;
+    if (sliderCheck) {
+        const QString folder = Settings::profile() + u"/plugins/"_s + rangesPlugin;
+        QDir().mkpath(folder);
+        QFile manifest(folder + u"/plugin.json"_s);
+        const QByteArray json = R"({"manifest":1,"id":"test.ranges","name":{"zh":"范围","en":"Ranges"},"version":"1.0.0",
+            "commands":[{"id":"main","title":"范围","keyword":"rg","run":{"folder":"C:\\"}}],
+            "settings":[
+                {"key":"pause","type":"number","title":"停顿多久再翻译","default":400,"min":100,"max":2000,"step":50,"unit":"ms"},
+                {"key":"match","type":"number","title":"术语匹配的相似度","default":0.75,"min":0,"max":1,"step":0.05},
+                {"key":"edge","type":"number","title":"最后一步短一些","min":5,"max":99,"step":10,"unit":{"zh":"个","en":"items"}},
+                {"key":"limit","type":"number","title":"最多列出几项","min":1,"unit":{"zh":"项","en":"items"}}]})";
+        if (!manifest.open(QIODevice::WriteOnly) || manifest.write(json) < 0) {
+            say(u"#359 sliders: the plugin could not be written"_s);
+            return 3;
+        }
+        manifest.close();
+        settings.pluginConfig(rangesPlugin).enabled = true;
+        plugin::Host::Options options;
+        options.userPluginDir = Settings::profile() + u"/plugins"_s;
+        options.version = QStringLiteral(WINSHUN_VERSION);
+        rangesHost = std::make_unique<plugin::Host>(options);
+        rangesHost->catalog().scan();
+        rangesHost->setEnabled(rangesPlugin, true);
+    }
     auto* editor = new SettingsEditor(settings, u"software"_s, &engine);
     editor->plugins()->setLocale(u"zh"_s);
     if (keywordCheck) {
@@ -372,6 +404,18 @@ int runPlugins(const QStringList& args)
         QObject::connect(editor, &SettingsEditor::edited, wordsHost.get(), [&wordsHost](const Settings& now) {
             wordsHost->setKeywordOverrides(PluginSettings::keywordOverrides(now.plugins));
         });
+    } else if (sliderCheck) {
+        // The settings as App::applyPlugins tells the host: the INI's, fitted.
+        const auto tell = [&rangesHost, rangesPlugin](const Settings& now) {
+            const plugin::Entry* e = rangesHost->catalog().find(rangesPlugin);
+            const PluginConfig* c = now.plugin(rangesPlugin);
+            if (e && e->manifest)
+                rangesHost->setPluginSettings(rangesPlugin,
+                    plugin::secrets::settingsOf(rangesPlugin, *e->manifest, c ? c->settings : QList<std::pair<QString, QString>>()));
+        };
+        tell(settings);
+        editor->plugins()->setHost(rangesHost.get());
+        QObject::connect(editor, &SettingsEditor::edited, rangesHost.get(), tell);
     } else {
         editor->plugins()->loadPreview(args.contains(u"--elevated"_s), manyLogs ? 8 : 2, args.contains(u"--host-normal"_s)); // the `elevated` shield and 确认 note
     }
@@ -619,12 +663,235 @@ int runPlugins(const QStringList& args)
         if (!keywords)
             qWarning("plugin keyword check failed");
     }
+    // --slider-check (GitHub #359): keys on a slider (its focus kept while
+    // the card is rebuilt under it), a held key saved once, the box typed
+    // into, the pointer dragging, a value the plugin sends, a plain box with
+    // only a minimum; each time the box, the slider, the INI and what the
+    // plugin is told.
+    bool sliders = true;
+    if (sliderCheck) {
+        if (QQuickItem* section = visualNamed(window->contentItem(), u"pluginsSection"_s))
+            QMetaObject::invokeMethod(section, "expand", Q_ARG(QVariant, rangesPlugin));
+        pump(600); // the card opens
+        int edits = 0;
+        QObject::connect(editor, &SettingsEditor::edited, editor, [&edits] { ++edits; });
+        const auto control = [&](const QString& key) { return visualNamed(window->contentItem(), u"pluginSlider-"_s + rangesPlugin + u'/' + key); };
+        const auto part = [&](const QString& key, const QString& name) -> QQuickItem* {
+            QQuickItem* c = control(key);
+            return c ? visualNamed(c, name) : nullptr;
+        };
+        const auto ini = [&](const QString& key) {
+            const QSettings file(QSettings::IniFormat, QSettings::UserScope, u"WinShun"_s, u"WinShun"_s);
+            return file.value(u"Plugin."_s + rangesPlugin + u"/Setting."_s + key);
+        };
+        const auto check = [&](const char* what, const QString& key, const QString& box, double slider, const QVariant& kept, double told,
+                               bool focused) {
+            QQuickItem* b = part(key, u"settingSliderValue"_s);
+            QQuickItem* s = part(key, u"settingSlider"_s);
+            const QVariant k = ini(key);
+            const QJsonValue t = rangesHost->pluginSettings(rangesPlugin).value(key);
+            const bool ok = b && s && b->property("text").toString() == box && qFuzzyCompare(s->property("value").toDouble(), slider)
+                && k.isValid() == kept.isValid() && (!kept.isValid() || k.toString() == kept.toString()) && t.isDouble()
+                && qFuzzyCompare(t.toDouble(), told) && s->hasActiveFocus() == focused;
+            say(u"#359 sliders, %1 (%2): box [%3] slider %4, INI %5, told %6, focus %7: %8"_s
+                    .arg(QString::fromUtf8(what), key, b ? b->property("text").toString() : u"?"_s)
+                    .arg(s ? s->property("value").toDouble() : -1)
+                    .arg(k.isValid() ? u'[' + k.toString() + u']' : u"none"_s)
+                    .arg(t.toDouble())
+                    .arg(s && s->hasActiveFocus())
+                    .arg(ok ? u"passed"_s : u"FAILED"_s));
+            sliders = sliders && ok;
+        };
+        const auto key = [&](int code, int repeats = 0) {
+            // Held: Qt's repeats, each after a release that says it is one.
+            QKeyEvent press(QEvent::KeyPress, code, {});
+            QCoreApplication::sendEvent(window, &press);
+            for (int i = 0; i < repeats; ++i) {
+                QKeyEvent up(QEvent::KeyRelease, code, {}, QString(), true);
+                QKeyEvent down(QEvent::KeyPress, code, {}, QString(), true);
+                QCoreApplication::sendEvent(window, &up);
+                QCoreApplication::sendEvent(window, &down);
+            }
+            QKeyEvent release(QEvent::KeyRelease, code, {});
+            QCoreApplication::sendEvent(window, &release);
+            pump(120);
+        };
+        const auto focus = [&](const QString& key) {
+            if (QQuickItem* s = part(key, u"settingSlider"_s))
+                s->forceActiveFocus(Qt::TabFocusReason);
+            pump(60);
+        };
+        const auto unfocus = [&] { // the root has the focus already: the focused one gives it up
+            if (QQuickItem* focused = window->activeFocusItem(); focused && focused != window->contentItem())
+                focused->setFocus(false);
+            pump(60);
+        };
+        const auto type = [&](const QString& name, const QString& text) {
+            if (QQuickItem* b = name.contains(u'/') ? visualNamed(window->contentItem(), name) : part(name, u"settingSliderValue"_s)) {
+                b->setProperty("text", text);
+                QMetaObject::invokeMethod(b, "editingFinished"); // Enter, or the focus left it
+            }
+            pump(150);
+        };
+        QQuickItem* pause = control(u"pause"_s);
+        check("as installed", u"pause"_s, u"400"_s, 400, {}, 400, false);
+        const bool unitShown = pause && pause->property("unit").toString() == u"ms" && pause->property("hasUnit").toBool();
+        say(u"#359 sliders: the unit after the box: %1"_s.arg(unitShown ? u"passed"_s : u"FAILED"_s));
+        sliders = sliders && unitShown;
+        // Down the card the tracks start and end together, and the boxes
+        // (the plain number's too) end together, whatever their units.
+        settle(window); // laid out only with a frame
+        {
+            const auto left = [](QQuickItem* i) { return i ? i->mapToScene({0, 0}).x() : -1.0; };
+            const auto right = [](QQuickItem* i) { return i ? i->mapToScene({i->width(), 0}).x() : -1.0; };
+            QQuickItem* tracks[] = {part(u"pause"_s, u"settingSlider"_s), part(u"match"_s, u"settingSlider"_s), part(u"edge"_s, u"settingSlider"_s)};
+            QQuickItem* boxes[] = {part(u"pause"_s, u"settingSliderValue"_s), part(u"match"_s, u"settingSliderValue"_s),
+                                   part(u"edge"_s, u"settingSliderValue"_s), visualNamed(window->contentItem(), u"pluginSetting-"_s + rangesPlugin + u"/limit"_s)};
+            bool lined = true;
+            for (QQuickItem* t : tracks)
+                lined = lined && t && qFuzzyCompare(left(t), left(tracks[0])) && qFuzzyCompare(right(t), right(tracks[0]));
+            for (QQuickItem* b : boxes)
+                lined = lined && b && qFuzzyCompare(right(b), right(boxes[0]));
+            say(u"#359 sliders: tracks from %1 to %2, boxes to %3 and %4: %5"_s.arg(left(tracks[0])).arg(right(tracks[0]))
+                    .arg(right(boxes[0])).arg(right(boxes[3])).arg(lined ? u"lined up, passed"_s : u"FAILED"_s));
+            sliders = sliders && lined;
+        }
+        focus(u"pause"_s);
+        key(Qt::Key_Right);
+        check("→", u"pause"_s, u"450"_s, 450, u"450"_s, 450, true);
+        key(Qt::Key_Right);
+        check("→ again, the focus kept", u"pause"_s, u"500"_s, 500, u"500"_s, 500, true);
+        key(Qt::Key_PageUp);
+        check("PageUp: a tenth, in steps", u"pause"_s, u"700"_s, 700, u"700"_s, 700, true);
+        key(Qt::Key_End);
+        check("End", u"pause"_s, u"2000"_s, 2000, u"2000"_s, 2000, true);
+        key(Qt::Key_Home);
+        check("Home", u"pause"_s, u"100"_s, 100, u"100"_s, 100, true);
+        key(Qt::Key_Up);
+        check("↑", u"pause"_s, u"150"_s, 150, u"150"_s, 150, true);
+        key(Qt::Key_Down);
+        check("↓", u"pause"_s, u"100"_s, 100, u"100"_s, 100, true);
+        const int before = edits;
+        key(Qt::Key_Right, 3);
+        check("→ held, four steps", u"pause"_s, u"300"_s, 300, u"300"_s, 300, true);
+        say(u"#359 sliders: a held key saved %1 time(s): %2"_s.arg(edits - before).arg(edits - before == 1 ? u"passed"_s : u"FAILED"_s));
+        sliders = sliders && edits - before == 1;
+        unfocus();
+        type(u"pause"_s, u"1234"_s);
+        check("typed 1234: on a step", u"pause"_s, u"1250"_s, 1250, u"1250"_s, 1250, false);
+        type(u"pause"_s, u"99999"_s);
+        check("typed past the end", u"pause"_s, u"2000"_s, 2000, u"2000"_s, 2000, false);
+        type(u"pause"_s, u"99999"_s);
+        check("past the end again: the box shows what is kept", u"pause"_s, u"2000"_s, 2000, u"2000"_s, 2000, false);
+        type(u"pause"_s, u"-5"_s);
+        check("typed under the start", u"pause"_s, u"100"_s, 100, u"100"_s, 100, false);
+        type(u"pause"_s, QString());
+        check("emptied: nothing saved", u"pause"_s, u"100"_s, 100, u"100"_s, 100, false);
+        // The pointer: pressed on the thumb, moved to the track's middle,
+        // let go; nothing saved until then.
+        if (QQuickItem* s = part(u"pause"_s, u"settingSlider"_s)) {
+            settle(window); // laid out (the opened card's rows where they are drawn) only with a frame
+            auto* handle = s->property("handle").value<QQuickItem*>();
+            const QPointF start = handle ? handle->mapToScene({handle->width() / 2, handle->height() / 2}) : QPointF();
+            const QPointF middle = s->mapToScene({s->width() / 2, s->height() / 2});
+            const auto mouse = [&](QEvent::Type type, const QPointF& at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+                QMouseEvent event(type, at, window->mapToGlobal(at), button, buttons, {});
+                QCoreApplication::sendEvent(window, &event);
+                settle(window);
+            };
+            const int dragEdits = edits;
+            mouse(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+            mouse(QEvent::MouseMove, (start + middle) / 2, Qt::NoButton, Qt::LeftButton);
+            mouse(QEvent::MouseMove, middle, Qt::NoButton, Qt::LeftButton);
+            const double during = s->property("value").toDouble();
+            const QString shown = part(u"pause"_s, u"settingSliderValue"_s)->property("text").toString();
+            const bool onStep = std::fmod(during - 100, 50) == 0 && during > 100 && during < 2000;
+            const bool unsaved = edits == dragEdits && ini(u"pause"_s).toString() == u"100";
+            mouse(QEvent::MouseButtonRelease, middle, Qt::LeftButton, {});
+            const bool saved = ini(u"pause"_s).toString() == QString::number(during) && edits == dragEdits + 1;
+            say(u"#359 sliders, dragged: %1 shown [%2] on a step %3, unsaved while held %4, saved once let go %5: %6"_s
+                    .arg(during).arg(shown).arg(onStep).arg(unsaved).arg(saved)
+                    .arg(onStep && unsaved && saved && shown == QString::number(during) ? u"passed"_s : u"FAILED"_s));
+            sliders = sliders && onStep && unsaved && saved && shown == QString::number(during);
+        } else
+            sliders = false;
+        unfocus(); // a click gave the slider the focus
+        // The plugin sends a value (winshun/settings/update): kept to the range.
+        emit rangesHost->settingsUpdateRequested(rangesPlugin, QJsonObject {{u"pause"_s, 3333}});
+        pump(150);
+        check("sent 3333 by the plugin", u"pause"_s, u"2000"_s, 2000, u"2000"_s, 2000, false);
+        // Typed by keys, as a user does: through the box's validator, which
+        // lets Enter (and leaving) say so only for a number. Left empty, the
+        // box shows the value again, nothing saved.
+        const auto press = [&](int code, Qt::KeyboardModifiers modifiers = {}, const QString& text = {}) {
+            QKeyEvent down(QEvent::KeyPress, code, modifiers, text);
+            QKeyEvent up(QEvent::KeyRelease, code, modifiers, text);
+            QCoreApplication::sendEvent(window, &down);
+            QCoreApplication::sendEvent(window, &up);
+        };
+        const auto keys = [&](QQuickItem* box, const QString& text, bool enter) {
+            if (box && !box->property("inputFocused").toBool())
+                QMetaObject::invokeMethod(box, "takeFocus");
+            press(Qt::Key_A, Qt::ControlModifier); // all of it, typed over
+            press(Qt::Key_Backspace);
+            for (const QChar c : text)
+                press(c == u'-' ? int(Qt::Key_Minus) : c == u'.' ? int(Qt::Key_Period) : Qt::Key_0 + c.digitValue(), {}, QString(c));
+            if (enter)
+                press(Qt::Key_Return);
+            pump(150);
+        };
+        QQuickItem* pauseBox = part(u"pause"_s, u"settingSliderValue"_s);
+        keys(pauseBox, u"1234"_s, true);
+        check("keys 1234, Enter", u"pause"_s, u"1250"_s, 1250, u"1250"_s, 1250, false);
+        keys(pauseBox, QString(), false);
+        const bool pauseEmptied = pauseBox && pauseBox->property("text").toString().isEmpty();
+        unfocus(); // the focus leaves it empty
+        check(pauseEmptied ? "keys: emptied, then left" : "keys: emptied, then left (it was not emptied)", u"pause"_s, u"1250"_s, 1250,
+            u"1250"_s, 1250, false);
+        sliders = sliders && pauseEmptied;
+        // Steps after the point: shown with as many digits, kept without noise.
+        type(u"match"_s, u"0.33"_s);
+        check("typed 0.33", u"match"_s, u"0.35"_s, 0.35, u"0.35"_s, 0.35, false);
+        focus(u"match"_s);
+        key(Qt::Key_Right);
+        check("→ from 0.35", u"match"_s, u"0.40"_s, 0.4, u"0.4"_s, 0.4, true);
+        unfocus();
+        // A last step shorter than the others: max is a value too, both ways.
+        check("no default: min", u"edge"_s, u"5"_s, 5, {}, 5, false);
+        focus(u"edge"_s);
+        key(Qt::Key_End);
+        check("End: max off the steps", u"edge"_s, u"99"_s, 99, u"99"_s, 99, true);
+        key(Qt::Key_Left);
+        check("← from max: the last step", u"edge"_s, u"95"_s, 95, u"95"_s, 95, true);
+        key(Qt::Key_Right);
+        check("→ to max again", u"edge"_s, u"99"_s, 99, u"99"_s, 99, true);
+        unfocus();
+        // Only a minimum: the plain box, kept to it (by keys); left empty, it
+        // shows the value again, nothing saved.
+        QQuickItem* limit = visualNamed(window->contentItem(), u"pluginSetting-"_s + rangesPlugin + u"/limit"_s);
+        keys(limit, u"-3"_s, true);
+        const bool limited = limit && limit->property("text").toString() == u"1" && ini(u"limit"_s).toString() == u"1"
+            && rangesHost->pluginSettings(rangesPlugin).value(u"limit"_s).toDouble() == 1;
+        keys(limit, QString(), false);
+        const bool limitEmptied = limit && limit->property("text").toString().isEmpty();
+        unfocus();
+        const bool limitKept = limit && limit->property("text").toString() == u"1" && ini(u"limit"_s).toString() == u"1";
+        say(u"#359 sliders, a minimum only: keys -3, Enter: kept as 1 %1; emptied %2, then left: 1 again %3: %4"_s
+                .arg(limited).arg(limitEmptied).arg(limitKept).arg(limited && limitEmptied && limitKept ? u"passed"_s : u"FAILED"_s));
+        sliders = sliders && limited && limitEmptied && limitKept;
+        // For the picture: the values a user would leave, nothing focused.
+        type(u"pause"_s, u"400"_s);
+        type(u"match"_s, u"0.75"_s);
+        unfocus();
+        if (!sliders)
+            qWarning("plugin slider check failed");
+    }
     say(u"grabbing"_s);
     if (args.contains(u"--tree"_s))
         writeTree(window, out + u".tree.txt"_s);
     const bool saved = saveGrab(window, out);
     say(u"dpr %1"_s.arg(window->devicePixelRatio()));
-    return finish(window, saved && confirmed && homepages && keywords);
+    return finish(window, saved && confirmed && homepages && keywords && sliders);
 }
 
 // ---- --preview-settings -----------------------------------------------------------------
@@ -3254,6 +3521,250 @@ void checkSearchMenuKeys(Launcher& launcher, QQuickWindow* window, FilePreview& 
         throw std::runtime_error("Production search navigation regression failed; see search-navigation.json");
 }
 
+// GitHub #361 through the production Main.qml, with local Qt key events, in
+// the box and in the panel: Tab on a folder the list put under the keyboard
+// switches the scope (#81); on one the arrows chose it steps in, and on into
+// the folders there; Ctrl+Backspace comes back the same way, the folder
+// chosen again; then to the words and the scope searched. A part of a name
+// typed completes; a path typed goes up a level; with the caret elsewhere
+// Ctrl+Backspace edits; regex mode never steps in; → still opens the folder's
+// menu. Folders of its own on disk, indexed, and one that is not.
+QQuickItem* shownNamed(QQuickItem* root, const QString& name); // below: the box's footer, not the hidden panel's
+
+void checkFolderSteps(Launcher& launcher, IndexService& index, QQuickWindow* window, const QDir& output)
+{
+    QJsonArray checks;
+    bool passed = true;
+    const auto check = [&](bool okay, const QString& name) {
+        checks.append(QJsonObject {{u"name"_s, name}, {u"passed"_s, okay}});
+        passed = okay && passed;
+        if (!okay) qWarning("folder steps regression: %s", qUtf8Printable(name));
+    };
+    const auto key = [&](int code, Qt::KeyboardModifiers modifiers = {}, const QString& text = {}) {
+        QKeyEvent event(QEvent::KeyPress, code, modifiers, text);
+        QCoreApplication::sendEvent(window, &event);
+    };
+    const auto rows = [&] { // the rows of what the box holds now
+        QElapsedTimer timeout;
+        timeout.start();
+        while (launcher.searching() && timeout.elapsed() < 3000)
+            pump(10);
+        pump(30);
+    };
+    const auto type = [&](const QString& text) {
+        launcher.setQuery(text);
+        rows();
+    };
+    QTemporaryDir temporary;
+    const QString base = QDir::toNativeSeparators(temporary.path());
+    QDir(temporary.path()).mkpath(u"合同资料/2026"_s);
+    QDir(temporary.path()).mkpath(u"未索引"_s);
+    for (const QString& name : {u"合同资料/说明.txt"_s, u"合同资料/2026/清单.txt"_s, u"未索引/备注.txt"_s}) {
+        QFile file(temporary.filePath(name));
+        check(file.open(QIODevice::WriteOnly) && file.write("x") == 1, u"create "_s + name);
+    }
+    const QString contracts = base + u"\\合同资料"_s;
+    const QString year = contracts + u"\\2026"_s;
+    const QString unindexed = base + u"\\未索引"_s;
+    {
+        const auto files = index.index();
+        const auto lock = files->writeLock();
+        const auto root = files->addRoot(base.toStdString());
+        const auto folder = files->add(root, "合同资料", EntryFlag::Directory);
+        files->add(folder, "说明.txt", 0);
+        files->add(files->add(folder, "2026", EntryFlag::Directory), "清单.txt", 0);
+    }
+    const QString folderHint = QCoreApplication::translate("ws::Launcher", "进入文件夹");
+    const QString backHint = QCoreApplication::translate("ws::Launcher", "返回上一级");
+    const auto tabHint = [&] { return launcher.keyHints().value(u"tab"_s).toString(); };
+    const auto rowOf = [&](const QString& path) { return launcher.results()->indexOf(path); };
+    const auto previousScope = launcher.scope();
+    const int previousType = launcher.fileType();
+    const QString previousQuery = launcher.query();
+    const QSize previousSize = window->size();
+    for (const bool panel : {false, true}) {
+        launcher.setPanel(panel);
+        window->resize(panel ? QSize(1200, 680) : QSize(760, 600));
+        settle(window, 2);
+        const QString mode = panel ? u"panel: "_s : u"box: "_s;
+        auto* field = visualNamed(window->contentItem(), panel ? u"panelSearchField"_s : u"searchField"_s);
+        QObject* view = window->property("view").value<QObject*>();
+        check(field && view, mode + u"production search field and list"_s);
+        if (!field || !view)
+            continue;
+        field->forceActiveFocus();
+        const auto current = [&] { return view->property("currentIndex").toInt(); };
+        const auto caretAtEnd = [&] {
+            return field->property("text").toString() == launcher.query()
+                && field->property("cursorPosition").toInt() == launcher.query().size();
+        };
+        // The keyboard onto `row` as the user puts it there: an arrow from the
+        // row next to it (↑ on the first row, which keeps it there).
+        const auto arrive = [&](int row) {
+            const int count = view->property("count").toInt();
+            if (row < 0 || row >= count)
+                return false;
+            view->setProperty("currentIndex", row > 0 ? row - 1 : std::min(1, count - 1));
+            key(row > 0 ? Qt::Key_Down : Qt::Key_Up);
+            return current() == row;
+        };
+        launcher.setScope(Launcher::All);
+        type(u"合同资料"_s);
+        int row = rowOf(contracts);
+        check(row >= 0, mode + u"the folder is found by its name"_s);
+        view->setProperty("currentIndex", row); // where the list put the keyboard, nobody chose it
+        key(Qt::Key_Tab);
+        rows();
+        check(launcher.scope() != Launcher::All && launcher.query() == u"合同资料", mode + u"Tab on a folder nobody chose switches the scope"_s);
+        key(Qt::Key_Backtab, Qt::ShiftModifier);
+        rows();
+        check(launcher.scope() == Launcher::All, mode + u"Shift+Tab comes back to 全部"_s);
+        row = rowOf(contracts);
+        check(arrive(row) && tabHint() == folderHint, mode + u"chosen with the arrows, the footer says Tab goes into it"_s);
+        key(Qt::Key_Tab);
+        check(launcher.query() == contracts + u'\\' && launcher.scope() == Launcher::All && caretAtEnd(),
+            mode + u"Tab puts the folder chosen in the box, the caret after it"_s);
+        rows();
+        check(current() == 0 && launcher.results()->pathAt(0) == contracts && rowOf(year) > 0
+                && rowOf(year) < rowOf(contracts + u"\\说明.txt"_s),
+            mode + u"its listing: the folder itself on top, folders first"_s);
+        check(tabHint() == backHint && launcher.keyHints().value(u"tabKeys"_s).toString() == u"Ctrl+Backspace",
+            mode + u"in the folder, the footer gives the way back"_s);
+        check(arrive(rowOf(year)), mode + u"down onto the folder in it"_s);
+        key(Qt::Key_Tab);
+        rows();
+        check(launcher.query() == year + u'\\' && rowOf(year + u"\\清单.txt"_s) > 0, mode + u"Tab goes on down"_s);
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        check(launcher.query() == contracts + u'\\' && caretAtEnd() && current() == rowOf(year) && tabHint() == folderHint,
+            mode + u"Ctrl+Backspace comes back, on the folder it left, chosen"_s);
+        key(Qt::Key_Tab);
+        rows();
+        check(launcher.query() == year + u'\\', mode + u"Tab goes into it again"_s);
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        check(launcher.query() == u"合同资料" && launcher.scope() == Launcher::All && caretAtEnd() && current() == rowOf(contracts)
+                && tabHint() == folderHint,
+            mode + u"Ctrl+Backspace twice: back at the words, on the folder"_s);
+        check(field->hasActiveFocus() && !window->property("menuOpen").toBool(), mode + u"the keyboard stays in the box"_s);
+        if (panel)
+            continue;
+        // In 文件夹: back to it.
+        launcher.setScope(Launcher::Folders);
+        type(u"合同资料"_s);
+        check(arrive(rowOf(contracts)), mode + u"文件夹: on the folder"_s);
+        key(Qt::Key_Tab);
+        rows();
+        check(launcher.scope() == Launcher::All && launcher.query() == contracts + u'\\', mode + u"文件夹: Tab goes in, in 全部"_s);
+        settle(window, 2);
+        const QQuickItem* footerHint = shownNamed(window->contentItem(), u"footerTabHint"_s);
+        check(footerHint && footerHint->property("label").toString() == backHint
+                && footerHint->property("keys").toString() == u"Ctrl+Backspace",
+            mode + u"the footer shows Ctrl+Backspace 返回上一级"_s);
+        saveGrab(window, output.filePath(u"folder-steps-box.png"_s));
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        check(launcher.scope() == Launcher::Folders && launcher.query() == u"合同资料", mode + u"文件夹: Ctrl+Backspace comes back to it"_s);
+        launcher.setScope(Launcher::All);
+        // A part of a name typed: the folder it completes takes Tab at once.
+        type(base + u"\\合同"_s);
+        check(current() == 0 && launcher.results()->pathAt(0) == contracts && tabHint() == folderHint,
+            mode + u"a part of a name typed: the folder it completes is offered"_s);
+        key(Qt::Key_Tab);
+        rows();
+        check(launcher.query() == contracts + u'\\', mode + u"Tab completes the path"_s);
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        check(launcher.query() == base + u"\\合同"_s, mode + u"Ctrl+Backspace brings back the path as typed"_s);
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        check(launcher.query() == base + u'\\' && current() == 0, mode + u"then takes the name typed away"_s);
+        // Tab a moment after typing, before the rows for it came: on those
+        // rows, never on a folder of the last query's (未索引, for "…\未").
+        type(base + u"\\未"_s);
+        launcher.setQuery(base + u"\\合同"_s);
+        const bool coming = launcher.searching();
+        key(Qt::Key_Tab);
+        rows();
+        pump(50); // the Tab that waited goes after the rows are in
+        rows();
+        check(launcher.query() == contracts + u'\\' && launcher.scope() == Launcher::All,
+            mode + u"Tab right after typing completes from the rows for it (they were %1 yet)"_s
+                .arg(coming ? u"not there"_s : u"there"_s));
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        check(launcher.query() == base + u'\\', mode + u"and back out to the folder typed"_s);
+        // A folder not indexed, listed from the disk.
+        check(arrive(rowOf(unindexed)), mode + u"onto a folder not indexed"_s);
+        key(Qt::Key_Tab);
+        rows();
+        check(launcher.query() == unindexed + u'\\' && rowOf(unindexed + u"\\备注.txt"_s) > 0,
+            mode + u"Tab lists a folder not indexed"_s);
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        check(launcher.query() == base + u'\\' && current() == rowOf(unindexed), mode + u"and comes back out of it"_s);
+        // A path typed, not stepped into: a level up, the folder left chosen there.
+        type(year + u'\\');
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        check(launcher.query() == contracts + u'\\' && current() == rowOf(year) && tabHint() == folderHint,
+            mode + u"Ctrl+Backspace on a path typed goes up, on the folder it left"_s);
+        // The caret elsewhere, or words selected: Ctrl+Backspace edits as ever.
+        type(year + u'\\');
+        field->setProperty("cursorPosition", 3);
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        check(launcher.query() != contracts + u'\\' && launcher.query().size() < year.size() + 1,
+            mode + u"with the caret inside the path, Ctrl+Backspace deletes a word"_s);
+        type(year + u'\\');
+        QMetaObject::invokeMethod(field, "selectAll");
+        key(Qt::Key_Backspace, Qt::ControlModifier);
+        rows();
+        check(launcher.query() != contracts + u'\\', mode + u"with the words selected, Ctrl+Backspace deletes them"_s);
+        // → on a folder: its menu, with 进入此文件夹搜索, as before.
+        type(u"合同资料"_s);
+        check(arrive(rowOf(contracts)), mode + u"onto the folder for its menu"_s);
+        field->setProperty("cursorPosition", launcher.query().size());
+        key(Qt::Key_Right);
+        auto* menu = qobject_cast<QQuickWindow*>(window->property("contextMenu").value<QObject*>());
+        bool browses = false;
+        for (const QVariant& entry : menu ? menu->property("entries").toList() : QVariantList())
+            browses = browses || entry.toMap().value(u"action"_s, -1).toInt() == Launcher::BrowseFolder;
+        check(window->property("menuOpen").toBool() && browses, mode + u"→ opens the folder's menu, with its browse action"_s);
+        key(Qt::Key_Escape);
+        check(!window->property("menuOpen").toBool() && launcher.query() == u"合同资料", mode + u"Esc closes it, the words kept"_s);
+        // Regex mode: the words are patterns, Tab is the scopes'.
+        key(Qt::Key_R, Qt::ControlModifier);
+        rows();
+        check(launcher.regexMode() && arrive(rowOf(contracts)), mode + u"regex mode: on the folder"_s);
+        key(Qt::Key_Tab);
+        rows();
+        check(launcher.query() == u"合同资料" && launcher.scope() != Launcher::All, mode + u"regex mode: Tab switches the scope"_s);
+        key(Qt::Key_R, Qt::ControlModifier);
+        launcher.setScope(Launcher::All);
+        rows();
+        check(!launcher.regexMode(), mode + u"regex mode off again"_s);
+    }
+    if (previousType >= 0)
+        launcher.chooseFileType(previousType);
+    else
+        launcher.setScope(previousScope);
+    window->resize(previousSize);
+    type(previousQuery);
+    QFile report(output.filePath(u"folder-steps.json"_s));
+    check(report.open(QIODevice::WriteOnly), u"write the regression report"_s);
+    if (report.isOpen()) report.write(QJsonDocument(QJsonObject {{u"passed"_s, passed}, {u"checks"_s, checks}}).toJson());
+    report.close(); // written before a throw ends the process
+    say(u"folder steps (#361): %1 checks, production Main.qml/Launcher, local Qt key events, %2"_s
+        .arg(checks.size()).arg(passed ? u"passed" : u"FAILED"));
+    if (!passed)
+        throw std::runtime_error("Folder step regression failed; see folder-steps.json");
+}
+
 void checkDialogSearchKeys(IndexService& index, QQmlEngine* engine, const QDir& output)
 {
     QTemporaryDir temporary;
@@ -3312,7 +3823,7 @@ void checkDialogSearchKeys(IndexService& index, QQmlEngine* engine, const QDir& 
         // #245: two lines belong together; the gap to the next result must
         // remain larger than the space between a name and its folder.
         const QString previousSize = SystemTheme::uiSize();
-        for (const QString& size : {u"compact"_s, u"standard"_s, u"roomy"_s}) {
+        for (const QString& size : {u"dense"_s, u"compact"_s, u"standard"_s, u"roomy"_s}) {
             SystemTheme::setUiSize(size);
             DialogBar::setUiSize(size);
             list->setHeight(5 * bar.rowHeight());
@@ -3820,7 +4331,7 @@ bool checkSearchLogo(QQmlEngine* engine, const QDir& output)
         // #173: cover the whole visible handle, rather than only its centre.
         // Measure the native client extent independently of Qt's reported DPR.
         const QString previousUiSize = SystemTheme::uiSize();
-        for (const QString& size : {u"compact"_s, u"standard"_s, u"roomy"_s}) {
+        for (const QString& size : {u"dense"_s, u"compact"_s, u"standard"_s, u"roomy"_s}) {
             SystemTheme::setUiSize(size);
             settle(window);
             // #162: the type strip shown once (文件) and closed again keeps
@@ -4174,7 +4685,7 @@ bool checkSearchLogo(QQmlEngine* engine, const QDir& output)
         sampleRoot->setParentItem(appearance.contentItem());
         const QString previousSize = SystemTheme::uiSize();
         showOffScreen(&appearance);
-        for (const QString& size : {u"compact"_s, u"standard"_s, u"roomy"_s}) {
+        for (const QString& size : {u"dense"_s, u"compact"_s, u"standard"_s, u"roomy"_s}) {
             SystemTheme::setUiSize(size);
             sampleRoot->setSize({760, sampleRoot->implicitHeight()});
             appearance.resize(760, qRound(sampleRoot->height()));
@@ -4281,6 +4792,7 @@ void checkFileGallery(Launcher& launcher, IndexService& index, QQmlEngine* engin
         field->setProperty("text", u"测试照片"_s);
     checkPreviewPlacement(launcher, window, filePreview);
     checkSearchMenuKeys(launcher, window, filePreview, output);
+    checkFolderSteps(launcher, index, window, output);
     checkDialogSearchKeys(index, engine, output);
     launcher.setGallery(true);
     settle(window);
@@ -5606,6 +6118,105 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
     showRow(folder);
     launcher.setTabEntersFavoriteFolder(false);
     check(tabHint().isEmpty() && !launcher.autocomplete(0), "turning the Tab setting off left stale behavior or hints");
+    {
+        // GitHub #361, the controller's side (Main.qml's keys: checkFolderSteps):
+        // Tab steps into a folder chosen (chooseRow) or completing the path
+        // typed, never into one the list put under the keyboard by itself
+        // (#81); stepOut goes back the way Tab came, the folder chosen again,
+        // and on a path typed a level up.
+        QDir(temporary.path()).mkpath(u"ordinary/内层"_s);
+        const QString base = QDir::toNativeSeparators(temporary.path());
+        const QString inner = ordinaryPath + u"\\内层"_s;
+        const QString backHint = QCoreApplication::translate("ws::Launcher", "返回上一级");
+        const auto settled = [&] {
+            QElapsedTimer timeout;
+            timeout.start();
+            while (launcher.searching() && timeout.elapsed() < 2000)
+                pump(10);
+        };
+        const auto rowOf = [&](const QString& path) { return launcher.results()->indexOf(path); };
+        const auto startRow = [&] { // as Main.qml's selectFirst puts the keyboard
+            const int row = launcher.results()->defaultRow();
+            launcher.setCurrentRow(row);
+            return launcher.results()->pathAt(row);
+        };
+        const auto tabKeys = [&] { return launcher.keyHints().value(u"tabKeys"_s).toString(); };
+        launcher.setScope(Launcher::All);
+        query(base + u'\\');
+        check(startRow() == base && tabHint() == backHint && tabKeys() == u"Ctrl+Backspace",
+            "#361 a folder's listing did not start on the folder itself, offering the way up");
+        int row = rowOf(ordinaryPath);
+        launcher.setCurrentRow(row);
+        check(row > 0 && tabHint() != folderHint && !launcher.autocomplete(row) && launcher.query() == base + u'\\',
+            "#361 Tab stepped into a folder nobody chose");
+        launcher.chooseRow(row);
+        check(tabHint() == folderHint && launcher.autocomplete(row) && launcher.query() == ordinaryPath + u'\\',
+            "#361 Tab did not step into the folder chosen");
+        settled();
+        row = rowOf(inner);
+        launcher.setCurrentRow(row);
+        launcher.chooseRow(row);
+        check(row > 0 && launcher.autocomplete(row) && launcher.query() == inner + u'\\', "#361 Tab did not step on down");
+        settled();
+        check(launcher.stepOut() && launcher.query() == ordinaryPath + u'\\', "#361 stepOut did not come back a level");
+        settled();
+        check(startRow() == inner && tabHint() == folderHint, "#361 back out, the folder left was not chosen again");
+        check(launcher.stepOut() && launcher.query() == base + u'\\', "#361 stepOut did not come back to the first folder");
+        settled();
+        check(startRow() == ordinaryPath && tabHint() == folderHint, "#361 back out twice, its folder was not chosen again");
+        // A part of a name typed: the folder it completes takes Tab by itself.
+        query(base + u"\\ordin"_s);
+        check(startRow() == ordinaryPath && tabHint() == folderHint && launcher.autocomplete(0)
+                && launcher.query() == ordinaryPath + u'\\',
+            "#361 Tab did not complete the folder typed in part");
+        settled();
+        check(launcher.stepOut() && launcher.query() == base + u"\\ordin"_s, "#361 stepOut did not bring back the path as typed");
+        settled();
+        check(launcher.stepOut() && launcher.query() == base + u'\\', "#361 stepOut did not take the name typed away first");
+        // Typed, not stepped into: a level up, the folder left chosen there.
+        query(inner + u'\\');
+        check(launcher.stepOut() && launcher.query() == ordinaryPath + u'\\', "#361 stepOut on a path typed did not go up");
+        settled();
+        check(startRow() == inner && tabHint() == folderHint, "#361 up from a path typed, its folder was not chosen");
+        // From the words of a search, in 文件夹: back to them, and to 文件夹.
+        launcher.setScope(Launcher::Folders);
+        query(u"报告"_s);
+        row = rowOf(u"T:\\报告资料"_s);
+        launcher.setCurrentRow(row);
+        check(row >= 0 && !launcher.autocomplete(row) && launcher.query() == u"报告", "#361 Tab took a folder found but not chosen");
+        launcher.chooseRow(row);
+        check(launcher.autocomplete(row) && launcher.scope() == Launcher::All && launcher.query() == u"T:\\报告资料\\",
+            "#361 Tab did not step into a folder found by the words");
+        settled();
+        check(launcher.stepOut() && launcher.scope() == Launcher::Folders && launcher.query() == u"报告",
+            "#361 stepOut did not bring back the words and their scope");
+        settled();
+        check(startRow() == u"T:\\报告资料" && tabHint() == folderHint, "#361 back at the words, the folder was not chosen again");
+        check(!launcher.stepOut() && launcher.query() == u"报告", "#361 stepOut did something to words that are no path");
+        // A prefix's scope comes back with the prefix.
+        launcher.setScope(Launcher::All);
+        query(u":folder 报告"_s);
+        row = rowOf(u"T:\\报告资料"_s);
+        launcher.setCurrentRow(row);
+        launcher.chooseRow(row);
+        check(launcher.autocomplete(row) && launcher.scope() == Launcher::All && launcher.query() == u"T:\\报告资料\\",
+            "#361 Tab did not step out of a :folder search");
+        settled();
+        check(launcher.stepOut() && launcher.query() == u":folder 报告" && launcher.scope() == Launcher::Folders,
+            "#361 stepOut lost the :folder prefix");
+        settled();
+        query({});
+        check(launcher.scope() == Launcher::All, "#361 the prefix went, its scope did not");
+        // Regex mode: the words are patterns, no names to step into.
+        launcher.setRegexMode(true);
+        query(u"报告"_s);
+        row = rowOf(u"T:\\报告资料"_s);
+        launcher.setCurrentRow(row);
+        launcher.chooseRow(row);
+        check(row >= 0 && !launcher.autocomplete(row) && launcher.query() == u"报告", "#361 Tab stepped into a folder in regex mode");
+        launcher.setRegexMode(false);
+        query({});
+    }
     SearchResult suggestion {.name = u"Search suggestion"_s, .app = AppKind::Web,
         .keyword = u"example"_s, .words = u"report"_s, .suggestion = true};
     showRow(suggestion);
@@ -7473,6 +8084,29 @@ bool checkStyleWindows(QQmlEngine* engine, const QDir& output)
             pump(100);
             window->setProperty("highlighted", 3);
             shoot(window, u"style-foldermenu"_s);
+            // 收藏夹 opened by the keys: its column beside the menu (#348),
+            // the two as they stand side by side.
+            QMetaObject::invokeMethod(window, "activate", Q_ARG(QVariant, 0), Q_ARG(QVariant, 0), Q_ARG(QVariant, false));
+            auto* column = window->findChild<QQuickWindow*>(u"folderMenuColumn1"_s);
+            check(column && column->isVisible(), u"folder menu column"_s);
+            if (column) {
+                settle(window);
+                settle(column);
+                pump(300);
+                const qreal dpr = window->devicePixelRatio();
+                const QRect bounds = window->geometry() | column->geometry();
+                QImage image(bounds.size() * dpr, QImage::Format_ARGB32_Premultiplied);
+                image.fill(Qt::transparent);
+                QPainter painter(&image);
+                for (QQuickWindow* shown : {window, column}) {
+                    QImage grab = shown->grabWindow();
+                    grab.setDevicePixelRatio(1);
+                    painter.drawImage(QPointF((shown->x() - bounds.x()) * dpr, (shown->y() - bounds.y()) * dpr), grab);
+                }
+                painter.end();
+                check(image.save(output.filePath(u"style-foldermenu-cascade.png"_s)), u"style-foldermenu-cascade"_s);
+            }
+            menu.dismiss();
             window->hide();
         }
     }
@@ -7812,8 +8446,11 @@ int runResults(const QStringList& args)
                         // their boxes may touch, their letters must not. A line's letters
                         // stand on its baseline, no taller than its font.
                         const auto baseline = [](QQuickItem* label) { return label->y() + label->property("baselineOffset").toReal(); };
+                        // 密集 (GitHub #352): side by side on one baseline, 12 apart.
+                        const bool sideBySide = SystemTheme::uiSize() == u"dense";
                         if (sizeVisible && dateVisible
-                            && baseline(date) - baseline(size) < date->property("font").value<QFont>().pixelSize())
+                            && (sideBySide ? size->x() + size->width() + 12 > date->x() + 0.5
+                                           : baseline(date) - baseline(size) < date->property("font").value<QFont>().pixelSize()))
                             qWarning("preview: size and date overlap in row %d", i);
                     }
                 }
@@ -10742,6 +11379,7 @@ int runRuntime(const QStringList& args)
     settings.dialogBarPlace = u"below"_s;
     settings.dialogAutoJump = false;
     settings.explorerMenu = false;
+    settings.uriProtocol = false;
     settings.explorerTyping = false;
     settings.opusTyping = false;
     settings.folderMenu = u"off"_s;

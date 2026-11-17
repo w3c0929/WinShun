@@ -264,6 +264,10 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Launcher/ExplorerMenu", QT_TRANSLATE_NOOP("AiSettings", "资源管理器右键“用 Win顺 搜索此处”"), "files_and_dialogs", 2,
                     "Adds 用 Win顺 搜索此处 to the right-click menu of folders in File Explorer."},
         &Settings::explorerMenu));
+    add(boolean({"Launcher/UriProtocol", QT_TRANSLATE_NOOP("AiSettings", "winshun:// 链接"), "files_and_dialogs", 2,
+                    "Lets winshun:// links open Win顺: winshun://search/<words> opens the search box with the words typed, "
+                    "winshun://settings opens the settings. Links never open or run files."},
+        &Settings::uriProtocol));
     add(boolean({"Launcher/ExplorerTyping", QT_TRANSLATE_NOOP("AiSettings", "在资源管理器里直接打字搜索"), "files_and_dialogs", 2,
                     "Typing in a File Explorer folder window searches that folder with Win顺, instead of Explorer's jump to a name by its first letters."},
         &Settings::explorerTyping));
@@ -431,9 +435,10 @@ std::vector<Entry> buildCatalog()
                     "Liquid glass reading surface opacity. 50 is the theme default; higher makes cards more opaque."},
         &Settings::glassClarity, 0, 100));
     add(choice({"Appearance/UiSize", QT_TRANSLATE_NOOP("AiSettings", "界面大小"), "appearance", -1,
-                   "Type and row heights of the search box, the clipboard and the dialog bar (not the settings window)."},
+                   "Type and row heights of the search box, the clipboard and the dialog bar (not the settings window). Dense: one small line per result."},
         &Settings::uiSize,
-        {{u"compact"_s, u"smaller type and rows"_s, QT_TRANSLATE_NOOP("AiSettings", "紧凑")},
+        {{u"dense"_s, u"one small line per result"_s, QT_TRANSLATE_NOOP("AiSettings", "密集")},
+            {u"compact"_s, u"smaller type and rows"_s, QT_TRANSLATE_NOOP("AiSettings", "紧凑")},
             {u"standard"_s, u"the usual size"_s, QT_TRANSLATE_NOOP("AiSettings", "标准")},
             {u"roomy"_s, u"larger type and rows"_s, QT_TRANSLATE_NOOP("AiSettings", "宽松")}}));
     add(choice({"Appearance/TaskbarIcon", QT_TRANSLATE_NOOP("AiSettings", "任务栏图标"), "appearance", -1,
@@ -549,7 +554,7 @@ std::vector<Entry> buildCatalog()
                     "A click on a result only selects it; a double click (or Enter) opens it. Off: a click opens it."},
         &Settings::doubleClickToOpen));
     add(boolean({"Results/TabEntersFavoriteFolder", QT_TRANSLATE_NOOP("AiSettings", "Tab 进入收藏文件夹"), "results", 1,
-                    "In All, Tab browses the selected favorite folder. Off by default: Tab switches search scopes. Shift+Tab and plugin/web completion keep their usual behavior."},
+                    "In All, Tab browses a favorite folder the list selected by itself (such as the first row). Off by default: Tab switches search scopes there. A folder the user moved to with the arrow keys or clicked is always browsed by Tab, Ctrl+Backspace goes back. Shift+Tab and plugin/web completion keep their usual behavior."},
         &Settings::tabEntersFavoriteFolder));
     add(boolean({"Results/SearchApps", QT_TRANSLATE_NOOP("AiSettings", "搜索应用"), "results", 1,
                     "All also finds apps (Start menu programs, Store apps). Off: All finds files, folders and content only."},

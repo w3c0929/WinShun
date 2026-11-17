@@ -9,6 +9,8 @@
 #include "CaptureSession.h"
 #include "CaptureOcr.h"
 #include "CaptureEditor.h"
+#include "PinKeyCard.h"
+#include "PinKeyLook.h"
 #include "WindowFrame.h"
 #include "platform/OcrFiles.h"
 #include "RawClicks.h"
@@ -24,6 +26,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJSValue>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -242,6 +245,22 @@ int runSettings(const QStringList& args)
         ok = ok && switched;
     } else {
         say(u"captureKeyHintsSwitch: not found"_s);
+        ok = false;
+    }
+    // 框选时只检测窗口 (#360): off by default, on and off again through the switch.
+    if (QObject* windows = window->findChild<QObject*>(u"captureWindowsOnlySwitch"_s)) {
+        bool switched = !editor.captureWindowsOnly() && !windows->property("checked").toBool();
+        for (const bool enabled : {true, false}) {
+            QMetaObject::invokeMethod(windows, "toggled", Q_ARG(bool, enabled));
+            settle(window);
+            switched = switched && editor.captureWindowsOnly() == enabled
+                && CaptureOptions::load(temporary.filePath(u"capture.ini"_s)).windowsOnly == enabled
+                && windows->property("checked").toBool() == enabled;
+        }
+        say(u"captureWindowsOnlySwitch: %1"_s.arg(switched ? u"ok"_s : u"WRONG"_s));
+        ok = ok && switched;
+    } else {
+        say(u"captureWindowsOnlySwitch: not found"_s);
         ok = false;
     }
     // 识别后显示结果卡片: on by default, off and on again through the switch.
@@ -1482,7 +1501,7 @@ int runKeyHints(const QStringList& args)
     check(session.keyHintsShown(), u"shown by themselves after %1 ms with no button pressed"_s.arg(startMs));
     move(QPointF(640, 330));
     grab(u"choosing");
-    check(rows() == u"wheel,wasd,size,recall,history,ocr,quit", u"choosing rows: "_s + rows());
+    check(rows() == u"wheel,tab,wasd,size,recall,history,ocr,quit", u"choosing rows: "_s + rows());
     check(opacity() == 1 && hints->property("corner").toInt() == 0, u"shown in the bottom-left corner"_s);
     const QRectF cardRect = card->mapRectToScene(QRectF(0, 0, card->width(), card->height()));
     say(u"card %1,%2 %3x%4 logical"_s.arg(cardRect.x()).arg(cardRect.y()).arg(cardRect.width()).arg(cardRect.height()));
@@ -1618,6 +1637,244 @@ int runKeyHints(const QStringList& args)
     return finish(window, ok);
 }
 
+// --pick-windows: 只检测窗口 (GitHub #360) in the real overlay over a made-up
+// desktop (a window with a bar of buttons and a list, a taskbar with icons),
+// through the overlay's own key and mouse routing: Tab and Shift+Tab switch
+// the outline between the control under the still pointer and its whole
+// window, and say which (the notice, the size label's mark, the hints' row);
+// held, Tab switches once; the taskbar is a window too; with a selection Tab
+// is the focus chain's, to the toolbar, and after Esc the switch's again;
+// 识别屏幕文字 picks the same way; pick-*.png.
+int runPickWindows(const QStringList& args)
+{
+    using namespace capture;
+    const QDir out(valueAfter(args, kCaptureToolsFlag));
+    QDir().mkpath(out.path());
+    QTranslator translator;
+    if (args.contains(u"--english"_s) && translator.load(u":/i18n/capture_en.qm"_s))
+        QCoreApplication::installTranslator(&translator);
+    const qreal dpr = QGuiApplication::primaryScreen()->devicePixelRatio();
+    const QSize logical(1280, 800);
+    const QSize pixels(qRound(logical.width() * dpr), qRound(logical.height() * dpr));
+    const auto phys = [dpr](const QRectF& r) {
+        return QRect(QPoint(qRound(r.left() * dpr), qRound(r.top() * dpr)),
+                     QPoint(qRound(r.right() * dpr) - 1, qRound(r.bottom() * dpr) - 1));
+    };
+    // Logical px: the window, its bar of four buttons, its list; the taskbar and its icons.
+    const QRectF app(300, 110, 680, 440);
+    const QRectF strip(312, 154, 656, 40);
+    QList<QRectF> buttons;
+    for (int i = 0; i < 4; ++i)
+        buttons.append(QRectF(318 + i * 92, 159, 84, 30));
+    const QRectF list(312, 206, 656, 332);
+    const QRectF taskbar(0, logical.height() - 48, logical.width(), 48);
+    QList<QRectF> icons;
+    for (int i = 0; i < 6; ++i)
+        icons.append(QRectF(462 + i * 56, logical.height() - 44, 40, 40));
+    CaptureScreen screen(0);
+    screen.setGeometry(QRect(QPoint(), pixels), dpr, logical);
+    QImage image(pixels, QImage::Format_RGB32);
+    {
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.scale(dpr, dpr);
+        QLinearGradient wallpaper(0, 0, logical.width(), logical.height());
+        wallpaper.setColorAt(0, QColor(58, 96, 150));
+        wallpaper.setColorAt(1, QColor(150, 186, 214));
+        painter.fillRect(QRect(QPoint(), logical), wallpaper);
+        painter.fillRect(app, QColor(249, 249, 249));
+        painter.fillRect(QRectF(app.topLeft(), QSizeF(app.width(), 36)), QColor(238, 238, 238));
+        QFont font(QGuiApplication::font().family());
+        font.setPixelSize(14);
+        painter.setFont(font);
+        painter.setPen(QColor(30, 30, 30));
+        painter.drawText(QPointF(app.x() + 14, app.y() + 23), u"示例 - 文件管理"_s);
+        painter.fillRect(strip, QColor(242, 242, 242));
+        const QStringList names {u"新建"_s, u"复制"_s, u"粘贴"_s, u"删除"_s};
+        for (int i = 0; i < buttons.size(); ++i) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(224, 224, 224));
+            painter.drawRoundedRect(buttons[i], 4, 4);
+            painter.setPen(QColor(30, 30, 30));
+            painter.drawText(buttons[i], Qt::AlignCenter, names[i]);
+        }
+        font.setPixelSize(15);
+        painter.setFont(font);
+        for (int row = 0; row < 8; ++row)
+            painter.drawText(QPointF(list.x() + 16, list.y() + 30 + row * 38),
+                             u"第 %1 项：Tab 只框整个窗口，再按一次框里面的按钮和列表。"_s.arg(row + 1));
+        painter.fillRect(taskbar, QColor(32, 32, 32));
+        painter.setPen(Qt::NoPen);
+        for (int i = 0; i < icons.size(); ++i) {
+            painter.setBrush(QColor(90 + i * 20, 140, 210));
+            painter.drawRoundedRect(icons[i].adjusted(8, 8, -8, -8), 4, 4);
+        }
+    }
+    screen.setImage(image);
+    CaptureSession session;
+    session.setOcrAvailable(true);
+    std::vector<std::vector<QRect>> children(2);
+    children[0].push_back(phys(strip));
+    for (const QRectF& button : buttons)
+        children[0].push_back(phys(button));
+    children[0].push_back(phys(list));
+    for (const QRectF& icon : icons)
+        children[1].push_back(phys(icon));
+    CaptureSession::Windows windows;
+    windows.tops = {phys(app), phys(taskbar)};
+    windows.children = [children](std::size_t i) { return i < children.size() ? children[i] : std::vector<QRect> {}; };
+    session.begin({&screen}, windows);
+    QList<bool> told;
+    QObject::connect(&session, &CaptureSession::windowsOnlyChanged, &session, [&](bool on) { told.append(on); });
+
+    QQmlApplicationEngine engine;
+    QQmlComponent component(&engine, u"WinShun"_s, u"CaptureOverlay"_s);
+    auto* window = qobject_cast<QQuickWindow*>(component.createWithInitialProperties({
+        {u"session"_s, QVariant::fromValue(&session)}, {u"screenModel"_s, QVariant::fromValue(&screen)}}));
+    if (!window) { say(component.errorString()); return 3; }
+    window->resize(logical);
+    showOffScreen(window);
+    settle(window);
+    const std::function<QQuickItem*(QQuickItem*, const QString&)> find = [&](QQuickItem* from, const QString& name) -> QQuickItem* {
+        if (from->objectName() == name)
+            return from;
+        for (QQuickItem* child : from->childItems()) {
+            if (QQuickItem* found = find(child, name))
+                return found;
+        }
+        return nullptr;
+    };
+    // Off the screen it is never activated: the focus its activation gives it
+    // (the keys item, as in a capture), for the keys sent below.
+    QFocusEvent focusIn(QEvent::FocusIn, Qt::ActiveWindowFocusReason);
+    QCoreApplication::sendEvent(window, &focusIn);
+    QQuickItem* const keyItem = window->activeFocusItem();
+    QQuickItem* chip = find(window->contentItem(), u"captureSizeLabel"_s);
+    QQuickItem* mark = find(window->contentItem(), u"captureSizeWindowsOnly"_s);
+    QQuickItem* card = find(window->contentItem(), u"captureKeyHintsCard"_s);
+    QQuickItem* toolbar = find(window->contentItem(), u"captureToolbar"_s);
+    if (!keyItem || !chip || !mark || !card || !toolbar) {
+        say(u"FAIL: the keys' item, the size label, its mark, the key hints or the toolbar not found"_s);
+        return finish(window, false);
+    }
+    bool ok = true;
+    const auto check = [&](bool passed, const QString& what) {
+        say(u"%1: %2"_s.arg(passed ? u"PASS"_s : u"FAIL"_s, what));
+        ok = passed && ok;
+    };
+    const auto send = [&](QEvent::Type type, QPointF at, Qt::MouseButton button, Qt::MouseButtons held) {
+        QMouseEvent event(type, at, window->mapToGlobal(at.toPoint()), button, held, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &event);
+        QCoreApplication::processEvents();
+    };
+    const auto move = [&](QPointF at) { send(QEvent::MouseMove, at, Qt::NoButton, Qt::NoButton); };
+    const auto key = [&](int code, Qt::KeyboardModifiers modifiers = Qt::NoModifier, bool repeat = false) {
+        QKeyEvent press(QEvent::KeyPress, code, modifiers, QString(), repeat);
+        QCoreApplication::sendEvent(window, &press);
+        QKeyEvent release(QEvent::KeyRelease, code, modifiers, QString(), repeat);
+        QCoreApplication::sendEvent(window, &release);
+        QCoreApplication::processEvents();
+    };
+    const auto grab = [&](QStringView name) {
+        settle(window);
+        ok = saveGrab(window, out.filePath(u"pick-"_s + name.toString() + u".png"_s)) && ok;
+    };
+    const auto inToolbar = [&] {
+        for (QQuickItem* item = window->activeFocusItem(); item; item = item->parentItem()) {
+            if (item == toolbar)
+                return true;
+        }
+        return false;
+    };
+    // The hints panel shows these words (a row's text).
+    const std::function<bool(QQuickItem*, const QString&)> shows = [&](QQuickItem* item, const QString& words) {
+        if (item->isVisible() && item->property("text").toString() == words)
+            return true;
+        for (QQuickItem* child : item->childItems()) {
+            if (shows(child, words))
+                return true;
+        }
+        return false;
+    };
+    const QString on = QCoreApplication::translate("CaptureKeyHints", "只检测窗口：开");
+    const QString off = QCoreApplication::translate("CaptureKeyHints", "只检测窗口：关");
+    const QPointF onButton = buttons[1].center();
+
+    session.begin({&screen}, windows); // afresh, now that the overlay is up
+    move(onButton);
+    check(!session.windowsOnly() && screen.hover() == phys(buttons[1]), u"interface elements: the button under the pointer"_s);
+    key(Qt::Key_F1);
+    settle(window);
+    const qreal chipHeight = chip->height();
+    check(chip->isVisible() && !mark->isVisible(), u"the size label, no window mark"_s);
+    check(session.keyHints().join(u',').startsWith(u"wheel,tab,"_s) && shows(card, off), u"the hints say: Tab "_s + off);
+    grab(u"elements");
+
+    key(Qt::Key_Tab);
+    check(session.windowsOnly() && told == QList<bool> {true}, u"Tab: windows only, told once"_s);
+    check(screen.hover() == phys(app), u"the whole window outlined at once, the pointer still"_s);
+    check(!screen.notice().isEmpty(), u"said at the top: "_s + screen.notice());
+    settle(window);
+    check(mark->isVisible() && chip->height() == chipHeight,
+          u"the size label marks it, as high as before (%1, %2)"_s.arg(chip->height()).arg(chipHeight));
+    check(shows(card, on), u"the hints say: "_s + on);
+    grab(u"windows");
+    move(list.center());
+    check(screen.hover() == phys(app), u"over the list in it: still the window"_s);
+    key(Qt::Key_Tab, Qt::NoModifier, true);
+    check(session.windowsOnly() && told.size() == 1, u"Tab held down: no more switching"_s);
+    key(Qt::Key_Backtab, Qt::ShiftModifier);
+    check(!session.windowsOnly() && told == (QList<bool> {true, false}) && screen.hover() == phys(list),
+          u"Shift+Tab: interface elements again, the list under the pointer"_s);
+    settle(window);
+    check(!mark->isVisible() && shows(card, off), u"no mark; the hints say: "_s + off);
+
+    // The taskbar is a window too.
+    move(icons[2].center());
+    check(screen.hover() == phys(icons[2]), u"an icon in the taskbar"_s);
+    key(Qt::Key_Tab);
+    check(screen.hover() == phys(taskbar), u"windows only: the whole taskbar"_s);
+
+    // With a selection Tab is the focus chain's, to the toolbar; after Esc the switch's again.
+    const QPointF from(420, 260), to(760, 480);
+    move(from);
+    send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+    for (int i = 1; i <= 6; ++i)
+        send(QEvent::MouseMove, from + (to - from) * (i / 6.0), Qt::NoButton, Qt::LeftButton);
+    send(QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+    settle(window);
+    check(session.hasSelection() && toolbar->isVisible() && window->activeFocusItem() == keyItem && !mark->isVisible()
+              && screen.notice().isEmpty(),
+          u"a selection: the toolbar up, the keys still the overlay's, no window mark, Tab's notice gone"_s);
+    key(Qt::Key_Tab);
+    const QQuickItem* focused = window->activeFocusItem();
+    check(inToolbar() && session.windowsOnly() && told.size() == 3,
+          u"Tab with a selection: to the toolbar (%1), nothing switched"_s.arg(focused ? focused->objectName() : QString()));
+    grab(u"toolbar-focus");
+    key(Qt::Key_Escape);
+    settle(window);
+    check(!session.hasSelection() && window->activeFocusItem() == keyItem, u"Esc: the selection gone, the keys the overlay's again"_s);
+    key(Qt::Key_Tab);
+    check(!session.windowsOnly() && told.size() == 4, u"then Tab switches again"_s);
+
+    // 识别屏幕文字 picks the same way; no size label there, the hints say it.
+    key(Qt::Key_Escape); // the capture ends
+    session.setOcrOnly(true);
+    session.begin({&screen}, windows);
+    move(onButton);
+    check(screen.hover() == phys(buttons[1]), u"识别屏幕文字: the button"_s);
+    key(Qt::Key_Tab);
+    check(session.windowsOnly() && screen.hover() == phys(app) && !screen.notice().isEmpty(), u"识别屏幕文字: Tab, the whole window"_s);
+    key(Qt::Key_F1);
+    settle(window);
+    check(!chip->isVisible() && session.keyHints().join(u',') == u"wheel,tab,wasd,quit" && shows(card, on),
+          u"识别屏幕文字: no size label; the hints say: "_s + on);
+    grab(u"ocr");
+    session.setOcrOnly(false);
+    say(u"pick windows checks: %1"_s.arg(ok ? u"passed"_s : u"failed"_s));
+    return finish(window, ok);
+}
+
 // --preview-capture-tools <dir> --edit-window: the editing window (EditWindow,
 // 编辑 on a pin or a picture) over a plain picture, off the screen, in the
 // 界面风格 asked for: its title bar, toolbar and canvas (edit-window.png).
@@ -1669,12 +1926,174 @@ int runEditWindow(const QStringList& args)
     return finish(window, ok);
 }
 
+// --preview-capture-tools <dir> --edit-window --pin: editing a pin where it
+// is (GitHub #343), off the screen: the pin grown a toolbar, the band above
+// the picture (edit-pin.png), below it for a pin at the top of the screen
+// (edit-pin-below.png), a pin narrower than the toolbar (edit-pin-narrow.png)
+// and one at the work area's left edge (edit-pin-edge.png). Each checks
+// where the editor puts the window: the canvas over the pin to the device
+// pixel, the window inside the work area; and the 全部按键 list in its pin
+// form (CaptureKeyList: Enter is 完成, a row for the pin's 编辑 key).
+int runEditPin(const QStringList& args)
+{
+    using namespace capture;
+    const QDir out(valueAfter(args, kCaptureToolsFlag));
+    QDir().mkpath(out.path());
+    QQmlApplicationEngine engine;
+    CaptureEditor editor;
+    WindowFrame frame(true);
+    CaptureEditor::Hooks hooks;
+    hooks.window.show = [](QQuickWindow* window) { showOffScreen(window); };
+    hooks.window.pinMode = [&frame](QQuickWindow*, bool pin) { frame.setFixedSize(pin); };
+    hooks.window.prepareMenu = [](QWindow* menu) { menu->setProperty("_q_showWithoutActivating", true); };
+    // Where the editor puts the window (physical), the window itself staying off the screen.
+    QPoint placedAt(-100000, -100000);
+    hooks.window.nativeRect = [&placedAt](QQuickWindow* window) {
+        const qreal ratio = window->devicePixelRatio();
+        return QRect(placedAt, QSize(qRound(window->width() * ratio), qRound(window->height() * ratio)));
+    };
+    hooks.window.moveTo = [&placedAt](QQuickWindow*, QPoint topLeft) { placedAt = topLeft; };
+    editor.setHooks(std::move(hooks));
+    QQmlComponent component(&engine, u"WinShun"_s, u"EditWindow"_s);
+    auto* window = qobject_cast<QQuickWindow*>(component.createWithInitialProperties({
+        {u"editor"_s, QVariant::fromValue(&editor)}, {u"frame"_s, QVariant::fromValue(&frame)}}));
+    if (!window) { say(component.errorString()); return 3; }
+    frame.setWindow(window);
+    editor.attach(window);
+    const QScreen* screen = QGuiApplication::primaryScreen();
+    const qreal dpr = screen->devicePixelRatio();
+    const QRect avail = screen->availableGeometry();
+    const QRect work(qRound(avail.x() * dpr), qRound(avail.y() * dpr), qRound(avail.width() * dpr), qRound(avail.height() * dpr));
+    const auto picture = [](QSize size) {
+        QImage image(size, QImage::Format_RGB32);
+        image.fill(Qt::white);
+        QPainter painter(&image);
+        painter.setPen(QColor(120, 128, 138)); // one image pixel round it: where the pin's picture is, exactly
+        painter.drawRect(QRect(QPoint(0, 0), size - QSize(1, 1)));
+        painter.setPen(QColor(35, 40, 45));
+        QFont font = QGuiApplication::font();
+        font.setPixelSize(20);
+        painter.setFont(font);
+        painter.drawText(20, 36, u"贴图上直接编辑"_s);
+        const int half = size.width() / 2;
+        painter.fillRect(QRect(20, 56, half - 30, size.height() - 76), QColor(79, 157, 255));
+        painter.fillRect(QRect(half + 10, 56, half - 30, size.height() - 76), QColor(63, 191, 127));
+        return image;
+    };
+    int rect = -1;
+    for (qsizetype i = 0; i < annot::tools().size(); ++i) {
+        if (annot::tools()[i].kind == annot::Kind::Rect)
+            rect = static_cast<int>(i);
+    }
+    // The toolbar (AnnotateToolbar): the item with the key list's rows.
+    const std::function<QQuickItem*(QQuickItem*)> toolbarIn = [&](QQuickItem* item) -> QQuickItem* {
+        if (item->metaObject()->indexOfProperty("keyRows") >= 0)
+            return item;
+        for (QQuickItem* child : item->childItems()) {
+            if (QQuickItem* found = toolbarIn(child))
+                return found;
+        }
+        return nullptr;
+    };
+    bool ok = true;
+    const auto shot = [&](const QString& name, const QRect& where, bool below) {
+        CaptureEditor::PinTarget target;
+        target.image = picture(where.size());
+        target.picture = where;
+        target.alive = [] { return true; };
+        target.setShown = [](bool) {};
+        target.replace = [](const QImage&, const QByteArray&) {};
+        if (!editor.openPin(std::move(target))) {
+            say(u"edit pin %1: did not open"_s.arg(name));
+            ok = false;
+            return;
+        }
+        editor.model()->setTool(rect); // the panel's row with a tool's styles
+        if (!window->isVisible())
+            showOffScreen(window);
+        settle(window);
+        pump(400);
+        settle(window, 2);
+        const QRectF view = editor.viewRect();
+        const qreal ratio = window->devicePixelRatio();
+        const bool exact = qAbs(view.width() * ratio - where.width()) < 0.5 && qAbs(view.height() * ratio - where.height()) < 0.5;
+        // Over the pin to the device pixel, inside the work area (its insets may lie past it).
+        const int inset = editview::pinInset(ratio);
+        const QRect native(placedAt, QSize(qRound(window->width() * ratio), qRound(window->height() * ratio)));
+        const bool onPin = placedAt + QPoint(qRound(view.x() * ratio), qRound(view.y() * ratio)) == where.topLeft();
+        const bool inWork = work.adjusted(-inset, -inset, inset, inset).contains(native);
+        const bool placed = editor.pinMode() && editor.toolbarBelow() == below && exact && onPin && inWork;
+        say(u"edit pin %1: window %2x%3 logical at %10,%11 (work %12,%13 %14x%15), picture %4,%5 %6x%7, band %8%9"_s.arg(name)
+                .arg(window->width()).arg(window->height()).arg(view.x()).arg(view.y()).arg(view.width()).arg(view.height())
+                .arg(editor.toolbarBelow() ? u"below"_s : u"above"_s, placed ? QString() : u" (not as expected)"_s)
+                .arg(native.x()).arg(native.y()).arg(work.x()).arg(work.y()).arg(work.width()).arg(work.height()));
+        const QQuickItem* toolbar = toolbarIn(window->contentItem());
+        QVariant rowsValue = toolbar ? toolbar->property("keyRows") : QVariant();
+        if (rowsValue.metaType() == QMetaType::fromType<QJSValue>())
+            rowsValue = rowsValue.value<QJSValue>().toVariant();
+        const QStringList keyRows = rowsValue.toStringList();
+        const bool pinKeys = keyRows.contains(u"完成：贴图换成改好的图"_s) && keyRows.contains(editor.pinEditKeyText())
+            && keyRows.contains(editor.pinEditFinishes() ? u"贴图的编辑键：再按一次也是完成"_s
+                                                         : u"贴图的编辑键：在这里和截图时一样选工具，完成按 Enter"_s);
+        say(u"edit pin %1: key list %2 (%3 strings, the pin's 编辑 key %4)"_s.arg(name, pinKeys ? u"in its pin form"_s : u"NOT in its pin form"_s)
+                .arg(keyRows.size()).arg(editor.pinEditKeyText()));
+        ok = saveGrab(window, out.filePath(name + u".png"_s)) && placed && pinKeys && ok;
+        editor.close();
+    };
+    shot(u"edit-pin"_s, QRect(work.left() + work.width() / 4, work.top() + work.height() / 3, 1200, 560), false);
+    shot(u"edit-pin-below"_s, QRect(work.left() + work.width() / 4, work.top() + 8, 900, 420), true);
+    shot(u"edit-pin-narrow"_s, QRect(work.left() + work.width() / 4, work.top() + work.height() / 3, 300, 200), false);
+    shot(u"edit-pin-edge"_s, QRect(work.left() + 8, work.top() + work.height() / 3, 300, 200), false);
+    say(u"edit pin: %1"_s.arg(ok ? u"passed"_s : u"failed"_s));
+    return finish(window, ok);
+}
+
+// --preview-capture-tools <dir> --pin-keys: a pin's key card (GitHub #343,
+// PinKeyCard) in the 界面风格 asked for, with the default keys and text
+// recognition there, over a plain desktop (pin-keys.png): the very pixels
+// its layered window shows, shadow and all.
+int runPinKeys(const QStringList& args)
+{
+    using namespace capture;
+    const QDir out(valueAfter(args, kCaptureToolsFlag));
+    QDir().mkpath(out.path());
+    QTranslator translator;
+    if (args.contains(u"--english"_s) && translator.load(u":/i18n/capture_en.qm"_s))
+        QCoreApplication::installTranslator(&translator);
+    QQmlEngine engine;
+    const QObject* theme = engine.singletonInstance<QObject*>(u"WinShun"_s, u"Theme"_s);
+    if (!theme) { say(u"pin keys: no Theme"_s); return 3; }
+    const bool dark = args.contains(u"--dark"_s);
+    const PinKeyCard::Look look = pinKeyCardLook(theme, dark, true);
+    const double dpr = valueAfter(args, u"--scale", u"1"_s).toDouble();
+    const std::vector<PinKeyRow> rows = pinKeyRows(CaptureKeys(), true, false, false);
+    const QImage card = PinKeyCard::picture(rows, dpr, look);
+    const int margin = qRound(16 * dpr) - PinKeyCard::shadowMargin(dpr);
+    QImage desktop(card.width() + 2 * margin + qRound(80 * dpr), card.height() + 2 * margin + qRound(40 * dpr), QImage::Format_RGB32);
+    desktop.fill(dark ? QColor(0x1F, 0x23, 0x2A) : QColor(0xDD, 0xE5, 0xEE));
+    {
+        QPainter painter(&desktop);
+        painter.drawImage(margin, desktop.height() - margin - card.height(), card);
+    }
+    const QSize size = PinKeyCard::cardSize(rows, dpr);
+    say(u"pin keys: %1 rows, card %2x%3 device px at %4"_s.arg(rows.size()).arg(size.width()).arg(size.height()).arg(dpr));
+    const bool ok = desktop.save(out.filePath(u"pin-keys.png"_s));
+    say(u"pin keys: %1"_s.arg(ok ? u"passed"_s : u"failed"_s));
+    return ok ? 0 : 1;
+}
+
 int runCaptureTools(const QStringList& args)
 {
+    if (args.contains(u"--edit-window"_s) && args.contains(u"--pin"_s))
+        return runEditPin(args);
+    if (args.contains(u"--pin-keys"_s))
+        return runPinKeys(args);
     if (args.contains(u"--edit-window"_s))
         return runEditWindow(args);
     if (args.contains(u"--key-hints"_s))
         return runKeyHints(args);
+    if (args.contains(u"--pick-windows"_s))
+        return runPickWindows(args);
     if (args.contains(u"--save-options"_s))
         return runCaptureSave(args) + g_warnings;
     if (args.contains(u"--selection-keys"_s))

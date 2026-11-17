@@ -5,9 +5,11 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QLocale>
 #include <QRegularExpression>
 
 #include <algorithm>
+#include <cmath>
 
 using namespace Qt::StringLiterals;
 
@@ -18,6 +20,58 @@ QString Text::pick(const QString& locale) const
     if (locale.startsWith(u"en"_s))
         return en.isEmpty() ? zh : en;
     return zh.isEmpty() ? en : zh;
+}
+
+namespace {
+
+// The digits after the point that write `x` (0.25: 2, 50: 0), up to 9.
+int decimalsOf(double x)
+{
+    x = std::abs(x);
+    double scale = 1;
+    for (int digits = 0; digits < 9; ++digits, scale *= 10) {
+        const double scaled = x * scale;
+        if (std::abs(scaled - std::round(scaled)) <= 1e-9 * std::max(1.0, scaled))
+            return digits;
+    }
+    return 9;
+}
+
+} // namespace
+
+int Setting::decimals() const
+{
+    int digits = 0;
+    for (const std::optional<double>& v : {step, min, max}) {
+        if (v)
+            digits = std::max(digits, decimalsOf(*v));
+    }
+    return digits;
+}
+
+double Setting::fit(double value) const
+{
+    double v = value;
+    if (min)
+        v = std::max(v, *min);
+    if (max)
+        v = std::min(v, *max);
+    if (step && *step > 0) {
+        const double base = min.value_or(0.0);
+        double snapped = base + std::round((v - base) / *step) * *step;
+        if (max && (snapped > *max || *max - v < std::abs(v - snapped)))
+            snapped = *max; // past it, or nearer: max is a value too
+        if (min)
+            snapped = std::max(snapped, *min);
+        const double scale = std::pow(10.0, decimals());
+        v = std::round(snapped * scale) / scale; // 0.3, not 0.30000000000000004
+    }
+    return v == 0 ? 0.0 : v; // never "-0"
+}
+
+QString Setting::numberText(double value) const
+{
+    return QString::number(fit(value), 'f', QLocale::FloatingPointShortest);
 }
 
 namespace {
@@ -312,6 +366,8 @@ Trigger readTrigger(const QJsonValue& value, const QString& where, Check& check)
             e = e.toLower().remove(u'.');
         t.maxFiles = intField(files, u"max"_s, 20, 1, 1000, where + u".files"_s, check);
         t.title = readText(files.value(u"title"_s), where + u".files.title"_s, check).value_or(Text {});
+        if (files.contains(u"if"_s))
+            t.setting = stringField(files, u"if"_s, where + u".files"_s, check);
     } else if (o.contains(u"clipboard"_s)) {
         t.kind = Trigger::Kind::Clipboard;
         const QJsonObject clip = o.value(u"clipboard"_s).toObject();
@@ -509,6 +565,41 @@ Setting readSetting(const QJsonValue& value, int index, Check& check)
             check.fail(where + u".options 要是数组"_s);
         s.options = o.value(u"options"_s).toArray();
     }
+    if (s.type == u"number") { // its range, step and unit (GitHub #359); on other types they mean nothing
+        const auto number = [&](const QString& name) -> std::optional<double> {
+            const QJsonValue v = o.value(name);
+            if (v.isUndefined() || v.isNull())
+                return std::nullopt;
+            if (!v.isDouble()) {
+                check.fail(where + u'.' + name + u" 要是数字"_s);
+                return std::nullopt;
+            }
+            return v.toDouble();
+        };
+        s.min = number(u"min"_s);
+        s.max = number(u"max"_s);
+        s.step = number(u"step"_s);
+        s.unit = textOr(o.value(u"unit"_s), where + u".unit"_s, check);
+        if (s.min && s.max && !(*s.min < *s.max))
+            check.fail(where + u".min 要小于 max"_s);
+        if (s.step && !(*s.step > 0))
+            check.fail(where + u".step 要大于 0"_s);
+        if (s.slider() && !s.step)
+            s.step = 1.0;
+        if (s.slider() && *s.step > *s.max - *s.min)
+            check.fail(where + u".step 不能大于 max − min（不写 step 时是 1）"_s);
+        // Its default is kept as any value is: in the range, on a step. A
+        // slider shows a value, so it has one: min unless given.
+        if (s.bounded()) {
+            if (s.defaultValue.isUndefined() || s.defaultValue.isNull()) {
+                if (s.slider())
+                    s.defaultValue = *s.min;
+            } else if (!s.defaultValue.isDouble())
+                check.fail(where + u".default 要是数字"_s);
+            else
+                s.defaultValue = s.fit(s.defaultValue.toDouble());
+        }
+    }
     return s;
 }
 
@@ -663,6 +754,20 @@ std::optional<Manifest> Manifest::parse(const QByteArray& json, QString* error)
         int i = 0;
         for (const QJsonValue& s : settings.toArray())
             m.settings.push_back(readSetting(s, i++, check));
+    }
+    // A files trigger's `if` names one of the settings, and a bool one: the
+    // menu entry comes and goes with the switch on the card.
+    for (int c = 0; c < m.commands.size(); ++c) {
+        for (int t = 0; t < m.commands[c].triggers.size(); ++t) {
+            const Trigger& trigger = m.commands[c].triggers[t];
+            if (trigger.kind != Trigger::Kind::Files || trigger.setting.isEmpty())
+                continue;
+            const bool declared = std::any_of(m.settings.cbegin(), m.settings.cend(),
+                [&](const Setting& s) { return s.key == trigger.setting && s.type == u"bool"_s; });
+            if (!declared)
+                check.fail(u"commands[%1].triggers[%2].files.if 要指向一个 bool 设置项，没有 %3"_s
+                    .arg(QString::number(c), QString::number(t), trigger.setting));
+        }
     }
     if (o.value(u"ai"_s).isObject())
         m.aiExpose = o.value(u"ai"_s).toObject().value(u"expose"_s).toBool();

@@ -1,5 +1,13 @@
 # 踩坑记录
 
+## Tab 进文件夹：刚打完字就按 Tab，屏幕上还是上一次的结果（2026-11-17，#361）
+
+- **现象**：路径后面打半个名字（`…\合同`）马上按 `Tab`，新结果还没出来，列表上还是上一次（`…\未`）的行。按“第一行的文件夹补全打着的路径”去判断，会进到 `未索引`（它也在那个文件夹里），或者没有可补全的就切了范围。
+- **原因**：结果是在后台线程列出的，打字后到新行出来有几十毫秒；这期间 `m_replacePending && searching()`，屏幕上的行属于上一次查询。按 Enter 早就有 `holdUntilShown` 等新行，Tab 原来没有。
+- **做法**：`Launcher::rowsComing()` 为真时，按路径补全不算数（`stepsInto`）；`autocomplete` 记下 `m_tabHeld`，新行出来后（`showRows` 换行的分支，排队调用，查询没变才执行）再按一次 Tab，没有可进的文件夹就照常切范围。再打字、换范围、重新打开搜索框都会清掉它。探针 `--search-navigation` 的 folder steps 里有“Tab right after typing…”一项，会写明这次是否真赶在新行之前。
+- **区分“列表选的”和“用户选的”**：ListView 的 `currentIndex` 分不出这一行是新结果自动选中的，还是用户按方向键、单击选的；#81 要求自动选中的收藏文件夹不抢 Tab。所以由 Main.qml 在按键、单击、右键菜单时调 `Launcher::chooseRow` 记下路径，`setQuery`、`setScope`、换了一批新行、重新打开时清掉。
+- **探针**：搜索框和面板各有一个底栏，`visualNamed(…, "footerTabHint")` 先找到的是隐藏着的面板那个，要用 `shownNamed`。探针失败时 `throw` 会直接结束进程，报告 JSON 要先 `close()` 再抛，否则是空文件。
+
 ## 目录链接：测试清理顺着联接删，MFT 经服务没有重解析标签（2026-11-16，#350）
 
 - **`QTemporaryDir` 会顺着联接删进目标**：它析构时 `QDir::removeRecursively()` 把联接当普通文件夹往里走。一次测试在临时目录里建了指向 C 盘卷根的联接（测 `\??\Volume{…}` 的解析），又建了指向 `\\nas\…` 的符号链接，后者让清理时的 stat 卡到 300 秒被 QtTest 杀掉，碰巧没走到卷根；联接本身的目标文件夹已经被删了。现在测试建的链接都登记在 `MadeLinks`（`tests/TestJunction.h`），声明在临时目录之后，先用 `RemoveDirectoryW` 单删链接再让 `QTemporaryDir` 清理。手工清理残留也一样：先 `[IO.Directory]::Delete(链接, $false)` 删掉每个 `ReparsePoint`，再递归删目录。
@@ -2856,7 +2864,7 @@
 
 - **现象**：`--profile F:\x` 启动前把 `F:\x\WinShun.ini` 写好排除盘，结果它照样遍历所有盘。
 - **原因**：`--profile` 把 APPDATA 和 LOCALAPPDATA 都指到那个文件夹，设置文件在 `F:\x\WinShun\WinShun.ini`，索引在 `F:\x\index.bin`。
-- **另外**：`ExplorerMenu` 默认开，测试副本一启动就把右键“在 Win顺 里搜索”改指向它自己；测试时在 `[Launcher]` 写 `ExplorerMenu=false`，测完让 dist 最后一个启动。管理员副本的单实例互斥量 `Local\WinShun.Instance` 普通进程能打开（得到 `ERROR_ALREADY_EXISTS`），所以两者不会同时跑；但第二个副本发给管理员副本的 `WM_COPYDATA` 被挡，命令（显示、--query）会丢。
+- **另外**：`ExplorerMenu` 默认开，测试副本一启动就把右键“在 Win顺 里搜索”改指向它自己；测试时在 `[Launcher]` 写 `ExplorerMenu=false`（`winshun://` 链接的注册同理，写 `UriProtocol=false`），测完让 dist 最后一个启动。管理员副本的单实例互斥量 `Local\WinShun.Instance` 普通进程能打开（得到 `ERROR_ALREADY_EXISTS`），所以两者不会同时跑；但第二个副本发给管理员副本的 `WM_COPYDATA` 被挡，命令（显示、--query）会丢。
 
 ### 索引服务：`DisconnectNamedPipe` 会丢掉客户端还没读走的数据
 
@@ -3039,6 +3047,24 @@
 - `[ushort]` 不是 5.1 的类型加速器（pwsh 7 才有），`Add-Type` 之后 `[ushort[]]@(...)` 报 “Unable to find type”，提权窗口里又看不见：先不提权跑一遍脚本看编译错误，数组写 `[uint16[]]`。
 - 在“别的窗口”上选一个已经有资源管理器窗口开着的文件夹来验证“用文件管理器打开”，数不到新窗口：外壳打开文件夹时，已有窗口显示着它就只把那个窗口提到前台（前台确实换成了它）。要验证就选没开着的（最近的文件夹），再数新开的 `CabinetWClass` 窗口。
 - 记日志的函数里用 `Write-Output` 写一行，这一行就成了调用它的函数的返回值的一部分：`Recorder` 返回的成了 `Object[]`，`MenuWindows` 只剩一项时又被拆成单个对象，`.Count` 是空。日志用 `Write-Host`，返回数组写 `return ,$m`，调用处套 `@()`。
+
+### 一列一个窗口（#348）：测试里的光标、`Item` 自带的 `left`、屏幕外窗口的 0×0
+
+- **现象**：改成多列之前 `tst_foldermenu` 的 `folderPages` 就过不了：指针停在箭头上 700 ms，下一页始终不出来。改的过程中又碰到两件：子列组件声明 `signal left(...)` 后整个菜单加载失败（`Final member left is overridden`、`Cannot assign to non-existent property "onLeft"`）；预览探针截出来的菜单是一片底色。
+- **原因**：Qt 6 的 `QTest::mouseMove(QWindow*)` 只发 Qt 事件，不动系统光标，而 #348 的“光标没动就不算”比的是 `QCursor::pos()`，测试里它一直不变。`Item` 本来就有锚线属性 `left / right / top / bottom` 等，同名信号盖不掉它。屏幕外的窗口收不到尺寸变化，`contentItem` 一直是 0×0，`anchors.fill: parent` 的子项跟着是 0×0。
+- **做法**：`FolderMenu::setCursorSource` 让测试自己给光标位置；从一个窗口移到另一个窗口时给离开的窗口发 `QEvent::Leave`，模拟 Windows 的鼠标离开（`tst_foldermenu` 的 `Pointer`）。信号改名 `unpointed`。列的尺寸直接绑窗口的 `width / height`，不用 `anchors.fill`。
+
+### 多列的接缝、路径提示、滚动（#348 实测）
+
+- **现象**：150 % 下第一、二列之间是一条 2 px 的线，第二、三列之间却是 3 px 的渐变线；完整路径提示被它所在的那一列盖住；滚动一列时，后面的列停在原处。修滚动的过程中，又发现来源行滚出视野、后面的列收起时，列表会自己跳回那一行。
+- **原因**：`QWindow` 的位置只能是整数的 Qt 像素，150 % 下换算成设备像素时隔一个就有一个到不了：每列宽 360（540 设备像素），叠 1 个 Qt 像素是 1.5 个设备像素，能不能和上一列的 2 px 边框重合，要看奇偶。`ShowWindow` 重新显示窗口时不改它的前后次序，所以提示框一直留在第一次显示时的位置，之后显示的列都在它前面。`closeAfter` 先截短 `pages` 再改 `highlighted`，那一列的高亮行中途变过一次，`sync()` 就把列表滚回高亮行。
+- **做法**：列的位置由 `FolderMenu::placeColumn` 直接按设备像素放（`SetWindowPos`）：左边界 = 上一列的右边界 − 边框宽，边框宽取 DWM 的 `DWMWA_VISIBLE_FRAME_BORDER_THICKNESS`（144 dpi 时是 2，Windows 10 没有就按 `Theme.edge`）；纵向位置也换成设备像素对齐来源行，并限制在工作区内。提示框每次显示、每显示一列都 `raise()`。列表一动，后面的列就跟着来源行走，来源行滚出视野时收起；滚动之后调 `rest()`，滚到静止光标下的行也不展开。`closeAfter` 先设 `highlighted`。测试里自己构造 `QWheelEvent` 时要给时间戳，并且接在 `QTest::lastMouseTimestamp` 之后，否则 Flickable 只认第一格。
+
+### 贴图原地编辑（#343）：lupdate 认错上下文、软件渲染器的分隔线
+
+- **现象**：贴图快捷键卡片的一条文字在 `capture_en.ts` 里跑到了别的上下文，翻译不生效；数编辑工具条分隔线的像素时，150 % 下量出 3 个设备像素高。
+- **原因**：`QCoreApplication::translate(...)` 和 `X::tr(...)` 写在同一个表达式里时，lupdate 会把后一个字符串归到前一个的上下文。软件渲染器把 `Theme.separator` 在 150 % 下画成 3 行，普通编辑窗口也一样；d3d11 下正好 2 行。
+- **做法**：两种调用拆成两条语句。数像素的探针加 `--renderer d3d11`。
 
 ## 内容索引直读（bulk，第一次建立不逐个打开文件）
 

@@ -910,6 +910,7 @@ void Settings::load()
     fileManagerOpenCommand = readOrDefault(s, u"Launcher/FileManagerOpenCommand"_s, d.fileManagerOpenCommand).trimmed();
     fileManagerRevealCommand = readOrDefault(s, u"Launcher/FileManagerRevealCommand"_s, d.fileManagerRevealCommand).trimmed();
     explorerMenu = readOrDefault(s, u"Launcher/ExplorerMenu"_s, d.explorerMenu);
+    uriProtocol = readOrDefault(s, u"Launcher/UriProtocol"_s, d.uriProtocol);
     explorerTyping = readOrDefault(s, u"Launcher/ExplorerTyping"_s, d.explorerTyping);
     desktopTyping = readOrDefault(s, u"Launcher/DesktopTyping"_s, d.desktopTyping);
     opusTyping = readOrDefault(s, u"Launcher/OpusTyping"_s, d.opusTyping);
@@ -1035,7 +1036,7 @@ void Settings::load()
         taskbarIcon = d.taskbarIcon;
     uiSize = readOrDefault(s, u"Appearance/UiSize"_s, d.uiSize).trimmed().toLower();
     uiFont = readOrDefault(s, u"Appearance/UiFont"_s, d.uiFont).trimmed();
-    if (uiSize != u"compact" && uiSize != u"roomy")
+    if (uiSize != u"dense" && uiSize != u"compact" && uiSize != u"roomy")
         uiSize = d.uiSize;
     maxRows = std::clamp(readOrDefault(s, u"Appearance/MaxRows"_s, d.maxRows), 4, 20);
     corners = readOrDefault(s, u"Appearance/Corners"_s, d.corners).trimmed().toLower();
@@ -1192,7 +1193,9 @@ void Settings::load()
 
     // The rest of [Capture] is the screenshot plugin's (MovedPlugins).
     captureEnabled = readOrDefault(s, u"Capture/Enabled"_s, d.captureEnabled);
-    capturePrintScreenBefore = readOrDefault(s, u"Capture/PrintScreenBefore"_s, d.capturePrintScreenBefore).trimmed();
+    // Read, never written as a default: save drops it while empty, so a
+    // default put back here wrote the file a second time after every save.
+    capturePrintScreenBefore = s.value(u"Capture/PrintScreenBefore"_s).toString().trimmed();
     captureKeyword = readOrDefault(s, u"Capture/Keyword"_s, d.captureKeyword).trimmed();
 
     pasteFileEnabled = readOrDefault(s, u"PasteFile/Enabled"_s, d.pasteFileEnabled);
@@ -1330,6 +1333,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/FileManagerOpenCommand"_s, fileManagerOpenCommand);
     s.setValue(u"Launcher/FileManagerRevealCommand"_s, fileManagerRevealCommand);
     s.setValue(u"Launcher/ExplorerMenu"_s, explorerMenu);
+    s.setValue(u"Launcher/UriProtocol"_s, uriProtocol);
     s.setValue(u"Launcher/ExplorerTyping"_s, explorerTyping);
     s.setValue(u"Launcher/DesktopTyping"_s, desktopTyping);
     s.setValue(u"Launcher/OpusTyping"_s, opusTyping);

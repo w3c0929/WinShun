@@ -41,6 +41,9 @@ struct CaptureOptions {
     bool cursor = false;
     bool hdrFile = false;
     bool controlsUia = true;
+    // 只检测窗口 (#360): the hover picks whole windows, not their controls; Tab
+    // in a capture switches it, and it is kept as it was left.
+    bool windowsOnly = false;
     int delay = 5;
     // 截图历史: the last captures' whole screens, selection and annotations,
     // for , and . in the overlay (capture::CaptureHistory); 0: none kept.
@@ -55,6 +58,8 @@ struct CaptureOptions {
     // 识别屏幕文字 (#198): a region picked and its words copied, no picture taken.
     // No default: the user records one.
     QString ocrHotkey;
+    // 截图翻译 (#356): the same picking, its words translated in place when it ends.
+    QString translateHotkey;
     QString saveFolder;
     QString recordingFolder;
     bool recordingSystemAudio = false;
@@ -107,6 +112,7 @@ class CaptureSettings : public QObject {
     Q_PROPERTY(bool captureCursor READ captureCursor WRITE setCaptureCursor NOTIFY changed FINAL)
     Q_PROPERTY(bool captureHdrFile READ captureHdrFile WRITE setCaptureHdrFile NOTIFY changed FINAL)
     Q_PROPERTY(bool captureControlsUia READ captureControlsUia WRITE setCaptureControlsUia NOTIFY changed FINAL)
+    Q_PROPERTY(bool captureWindowsOnly READ captureWindowsOnly WRITE setCaptureWindowsOnly NOTIFY changed FINAL)
     Q_PROPERTY(int captureDelay READ captureDelay WRITE setCaptureDelay NOTIFY changed FINAL)
     Q_PROPERTY(int captureHistoryCount READ captureHistoryCount WRITE setCaptureHistoryCount NOTIFY changed FINAL)
     Q_PROPERTY(QString capturePinsHotkey READ capturePinsHotkey WRITE setCapturePinsHotkey NOTIFY changed FINAL)
@@ -114,6 +120,7 @@ class CaptureSettings : public QObject {
     Q_PROPERTY(QString captureLastPinHotkey READ captureLastPinHotkey WRITE setCaptureLastPinHotkey NOTIFY changed FINAL)
     Q_PROPERTY(QString capturePresentHotkey READ capturePresentHotkey WRITE setCapturePresentHotkey NOTIFY changed FINAL)
     Q_PROPERTY(QString captureOcrHotkey READ captureOcrHotkey WRITE setCaptureOcrHotkey NOTIFY changed FINAL)
+    Q_PROPERTY(QString captureTranslateHotkey READ captureTranslateHotkey WRITE setCaptureTranslateHotkey NOTIFY changed FINAL)
     Q_PROPERTY(QString captureSaveFolder READ captureSaveFolder WRITE setCaptureSaveFolder NOTIFY changed FINAL)
     Q_PROPERTY(QString capturePinDoubleClick READ capturePinDoubleClick WRITE setCapturePinDoubleClick NOTIFY changed FINAL)
     Q_PROPERTY(QString captureHotkeyError READ captureHotkeyError NOTIFY problemsChanged FINAL)
@@ -122,6 +129,7 @@ class CaptureSettings : public QObject {
     Q_PROPERTY(QString captureLastPinHotkeyError READ captureLastPinHotkeyError NOTIFY problemsChanged FINAL)
     Q_PROPERTY(QString capturePresentHotkeyError READ capturePresentHotkeyError NOTIFY problemsChanged FINAL)
     Q_PROPERTY(QString captureOcrHotkeyError READ captureOcrHotkeyError NOTIFY problemsChanged FINAL)
+    Q_PROPERTY(QString captureTranslateHotkeyError READ captureTranslateHotkeyError NOTIFY problemsChanged FINAL)
     Q_PROPERTY(QString captureNote READ captureNote NOTIFY problemsChanged FINAL)
     // The keys of the capture and the pin window (#187), by CaptureKeys' ids:
     // {text ("Ctrl+S"; empty: none), changed (not the default), defaultText,
@@ -180,6 +188,8 @@ public:
     void setCaptureHdrFile(bool v) { change(m_options.hdrFile, v); }
     bool captureControlsUia() const { return m_options.controlsUia; }
     void setCaptureControlsUia(bool v) { change(m_options.controlsUia, v); }
+    bool captureWindowsOnly() const { return m_options.windowsOnly; }
+    void setCaptureWindowsOnly(bool v) { change(m_options.windowsOnly, v); }
     int captureDelay() const { return m_options.delay; }
     void setCaptureDelay(int v);
     int captureHistoryCount() const { return m_options.historyCount; }
@@ -194,6 +204,8 @@ public:
     void setCapturePresentHotkey(const QString& v) { change(m_options.presentHotkey, v.trimmed()); }
     QString captureOcrHotkey() const { return m_options.ocrHotkey; }
     void setCaptureOcrHotkey(const QString& v) { change(m_options.ocrHotkey, v.trimmed()); }
+    QString captureTranslateHotkey() const { return m_options.translateHotkey; }
+    void setCaptureTranslateHotkey(const QString& v) { change(m_options.translateHotkey, v.trimmed()); }
     QString captureSaveFolder() const { return m_options.saveFolder; }
     void setCaptureSaveFolder(const QString& v) { change(m_options.saveFolder, v.trimmed()); }
     QString capturePinDoubleClick() const { return m_options.pinDoubleClick; }
@@ -205,14 +217,17 @@ public:
     QString captureLastPinHotkeyError() const { return m_lastPinHotkeyError; }
     QString capturePresentHotkeyError() const { return m_presentHotkeyError; }
     QString captureOcrHotkeyError() const { return m_ocrHotkeyError; }
+    QString captureTranslateHotkeyError() const { return m_translateHotkeyError; }
     QString captureNote() const { return m_note; }
     struct Problems {
-        QString hotkey, pinsHotkey, pinsRestoreHotkey, lastPinHotkey, presentHotkey, ocrHotkey, note;
+        QString hotkey, pinsHotkey, pinsRestoreHotkey, lastPinHotkey, presentHotkey, ocrHotkey, translateHotkey, note;
     };
     // The 识别屏幕文字 hotkey is one of the plugin's other hotkeys (or PrtScn,
     // taken): why it cannot be registered too, in words; empty when not.
     // The other one keeps the key (it was there first).
     QString ocrHotkeyClash() const;
+    // The same for 截图翻译 (#356), registered after all the others, 识别屏幕文字 too.
+    QString translateHotkeyClash() const;
     void setProblems(const Problems& problems);
 
     bool recordingHotkey() const { return m_recordingHotkey; }
@@ -256,7 +271,7 @@ private:
     const QString m_file;
     CaptureOptions m_options;
     QString m_hotkeyError, m_pinsHotkeyError, m_pinsRestoreHotkeyError, m_lastPinHotkeyError, m_presentHotkeyError,
-        m_ocrHotkeyError, m_note;
+        m_ocrHotkeyError, m_translateHotkeyError, m_note;
     bool m_recordingHotkey = false;
     QObject* m_window = nullptr;
     std::function<bool(unsigned, unsigned)> m_probe;
