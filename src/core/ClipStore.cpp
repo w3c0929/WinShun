@@ -173,6 +173,22 @@ QList<ClipFormat> unpackClipFormats(const QByteArray& packed)
     return formats;
 }
 
+bool Clip::picturesOnly() const
+{
+    // The search's own 图片 (Settings' built-in kinds of file), so the two
+    // agree on what a picture is.
+    static const QSet<QString> kPictures {u"jpg"_s, u"jpeg"_s, u"jfif"_s, u"png"_s, u"gif"_s, u"bmp"_s, u"webp"_s,
+        u"heic"_s, u"heif"_s, u"avif"_s, u"tif"_s, u"tiff"_s, u"ico"_s, u"svg"_s, u"psd"_s, u"ai"_s, u"raw"_s, u"cr2"_s,
+        u"cr3"_s, u"nef"_s, u"arw"_s, u"dng"_s, u"orf"_s, u"rw2"_s};
+    if (kind != ClipKind::Files)
+        return false;
+    const QStringList paths = files();
+    return !paths.isEmpty() && std::ranges::all_of(paths, [](const QString& path) {
+        const qsizetype dot = path.lastIndexOf(u'.');
+        return dot > path.lastIndexOf(u'\\') + 1 && kPictures.contains(path.sliced(dot + 1).toLower());
+    });
+}
+
 QStringList Clip::files() const
 {
     if (kind != ClipKind::Files && kind != ClipKind::Path)
@@ -525,7 +541,7 @@ bool ClipStore::open(qint64 now)
             clip.rank = clips.value(16).toLongLong();
             clip.screenshot = clip.kind == ClipKind::Image && clips.value(17).toInt() != 0;
             clip.project = clip.kind == ClipKind::Image && clips.value(18).toInt() != 0;
-            clip.formats = clip.kind == ClipKind::Image && clips.value(19).toBool();
+            clip.formats = clip.kind != ClipKind::Files && clips.value(19).toBool();
             clip.imageFormat = static_cast<ClipImageFormat>(std::clamp(clips.value(20).toInt(), 0, 2));
             clip.animated = clip.kind == ClipKind::Image && clips.value(21).toBool();
             clip.pasted = clips.value(22).toLongLong();
@@ -739,9 +755,10 @@ qint64 ClipStore::add(const ClipCapture& capture, qint64 now)
         const bool newProject = same->kind == ClipKind::Image && !capture.project.isEmpty();
         same->project = same->project || newProject;
         const bool project = same->project;
-        // An equation's formats: the new ones; none (its picture alone, from
-        // somewhere else) keeps the old.
-        const QByteArray formats = same->kind == ClipKind::Image ? capture.formats : QByteArray();
+        // An equation's or WPS's text's formats: the new ones; none (its
+        // picture or text alone, from somewhere else) keeps the old, as HTML
+        // and RTF.
+        const QByteArray formats = same->kind != ClipKind::Files ? capture.formats : QByteArray();
         same->formats = same->formats || !formats.isEmpty();
         moveToFront(static_cast<std::size_t>(same - m_clips.begin()));
         m_writer->post([this, id, now, capture, screenshot, project, newProject, formats](QSqlDatabase& db) {
@@ -785,7 +802,7 @@ qint64 ClipStore::add(const ClipCapture& capture, qint64 now)
     clip.rtf = !capture.rtf.isEmpty();
     clip.screenshot = capture.kind == ClipKind::Image && capture.screenshot;
     clip.project = capture.kind == ClipKind::Image && !capture.project.isEmpty();
-    clip.formats = capture.kind == ClipKind::Image && !capture.formats.isEmpty();
+    clip.formats = capture.kind != ClipKind::Files && !capture.formats.isEmpty();
     m_clips.insert(m_clips.begin(), std::move(clip));
     if (capture.kind == ClipKind::Image)
         m_picturesPending.insert(id);
@@ -812,7 +829,7 @@ qint64 ClipStore::add(const ClipCapture& capture, qint64 now)
         query.addBindValue(static_cast<qint64>(capture.imageData.size()));
         query.addBindValue(capture.kind == ClipKind::Image && capture.screenshot ? 1 : 0);
         query.addBindValue(capture.kind == ClipKind::Image && !capture.project.isEmpty() ? 1 : 0);
-        query.addBindValue(blob(capture.kind == ClipKind::Image ? capture.formats : QByteArray()));
+        query.addBindValue(blob(capture.kind != ClipKind::Files ? capture.formats : QByteArray()));
         query.addBindValue(static_cast<int>(capture.imageFormat));
         query.addBindValue(capture.animated ? 1 : 0);
         bool ok = run(query, "Saving an entry");
@@ -1177,11 +1194,14 @@ ClipStore::TextChange ClipStore::setText(qint64 id, const QString& edited)
     it->text = words.left(kTextInMemory);
     it->textLength = words.size();
     it->hash = hash;
+    // Its formatted versions (and WPS's own copy) would paste the old words.
     it->html = false;
     it->rtf = false;
+    it->formats = false;
     m_writer->post([id, kind, words, hash](QSqlDatabase& db) {
         QSqlQuery query(db);
-        query.prepare(u"UPDATE clips SET kind = ?, text = ?, length = ?, hash = ?, html = NULL, rtf = NULL WHERE id = ?"_s);
+        query.prepare(u"UPDATE clips SET kind = ?, text = ?, length = ?, hash = ?, html = NULL, rtf = NULL, "
+                      u"formats = NULL WHERE id = ?"_s);
         query.addBindValue(static_cast<int>(kind));
         query.addBindValue(text(words));
         query.addBindValue(words.size());
@@ -1609,7 +1629,7 @@ std::vector<int> ClipStore::find(const ClipFilter& filter) const
             shown = c.kind == ClipKind::Link;
             break;
         case Category::Images:
-            shown = c.kind == ClipKind::Image;
+            shown = c.kind == ClipKind::Image || c.picturesOnly();
             break;
         case Category::Files:
             shown = c.kind == ClipKind::Files || c.kind == ClipKind::Path;

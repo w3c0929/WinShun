@@ -391,6 +391,39 @@ private slots:
         }
     }
 
+    // GitHub #369: files copied that are all pictures are listed under 图片
+    // too, and still under 文件 (they paste as files); others only there.
+    void picturesCopiedAsFiles()
+    {
+        QTemporaryDir dir;
+        ClipStore store(dir.path());
+        QVERIFY(store.open(kStart));
+        const auto files = [&store](const QString& paths, qint64 at) {
+            ClipCapture c;
+            c.kind = ClipKind::Files;
+            c.text = paths;
+            c.hash = clipHash(c.kind, c.text);
+            return store.add(c, at);
+        };
+        const qint64 one = files(u"C:\\图片\\截图 1.PNG"_s, kStart);
+        const qint64 two = files(u"C:\\a.jpg\nD:\\相册\\b.webp"_s, kStart + 1);
+        const qint64 mixed = files(u"C:\\a.jpg\nC:\\notes.txt"_s, kStart + 2);
+        const qint64 folder = files(u"C:\\相册.png\\照片"_s, kStart + 3); // the dot is the folder's
+        const qint64 hidden = files(u"C:\\x\\.png"_s, kStart + 4); // a name, not an extension
+        QVERIFY(one > 0 && two > 0 && mixed > 0 && folder > 0 && hidden > 0);
+        const auto ids = [&store](ClipFilter::Category category) {
+            QList<qint64> out;
+            for (const int row : store.find({category, 0, {}}))
+                out.append(store.clips()[static_cast<std::size_t>(row)].id);
+            return out;
+        };
+        using Category = ClipFilter::Category;
+        QCOMPARE(ids(Category::Images), (QList<qint64> {two, one}));
+        QCOMPARE(ids(Category::Files), (QList<qint64> {hidden, folder, mixed, two, one}));
+        QVERIFY(store.clip(one)->picturesOnly());
+        QVERIFY(!store.clip(mixed)->picturesOnly());
+    }
+
     void find()
     {
         QTemporaryDir dir;
@@ -1339,6 +1372,58 @@ private slots:
         const QByteArray newer = packClipFormats({{u"MathML"_s, QByteArray("<mml:math>2</mml:math>")}});
         QCOMPARE(store.add(equation(newer), kStart + 4), id);
         QCOMPARE(store.payload(id).formats, newer);
+    }
+
+    // Text copied in WPS (GitHub #367): its own document package, which holds
+    // a formula as one (its RTF only a picture of it), kept with the text and
+    // its HTML and RTF, through copying the same words elsewhere and a
+    // restart; dropped once the words are edited, which it would paste back.
+    void documentFormatsWithText()
+    {
+        const QByteArray packed = packClipFormats({{u"Kingsoft Data Descriptor"_s, QByteArray("<registry/>")},
+            {u"Kingsoft WPS 9.0 Format"_s, QByteArray("PK\x03\x04 m:oMath")}});
+        const auto fromWps = [&packed](const QString& words) {
+            ClipCapture c = text(words, u"WPS Office"_s);
+            c.html = "<p>x+1 over y</p>";
+            c.rtf = "{\\rtf1{\\pict x}}";
+            c.formats = packed;
+            return c;
+        };
+        QTemporaryDir dir;
+        qint64 formula = 0;
+        qint64 edited = 0;
+        {
+            ClipStore store(dir.path());
+            QVERIFY(store.open(kStart));
+            formula = store.add(fromWps(u"x+1y"_s), kStart);
+            QVERIFY(store.clip(formula)->formats);
+            ClipPayload payload = store.payload(formula);
+            QCOMPARE(payload.formats, packed);
+            QCOMPARE(payload.text, u"x+1y"_s);
+            QVERIFY(!payload.html.isEmpty() && !payload.rtf.isEmpty());
+            // The same words copied in Notepad: kept, as HTML and RTF are.
+            QCOMPARE(store.add(text(u"x+1y"_s), kStart + 1), formula);
+            QCOMPARE(store.payload(formula).formats, packed);
+            edited = store.add(fromWps(u"a+bc"_s), kStart + 2);
+            QCOMPARE(store.setText(edited, u"a+b+c"_s), ClipStore::TextChange::Changed);
+            QVERIFY(!store.clip(edited)->formats);
+            QVERIFY(store.payload(edited).formats.isEmpty());
+            // Files never keep any.
+            ClipCapture files;
+            files.kind = ClipKind::Files;
+            files.text = u"C:\\公式.docx"_s;
+            files.formats = packed;
+            const qint64 file = store.add(files, kStart + 3);
+            QVERIFY(!store.clip(file)->formats);
+            QVERIFY(store.payload(file).formats.isEmpty());
+        }
+        ClipStore store(dir.path());
+        QVERIFY(store.open(kStart + 4));
+        QVERIFY(store.clip(formula)->formats);
+        QCOMPARE(store.payload(formula).formats, packed);
+        QVERIFY(!store.clip(edited)->formats);
+        QVERIFY(store.payload(edited).formats.isEmpty());
+        QCOMPARE(store.payload(edited).text, u"a+b+c"_s);
     }
 
     // A history from before projects (and kept formats): the columns are
