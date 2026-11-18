@@ -40,6 +40,7 @@ qt_add_executable(WinShun WIN32
     platform/TrayIcons.cpp platform/TrayIcons.h
     InteractionOptimizationProbe.cpp InteractionOptimizationProbe.h
     IdleOpenProbe.cpp IdleOpenProbe.h
+    ClipboardAnimationProbe.cpp ClipboardAnimationProbe.h
     ForegroundUseProbe.cpp ForegroundUseProbe.h
     main.cpp
     DropPieHelper.cpp DropPieHelper.h
@@ -182,6 +183,7 @@ set(qml_files
     qml/ClipTabs.qml
     qml/ClipRow.qml
     qml/ClipPreview.qml
+    qml/ClipFilePreview.qml
     qml/ClipTextEditor.qml
     qml/ClipHoverPreview.qml
     qml/RowAction.qml

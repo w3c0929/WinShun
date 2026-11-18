@@ -117,8 +117,12 @@ Item {
     signal actionRequested(int index, int action)
     signal hoverMoved(int index, point globalPos) // the mouse moved over it (not pressed)
 
-    // The window's, read once here (GitHub #111); text on whole device pixels (see ResultRow).
-    readonly property real dpr: Screen.devicePixelRatio
+    // The window's, passed by the list (GitHub #111): a row that read Screen.*
+    // would have a Screen attached object of its own, and each row the list
+    // frees (a resize drains its pool) then leaves the shared QScreen, a
+    // disconnect that walks every connection on it: rows x connections, 30 s
+    // on a user's PC. Text on whole device pixels (see ResultRow).
+    property real dpr: 1
     function onPixel(y) { return Math.round(y * dpr) / dpr }
     function upToPixel(y) { return Math.ceil(y * dpr - 1e-6) / dpr }
 
@@ -180,9 +184,10 @@ Item {
         width: iconSized ? row.iconSize : row.pictureSize === "large" ? 208 : 108
         height: iconSized ? row.iconSize : row.pictureSize === "large" ? 130 : 68
 
-        Rectangle { // text and links: a sign on a soft tile
+        Rectangle { // text and links: a sign on a soft tile (not under a text's look, GitHub #367)
+            objectName: "clipboardTextTile"
             anchors.fill: parent
-            visible: row.kind <= 1 && row.swatch.length === 0
+            visible: row.kind <= 1 && row.swatch.length === 0 && !row.picture
             radius: Theme.largeControlRadius
             color: row.kind === 1 ? Theme.tok("clipLinkTint", Theme.badge) : Theme.tok("clipTextTint", Theme.badge) // a style may tint it as its file icons
 
@@ -209,7 +214,7 @@ Item {
             id: fileIcon
             objectName: "clipboardFileIcon"
 
-            readonly property real dpr: Screen.devicePixelRatio
+            readonly property real dpr: row.dpr
             readonly property int pixels: Math.round(row.iconSize * dpr)
 
             visible: (row.kind === 2 || row.kind === 3) && !thumbnail.ready
@@ -229,9 +234,9 @@ Item {
             anchors.fill: parent
             visible: row.picture
 
-            Rectangle { // while it loads
+            Rectangle { // while it loads (a picture, or a text's look)
                 anchors.fill: parent
-                visible: row.kind === 4 && !thumbnail.ready
+                visible: (row.kind === 4 || row.kind <= 1) && !thumbnail.ready
                 radius: Theme.controlRadius
                 color: Theme.track
             }
@@ -240,7 +245,7 @@ Item {
                 id: thumbnail
                 objectName: "clipboardThumbnail"
 
-                readonly property real dpr: Screen.devicePixelRatio
+                readonly property real dpr: row.dpr
                 readonly property bool ready: status === Image.Ready && implicitWidth > 0
 
                 // Scaled once, when loaded, to fit the slot (sourceSize: both

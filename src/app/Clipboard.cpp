@@ -1,6 +1,7 @@
 #include "Clipboard.h"
 
 #include "ClipFiles.h"
+#include "ClipImage.h"
 #include "ColorText.h"
 #include "Diagnostics.h"
 #include "FileIconProvider.h"
@@ -74,6 +75,7 @@ Clipboard::Clipboard(ClipStore* store, ClipboardWatcher* watcher, QObject* paren
     , m_store(store)
     , m_watcher(watcher)
     , m_model(store)
+    , m_filePreview(std::make_unique<FilePreview>(u"clippreview"_s, true))
     , m_dragFolder(store->folder() + u"/dragged"_s)
 {
     QDir(m_dragFolder).removeRecursively();
@@ -84,7 +86,8 @@ Clipboard::Clipboard(ClipStore* store, ClipboardWatcher* watcher, QObject* paren
             if (!m_recording || m_paused || !m_store->isOpen())
                 return;
             m_model.pictureSaved(id); // the preview follows (dataChanged)
-            m_recognizer.read(id, m_store->imagePath(id), true);
+            if (const Clip* c = m_store->clip(id); c && c->kind == ClipKind::Image) // not a text's look
+                m_recognizer.read(id, m_store->imagePath(id), true);
         },
     });
     // The words in pictures: kept with them, found by the search.
@@ -777,10 +780,49 @@ void Clipboard::handleShown()
 
 void Clipboard::handleHidden()
 {
+    setSeen(false); // a document's handler unloaded
     setPinned(false);
     m_model.clearSelection();
     dropUndo();
     setField(nullptr, {}); // a paste on its way back to it has its own
+}
+
+void Clipboard::showFile(QQuickItem* area, const QString& path, bool isDir, bool dark)
+{
+    // A document's handler draws in the colours it was made with: made anew.
+    if (area != m_fileArea || dark != m_fileDark)
+        m_filePreview->close();
+    m_fileArea = area;
+    m_filePath = path;
+    m_fileIsDir = isDir;
+    m_fileDark = dark;
+    m_filePreview->setDark(dark);
+    placeFile();
+}
+
+void Clipboard::setSeen(bool seen)
+{
+    m_seen = seen;
+    placeFile();
+}
+
+// The file in the area, the next row's following it as the arrows go (a
+// document's handler waits until the row stays); none: closed, its handler
+// let go of.
+void Clipboard::placeFile()
+{
+    const QQuickWindow* window = m_fileArea ? m_fileArea->window() : nullptr;
+    if (!m_seen || m_filePath.isEmpty() || !window || !window->isVisible() || !m_fileArea->isVisible()) {
+        m_filePreview->close();
+        return;
+    }
+    const QString name = QFileInfo(m_filePath).fileName();
+    const FilePreview::Item item {m_filePath, name.isEmpty() ? QDir::toNativeSeparators(m_filePath) : name, m_fileIsDir};
+    if (!m_filePreview->isOpen())
+        m_filePreview->show(item);
+    else
+        m_filePreview->follow(item);
+    m_filePreview->placeHandler();
 }
 
 void Clipboard::retranslate()
@@ -1720,6 +1762,12 @@ QVariantMap Clipboard::preview(int row) const
         }
         map.insert(u"files"_s, files);
         map.insert(u"more"_s, std::max<qsizetype>(0, paths.size() - kPreviewFiles));
+        // One local file or folder that is there: the preview beside the list
+        // shows it as the search's does (GitHub #324, showFile).
+        if (paths.size() == 1 && isLocal(paths.constFirst()) && !files.constFirst().toMap().value(u"missing"_s).toBool()) {
+            map.insert(u"filePath"_s, QDir::toNativeSeparators(paths.constFirst()));
+            map.insert(u"fileIsDir"_s, QFileInfo(paths.constFirst()).isDir());
+        }
         // The first file's thumbnail, if Explorer has one (a picture, a video,
         // a PDF...); local files only: a network one could keep it waiting.
         if (!paths.isEmpty() && isLocal(paths.constFirst())) {
@@ -1740,6 +1788,15 @@ QVariantMap Clipboard::preview(int row) const
         break;
     }
     default: {
+        // How it looked (a formula in it, GitHub #367), above its words;
+        // none while its file is being written, as a picture's.
+        if (c->look && !m_store->imagePending(c->id)) {
+            map.insert(u"look"_s, QUrl::fromLocalFile(m_store->imagePath(c->id)).toString());
+            // In logical pixels (a picture's are its own): a little larger
+            // than in the document, drawn from more pixels (kClipLookScale).
+            map.insert(u"width"_s, qRound(c->width * kClipLookShown / kClipLookScale));
+            map.insert(u"height"_s, qRound(c->height * kClipLookShown / kClipLookScale));
+        }
         const QString text = c->text.left(kPreviewChars);
         map.insert(u"text"_s, text);
         map.insert(u"more"_s, std::max<qint64>(0, c->textLength - text.size()));

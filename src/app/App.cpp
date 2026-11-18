@@ -793,7 +793,7 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
     // Not a setting the AI settings know of: the section, by its row's title (SettingsWindow.qml).
     connect(m_launcher.get(), &Launcher::shareSettingsRequested, this, [this] {
         showSettings([](QQuickWindow* window) {
-            QMetaObject::invokeMethod(window, "showSetting", Q_ARG(QVariant, 2), Q_ARG(QVariant, 3),
+            QMetaObject::invokeMethod(window, "showSetting", Q_ARG(QVariant, u"scope"_s), Q_ARG(QVariant, 3),
                 Q_ARG(QVariant, QCoreApplication::translate("SettingsWindow", "网络与 WSL 文件夹")));
         });
     });
@@ -1298,6 +1298,7 @@ bool App::createWindow()
     m_qml->addImageProvider(u"clipthumb"_s, new ClipThumbnailProvider); // clipboard rows' pictures
     m_qml->addImageProvider(u"preview"_s, m_preview->imageProvider()); // the picture in the preview (Alt+P)
     m_qml->addImageProvider(u"panepreview"_s, m_launcher->contentPane()->filePreview()->imageProvider()); // the search panel's 预览 tab
+    m_qml->addImageProvider(u"clippreview"_s, m_clipboard->filePreview()->imageProvider()); // a copied file, beside the clipboard's list
     m_placement = std::make_unique<Placement>(Settings::dataDir() + u"\\state.ini"_s, u"Launcher"_s);
     m_placement->setAnimated(m_settings.openAnimation); // 弹出动画 (applySettings came before it)
     m_frame = std::make_unique<WindowFrame>(false);
@@ -1437,6 +1438,7 @@ bool App::createWindow()
 bool App::createClipWindow()
 {
     m_clipPlacement = std::make_unique<Placement>(Settings::dataDir() + u"\\state.ini"_s, u"Clipboard"_s);
+    m_clipPlacement->setAnimated(m_settings.openAnimation); // 弹出动画, as the launcher's (applySettings came before it)
     m_textCaret = std::make_unique<win::TextCaret>();
     m_clipFrame = std::make_unique<WindowFrame>(false);
     QQmlComponent component(m_qml.get(), u"WinShun"_s, u"ClipboardWindow"_s);
@@ -1489,8 +1491,18 @@ bool App::createClipWindow()
         // to), the focus may first go to none.
         if (m_clipWindow && !m_clipWindow->isActive())
             QMetaObject::invokeMethod(this, [this] {
-                if (m_clipWindow && !m_clipWindow->isActive())
-                    hideClipboard();
+                if (!m_clipWindow || m_clipWindow->isActive())
+                    return;
+                // Taken by a copied file's preview (as the launcher's, by
+                // its own): a window of ours gives it back at once; the
+                // handler's program, by itself.
+                if (const FilePreview* preview = m_clipboard->filePreview(); preview->ownsForeground()) {
+                    m_clipFrontLent = true;
+                    if (preview->foregroundIsOurs())
+                        win::bringToFront(m_clipWindow);
+                    return;
+                }
+                hideClipboard();
             }, Qt::QueuedConnection);
     });
     m_clipReveal.setWindow(window, 150ms, [this] { uncloakClipboard(); });
@@ -1994,6 +2006,7 @@ void App::applySettings(bool initial)
     m_launcher->setReopenWhereLeft(m_settings.reopenWhereLeft);
     applyLauncherTopmost();
     m_preview->setTextExtensions(m_settings.contentExtensions);
+    m_clipboard->filePreview()->setTextExtensions(m_settings.contentExtensions);
     m_clipboard->setNumberKeys(m_settings.clipboardNumberKeys);
     m_launcher->setNumberHints(m_settings.numberHints);
     m_launcher->setLetterJump(m_settings.letterJump, m_settings.letterJumpKey, m_settings.letterJumpKeys);
@@ -2002,6 +2015,8 @@ void App::applySettings(bool initial)
     m_launcher->setScopeButton(m_settings.scopeButton);
     if (m_placement)
         m_placement->setAnimated(m_settings.openAnimation);
+    if (m_clipPlacement)
+        m_clipPlacement->setAnimated(m_settings.openAnimation); // the clipboard as the launcher (GitHub #377)
     m_launcher->setKeyboardHints(m_settings.shortcutHelp, m_settings.footerHints);
     m_launcher->setMaxRows(m_settings.maxRows);
     m_launcher->setPureSearch(m_settings.pureSearch && !m_launcherOverBox);
@@ -4782,9 +4797,9 @@ void App::applyDialogs()
             m_dialogEngine = std::make_unique<SearchEngine>(m_index.get(), m_apps.get(), m_places.get());
         m_dialogBar = std::make_unique<DialogBar>(m_dialogEngine.get(), m_history.get(),
             m_favorites.get(), [this](HWND dialog, std::wstring path, bool isFile, bool open) {
-                // An elevated dialog goes through the service helper (folder
-                // only); a failure falls back to copying the path. A normal one
-                // is driven directly.
+                // An elevated dialog goes through the service helper (to the
+                // folder, a file's name in the box, never Open: #353); a failure
+                // falls back to copying the path. A normal one is driven directly.
                 if (integrity::higherThanOurs(dialog)) {
                     const QString copyPath = QString::fromStdWString(path);
                     if (!(m_serviceNav && m_serviceNav->available())) {
@@ -4796,10 +4811,10 @@ void App::applyDialogs()
                         return;
                     }
                     const std::size_t slash = path.find_last_of(L'\\');
-                    std::wstring folder = !isFile ? path
-                        : slash == std::wstring::npos ? path
-                                                      : path.substr(0, slash == 2 ? 3 : slash);
-                    m_serviceNav->navigate(dialog, std::move(folder), [this, dialog, copyPath](bool ok) {
+                    const bool named = isFile && slash != std::wstring::npos;
+                    std::wstring folder = named ? path.substr(0, slash == 2 ? 3 : slash) : path;
+                    std::wstring name = named ? path.substr(slash + 1) : std::wstring();
+                    m_serviceNav->navigate(dialog, std::move(folder), std::move(name), [this, dialog, copyPath](bool ok) {
                         if (ok)
                             return;
                         QMetaObject::invokeMethod(this, [this, dialog, copyPath] {
@@ -4897,7 +4912,7 @@ void App::applyDialogs()
         callbacks.elevatedNavAvailable = [this] { return m_serviceNav && m_serviceNav->available(); };
         callbacks.navigateElevated = [this](HWND dialog, std::wstring folder) { // may be the worker thread
             if (m_serviceNav)
-                m_serviceNav->navigate(dialog, std::move(folder), {});
+                m_serviceNav->navigate(dialog, std::move(folder), {}, {});
         };
         m_dialogJump = std::make_unique<DialogJump>(std::move(callbacks));
         updateCompanions();
@@ -5136,7 +5151,7 @@ void App::onDoubleCtrl(const KeyListener::Tap& tap)
             if (!m_pluginHost || found == m_pluginTapActions.end() || !found->second.contains(action.key)
                 || !m_pluginHost->notify(action.plugin, u"hotkey"_s, {{u"key"_s, action.key}}, true)) {
                 m_messages->showNotification(tr("双击动作暂不可用"),
-                    tr("请启用对应插件，并在“打开 Win顺”的双击设置中重新选择动作。"));
+                    tr("请启用对应插件，并在“快捷键”的双击设置中重新选择动作。"));
             }
             return;
         }
@@ -5796,7 +5811,12 @@ bool App::startKeyRouting(HWND target)
     };
     KeyRouter::Callbacks callbacks;
     callbacks.key = [this, post](const KeyRouter::Key& key) { post([this, key] { routedKey(key); }); };
-    callbacks.clickedAway = [this, post] { post([this] { hideClipboard(); }); }; // as a menu
+    callbacks.clickedAway = [this, post](HWND hit) { // as a menu; not a click on a copied file's preview (a document's handler)
+        post([this, hit] {
+            if (!m_clipboard->filePreview()->owns(hit))
+                hideClipboard();
+        });
+    };
     callbacks.foregroundChanged = [this, post](HWND window) { post([this, window] { routedForeground(window); }); };
     callbacks.shiftTapped = [this, post] { post([this] { clipboardShiftTapped(); }); };
     callbacks.drained = [this, run] {
@@ -5897,6 +5917,14 @@ void App::routedForeground(HWND window)
             stopKeyRouting();
         return;
     }
+    // A copied file's preview took it (a document's handler clicked, Word as
+    // it starts): the program the keys come from, and a paste goes to, has
+    // it back.
+    if (m_clipboard->filePreview()->owns(window)) {
+        if (m_keyRouterTarget && ::GetForegroundWindow() == window)
+            ::SetForegroundWindow(m_keyRouterTarget);
+        return;
+    }
     hideClipboard(); // another program in front: as a menu
 }
 
@@ -5944,7 +5972,7 @@ bool App::startLauncherRouting()
     };
     KeyRouter::Callbacks callbacks;
     callbacks.key = [this, post](const KeyRouter::Key& key) { post([this, key] { launcherRoutedKey(key); }); };
-    callbacks.clickedAway = [this, post] { post([this] { launcherClickedAway(); }); };
+    callbacks.clickedAway = [this, post](HWND) { post([this] { launcherClickedAway(); }); };
     callbacks.foregroundChanged = [this, post](HWND) { post([this] { launcherRoutedForeground(); }); };
     callbacks.drained = [this, run] {
         QMetaObject::invokeMethod(this, [this, run] {
@@ -6407,6 +6435,7 @@ void App::uncloakClipboard()
     if (m_clipDisplayWanted && m_clipDisplay && m_clipDisplay->ready()) {
         m_clipWindow->setProperty("controllerEventsEnabled", false);
         if (m_clipDisplay->show()) {
+            m_clipboard->setSeen(false); // this process's window stays cloaked: no file shown over it
             m_clipRevealedAt = ::GetTickCount64();
             openingSeen(TriggerWindow::Clipboard);
             return; // the ordinary-process scene stays cloaked behind the peer
@@ -6422,11 +6451,31 @@ void App::uncloakClipboard()
         const bool keepFocus = startKeyRouting(target) || win::isShellFlyout(target);
         m_clipFrame->setNoActivate(keepFocus);
     }
+    // In as the launcher comes (弹出动画): faded in, a little from the box or
+    // the caret it drops from (GitHub #377). Before the cloak goes, as there.
+    if (m_clipWindow->isVisible() && !m_clipPrewarming.load())
+        m_clipPlacement->slideIn();
     win::setCloaked(m_clipWindow, false);
     if (m_clipWindow->isVisible() && !m_clipPrewarming.load()) {
         m_clipRevealedAt = ::GetTickCount64(); // there to be seen from now on (seenBy)
+        m_clipboard->setSeen(true); // a copied file beside the list, a document's handler over it
         openingSeen(TriggerWindow::Clipboard);
     }
+}
+
+void App::clipboardFrontMoved()
+{
+    if (!m_clipFrontLent)
+        return;
+    const HWND front = ::GetForegroundWindow();
+    if (!m_clipWindow || !m_clipWindow->isVisible() || m_keyRouter || front == reinterpret_cast<HWND>(m_clipWindow->winId())) {
+        m_clipFrontLent = false; // gone, or in front again
+        return;
+    }
+    if (!front || m_clipboard->filePreview()->owns(front))
+        return; // none for a moment, or still the preview's
+    m_clipFrontLent = false;
+    hideClipboard();
 }
 
 void App::hideClipboard(bool launcherToo)
@@ -6446,11 +6495,19 @@ void App::hideClipboard(bool launcherToo)
     const bool underLauncher = clipboardUnderLauncher();
     if (m_clipDisplay) m_clipDisplay->hide();
     m_clipDisplayWanted = false;
+    // Out as the launcher goes (弹出动画): a picture of it fades where it was
+    // (GitHub #377); the window itself goes at once, so the focus, the keys
+    // and a paste go on as ever. Not when it was never seen, nor behind the
+    // display (cloaked: fadeOutCopy shows nothing).
+    if (m_clipRevealedAt && m_settings.openAnimation && Placement::animationsOn())
+        win::fadeOutCopy(m_clipWindow, 120ms);
     m_clipWindow->hide();
+    m_clipPlacement->settleSlide(); // caught coming in: at its place, its opacity whole
     m_clipRevealedAt.reset(); // only here: pinned, it stays up when it lets go of the keys
     stopKeyRouting(); // hidden first: no inactive backdrop on the way out
     m_clipReveal.cancel();
     win::setCloaked(m_clipWindow, false);
+    m_clipFrontLent = false;
     m_clipboard->setActive(false); // the launcher's rows come back
     m_clipboard->handleHidden();
     // Gone without going back to the search box (pasted elsewhere, clicked
@@ -6719,6 +6776,8 @@ void CALLBACK App::foregroundChanged(HWINEVENTHOOK, DWORD, HWND window, LONG, LO
         App* app = g_launcherApp;
         if (app)
             app->adminTapFront(window);
+        if (app)
+            app->clipboardFrontMoved();
         // Another program's window in front while Qt still has one of ours
         // active (no focusWindowChanged comes): the digits are its again.
         if (app && app->quickPasteSuspended() != app->m_quickPasteSuspended)
@@ -8960,7 +9019,7 @@ QVariantMap App::undoSettingsBatch(quint64 batchId)
 // tab, its row found by its title (SettingsWindow.qml's showSetting).
 mcp::ToolResult App::openAiSettings(const QString& key, const QString& section)
 {
-    int page = 0;
+    QString page; // its id; none: the window as it is
     int tab = -1;
     QString rowTitle;
     QString where;
@@ -8976,7 +9035,7 @@ mcp::ToolResult App::openAiSettings(const QString& key, const QString& section)
                 return {{}, true, u"The settings window could not be opened."_s};
             return {{{u"opened"_s, true}, {u"where"_s, where}}};
         }
-        page = of ? of->page : 0;
+        page = of ? of->page : QString();
         tab = entry->tab;
         rowTitle = entry->rowTitleText();
     } else {
@@ -8989,8 +9048,8 @@ mcp::ToolResult App::openAiSettings(const QString& key, const QString& section)
         }
         page = of->page;
         where = of->titleText();
-        // A section that is one tab of its page (打开 Win顺: 快捷键, 任务栏, 对话框,
-        // 启动) opens on that tab; one spread over several keeps the page's first.
+        // A section that is one tab of its page (系统整合 › 任务栏, 搜索范围 › 文件内容)
+        // opens on that tab; one spread over several, on the tab the page was left on.
         std::optional<int> shared;
         for (const aisettings::Entry& entry : aisettings::catalog()) {
             if (entry.section.compare(of->id, Qt::CaseInsensitive) != 0)

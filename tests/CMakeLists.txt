@@ -98,6 +98,17 @@ add_custom_command(OUTPUT "${ocr_app_stamp}"
     VERBATIM)
 add_custom_target(tst_ocrsearch_app DEPENDS "${ocr_app_stamp}")
 
+# winshun.devtools: the JSON reader and writer, the window's tree and tool
+# (compiled in: in the plugin they are its QML module's types), the search
+# box's rows, and that Win顺 takes its manifest.
+qt_add_executable(tst_devtools tst_devtools.cpp
+    ${PROJECT_SOURCE_DIR}/src/devtools-plugin/JsonTree.cpp ${PROJECT_SOURCE_DIR}/src/devtools-plugin/JsonTool.cpp)
+target_link_libraries(tst_devtools PRIVATE wsdevtools wsplugin Qt6::Gui Qt6::QmlIntegration Qt6::Test)
+target_compile_definitions(tst_devtools PRIVATE WINSHUN_DEVTOOLS_MANIFEST="${DEVTOOLS_PLUGIN_MANIFEST}")
+set_target_properties(tst_devtools PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+add_test(NAME tst_devtools COMMAND tst_devtools -o -,txt)
+set_tests_properties(tst_devtools PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
 qt_add_executable(tst_ocrsearch tst_ocrsearch.cpp)
 target_link_libraries(tst_ocrsearch PRIVATE wsocrsearch wsplugin miniz Qt6::Test)
 target_compile_definitions(tst_ocrsearch PRIVATE WINSHUN_OCR_MANIFEST="${OCR_PLUGIN_MANIFEST}"
@@ -255,6 +266,17 @@ set_tests_properties(tst_settingsopenlink PROPERTIES RUN_SERIAL TRUE TIMEOUT 120
 add_test(NAME tst_clipboardsizing COMMAND $<TARGET_FILE:WinShun>
     --preview-results "${CMAKE_CURRENT_BINARY_DIR}/clipboard-sizing" --clipboard-sizing --renderer d3d11)
 set_tests_properties(tst_clipboardsizing PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+# #324: one copied file in the preview beside the list, as the search's preview.
+add_test(NAME tst_clipboardfile COMMAND $<TARGET_FILE:WinShun>
+    --preview-results "${CMAKE_CURRENT_BINARY_DIR}/clipboard-file" --clipboard-file --renderer d3d11)
+set_tests_properties(tst_clipboardfile PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+# #111: the clipboard rows have no Screen attached objects of their own; a
+# resize that frees rows then never walks the screen's connections per row.
+add_test(NAME tst_clipboardscreen COMMAND $<TARGET_FILE:WinShun>
+    --preview-results "${CMAKE_CURRENT_BINARY_DIR}/clipboard-screen" --clipboard-scroll --screen-objects --clips 200)
+set_tests_properties(tst_clipboardscreen PROPERTIES RUN_SERIAL TRUE TIMEOUT 120
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 qt_add_executable(tst_querysyntax tst_querysyntax.cpp)
@@ -1404,9 +1426,9 @@ set_tests_properties(tst_break PROPERTIES
 # integrity level and the test-root restriction, with made-up windows.
 qt_add_executable(tst_explorertabs tst_explorertabs.cpp ${PROJECT_SOURCE_DIR}/src/explorer-tabs-plugin/Rules.cpp
     ${PROJECT_SOURCE_DIR}/src/explorer-tabs-plugin/Hider.cpp ${PROJECT_SOURCE_DIR}/src/explorer-tabs-plugin/Closer.cpp
-    ${PROJECT_SOURCE_DIR}/src/explorer-tabs-plugin/Session.cpp)
+    ${PROJECT_SOURCE_DIR}/src/explorer-tabs-plugin/Session.cpp ${PROJECT_SOURCE_DIR}/src/explorer-tabs-plugin/Modules.cpp)
 target_include_directories(tst_explorertabs PRIVATE ${PROJECT_SOURCE_DIR}/src/explorer-tabs-plugin)
-target_link_libraries(tst_explorertabs PRIVATE winshun_options Qt6::Test)
+target_link_libraries(tst_explorertabs PRIVATE winshun_options Qt6::Test psapi)
 set_target_properties(tst_explorertabs PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_explorertabs COMMAND tst_explorertabs)
 set_tests_properties(tst_explorertabs PROPERTIES

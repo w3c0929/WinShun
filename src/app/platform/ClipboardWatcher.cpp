@@ -4,6 +4,7 @@
 #include "ClipImage.h"
 #include "ClipMisread.h"
 
+#include <QBuffer>
 #include <QDebug>
 #include <QDateTime>
 #include <QFile>
@@ -38,6 +39,12 @@ constexpr qsizetype kMaxText = 2 * 1024 * 1024; // characters: 4 MB, Windows' ow
 constexpr qsizetype kFormattedUpTo = 1024 * 1024; // characters: longer text keeps no HTML / RTF
 constexpr SIZE_T kMaxFormatBytes = 16 * 1024 * 1024;
 constexpr qsizetype kMaxObjectBytes = 32 * 1024 * 1024; // an equation's or an object's formats all together
+// Text with a formula or a picture among its words keeps a picture of how it
+// looked (Clip::look) up to this many characters: a page or two. Longer, the
+// program would take a while drawing it, and the picture would be too small
+// to read anyway.
+constexpr qsizetype kLookUpTo = 4000;
+constexpr SIZE_T kMaxLookBytes = 8 * 1024 * 1024; // its metafile
 constexpr SIZE_T kMaxImageBytes = 256 * 1024 * 1024;
 constexpr qsizetype kMaxReadRecords = 16;
 constexpr qsizetype kMaxMisreadChars = 64 * 1024; // longer text is not kept to compare with
@@ -676,6 +683,30 @@ void ClipboardWatcher::read()
         return;
     }
     diagnostic[u"owner_pid_before"_s] = static_cast<qint64>(windowProcess(::GetClipboardOwner()));
+    // Where it came from: the clipboard's owner, else the program in front.
+    // Known before opening the clipboard: a program on the "not recorded"
+    // list has its clipboard left untouched, not opened, not even listed
+    // (some programs paste their own data only while nobody else read it).
+    DWORD pid = 0;
+    if (const HWND owner = ::GetClipboardOwner())
+        ::GetWindowThreadProcessId(owner, &pid);
+    const bool fromOwner = pid != 0;
+    if (pid == 0) {
+        if (const HWND foreground = ::GetForegroundWindow())
+            ::GetWindowThreadProcessId(foreground, &pid);
+    }
+    const std::wstring path = processPath(pid);
+    if (!ours && !path.empty() && !options.excludedApps.isEmpty()) {
+        QString exe = QFileInfo(QString::fromStdWString(path)).fileName().toLower();
+        if (exe.endsWith(u".exe"))
+            exe.chop(4);
+        if (options.excludedApps.contains(exe)) { // the outcome only: not what or whose it was
+            m_lastSequence = sequence;
+            diagnostic.remove(u"owner_pid_before"_s);
+            diagnostic[u"outcome"_s] = u"app-excluded"_s;
+            return;
+        }
+    }
     DWORD openError = ERROR_SUCCESS;
     int openAttempts = 0;
     const bool opened = openClipboard(&openError, &openAttempts);
@@ -735,28 +766,8 @@ void ClipboardWatcher::read()
     diagnostic[u"formats_truncated"_s] = formatsTruncated;
     diagnostic[u"formats_error"_s] = static_cast<qint64>(formatsError);
 
-    // Where it came from: the clipboard's owner, else the program in front.
-    DWORD pid = 0;
-    if (const HWND owner = ::GetClipboardOwner())
-        ::GetWindowThreadProcessId(owner, &pid);
-    diagnostic[u"owner_pid_read"_s] = static_cast<qint64>(pid);
-    diagnostic[u"foreground_fallback"_s] = pid == 0;
-    if (pid == 0) {
-        if (const HWND foreground = ::GetForegroundWindow())
-            ::GetWindowThreadProcessId(foreground, &pid);
-    }
-    const std::wstring path = processPath(pid);
-    if (!path.empty() && !options.excludedApps.isEmpty()) {
-        QString exe = QFileInfo(QString::fromStdWString(path)).fileName().toLower();
-        if (exe.endsWith(u".exe"))
-            exe.chop(4);
-        if (options.excludedApps.contains(exe)) { // the outcome only: not what or whose it was
-            for (const QString key : {u"formats"_s, u"formats_truncated"_s, u"formats_error"_s, u"owner_pid_read"_s, u"foreground_fallback"_s})
-                diagnostic.remove(key);
-            diagnostic[u"outcome"_s] = u"app-excluded"_s;
-            return;
-        }
-    }
+    diagnostic[u"owner_pid_read"_s] = static_cast<qint64>(fromOwner ? pid : 0);
+    diagnostic[u"foreground_fallback"_s] = !fromOwner;
     diagnostic[u"source_pid"_s] = static_cast<qint64>(pid);
     diagnostic[u"source_exe"_s] = executableName(path);
 
@@ -793,6 +804,18 @@ void ClipboardWatcher::read()
     QList<ClipFormat> object;
     if (capture.kind != ClipKind::Files && tooBig == 0 && options.images && isObject(f))
         object = readKeptFormats(objectFormatName);
+    // Text with a formula or a picture in it (GitHub #367): what the program
+    // draws of it (WPS and Word give a metafile of what was copied, which
+    // they draw only when asked), for a picture of how it looked. Its words
+    // read "a+bc" for a fraction, and a formula WPS gives only as a picture.
+    QByteArray lookBits;
+    if (object.isEmpty() && capture.kind != ClipKind::Files && !capture.text.isEmpty() && tooBig == 0 && options.images
+        && capture.text.size() <= kLookUpTo && formattedHasPictures(capture.rtf, capture.html)
+        && ::IsClipboardFormatAvailable(CF_ENHMETAFILE)) {
+        bool lookTooBig = false;
+        lookBits = metafileBits(kMaxLookBytes, &lookTooBig);
+        diagnostic[u"look_bytes"_s] = static_cast<qint64>(lookBits.size());
+    }
     // A picture only when there is no text (or it is an equation): Excel and
     // Word offer a picture of what was copied as well, which they draw only
     // when asked for it.
@@ -848,6 +871,20 @@ void ClipboardWatcher::read()
         } else {
             imageTooBig = imageTooBig && capture.text.isEmpty(); // else its text, as before
         }
+    }
+    if (!lookBits.isEmpty() && capture.kind != ClipKind::Image && object.isEmpty()) {
+        // Drawn whole or not at all: a picture shrunk to fit would be too
+        // small to read. PNG, as the history keeps pictures.
+        if (const QImage look = imageFromEmf(lookBits, kClipLookScale, true); !look.isNull()) {
+            QBuffer buffer(&capture.look);
+            if (buffer.open(QIODevice::WriteOnly) && look.save(&buffer, "PNG")) {
+                capture.width = look.width();
+                capture.height = look.height();
+            } else {
+                capture.look.clear();
+            }
+        }
+        diagnostic[u"look"_s] = !capture.look.isEmpty();
     }
     if (tooBig > 0 || (picture.firstFrame.isNull() && (imageTooBig || picture.tooBig))) {
         diagnostic[u"outcome"_s] = u"too-big"_s;

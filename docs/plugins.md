@@ -16,7 +16,7 @@ Win顺 的插件给搜索框加关键字命令、把结果混进列表。界面�
 
 升级后原来开着的功能如果没能恢复，“已安装”页会保留原因，提供“重试恢复”和本地包安装，原来的设置和数据保留。
 
-Win顺 自己的另外几个插件不随安装包，在插件库里，要用时装上（设置 → 插件 → 插件库；源码在 `src\<名字>-plugin\`，清单和 README 在其中的 `package\`）：`winshun.capture`（截图与录屏；C++，用 Win顺 自己的 Qt，见下面“有自己窗口的常驻插件”）、`winshun.cloudbackup`（云备份：把设置备份自动传到 WebDAV 或 GitHub 私有仓库，`cloud` 立即备份或恢复；C++ 常驻、eager，用 `winshun:backup` 让 Win顺 做出备份、恢复备份，自己只管传文件，GitHub #276）、`winshun.semantic`（按意思找：`? 一句话` 按文档讲的内容找文件，用你选的嵌入模型——本机的 Ollama 或云服务的密钥；C++ 常驻，用 `winshun:content` 拿 Win顺 已经读出的文字）、`winshun.localsend`（局域网传输：同一网络里的手机、电脑互传文件和文字，兼容 LocalSend；`传` 或 `ls`，或文件右键菜单的"用局域网发送…"；C++ 常驻、eager，用到 `network:listen`、`notifications` 和 `files` 触发）、`winshun.break`（休息提醒：每 20 分钟小休、隔一次大休，提前一个小条，到点调暗所有显示器显示倒计时；`休息` 或 `break`；C++ 常驻、eager，只要 `ui`，自己画窗口、休息时用键盘钩子拦按键）、`winshun.explorer-tabs`（资源管理器标签页：新开的文件夹窗口并成已开着的资源管理器窗口里的一个标签页，像 ExplorerTabUtility；按住 Ctrl+Shift 打开就还是新窗口；`标签页` 或 `tabs` 看状态、暂停；C++ 常驻、eager，要 `ui` 和 `elevated`（Win顺 以管理员身份运行、确认过时，也能并以管理员身份运行的窗口），用 ShellWindows 事件和 WinEvent 钩子，不往资源管理器里注入东西；关键词命令只为能暂停，主要功能不靠输入）、`winshun.gestures`（鼠标手势：按住右键画出手势，松开执行设好的动作，画时有轨迹和将要做的事；`手势` 或 `gestures` 列出手势、暂停；C++ 常驻、eager，要 `ui`（低级鼠标钩子、分层窗口、SendInput），手势填了程序或网址时用 `processes` 和 `winshun:open` 请 Win顺 打开；普通权限，碰不到以管理员身份运行的窗口）、`winshun.translate`（翻译：`tr 句子`，用你自己的 DeepL 或 OpenAI 兼容接口，要自己填 API 密钥；C++ 常驻，`debounceMs` 300，先推一行"翻译中…"）、`winshun.bookmarks`（浏览器书签：`bm 词` 搜 Chrome 和 Edge 的书签；C++ 一次性）、`winshun.ocr-search`（图片文字搜索：`ocr 词` 搜图片、扫描 PDF 和文档内嵌图片里的文字，也在“内容”和“全部”里出结果；C++ 常驻，插件包的最低版本是构建它的 Win顺 版本）、`winshun.web`（网页搜索：不带程序的声明式插件，网站在插件设置里管理，见下面“网页搜索”）。以前随安装包、你又开着的，升级后 Win顺 自动从插件库装上，设置照旧。每个都是一份能跑的示例，有 README。
+Win顺 自己的另外几个插件不随安装包，在插件库里，要用时装上（设置 → 插件 → 插件库；源码在 `src\<名字>-plugin\`，清单和 README 在其中的 `package\`）：`winshun.capture`（截图与录屏；C++，用 Win顺 自己的 Qt，见下面“有自己窗口的常驻插件”）、`winshun.cloudbackup`（云备份：把设置备份自动传到 WebDAV 或 GitHub 私有仓库，`cloud` 立即备份或恢复；C++ 常驻、eager，用 `winshun:backup` 让 Win顺 做出备份、恢复备份，自己只管传文件，GitHub #276）、`winshun.semantic`（按意思找：`? 一句话` 按文档讲的内容找文件，用你选的嵌入模型——本机的 Ollama 或云服务的密钥；C++ 常驻，用 `winshun:content` 拿 Win顺 已经读出的文字）、`winshun.localsend`（局域网传输：同一网络里的手机、电脑互传文件和文字，兼容 LocalSend；`传` 或 `ls`，或文件右键菜单的"用局域网发送…"；C++ 常驻、eager，用到 `network:listen`、`notifications` 和 `files` 触发）、`winshun.break`（休息提醒：每 20 分钟小休、隔一次大休，提前一个小条，到点调暗所有显示器显示倒计时；`休息` 或 `break`；C++ 常驻、eager，只要 `ui`，自己画窗口、休息时用键盘钩子拦按键）、`winshun.explorer-tabs`（资源管理器标签页：新开的文件夹窗口并成已开着的资源管理器窗口里的一个标签页，像 ExplorerTabUtility；按住 Ctrl+Shift 打开就还是新窗口；`标签页` 或 `tabs` 看状态、暂停；C++ 常驻、eager，要 `ui` 和 `elevated`（Win顺 以管理员身份运行、确认过时，也能并以管理员身份运行的窗口），用 ShellWindows 事件和 WinEvent 钩子，不往资源管理器里注入东西；关键词命令只为能暂停，主要功能不靠输入）、`winshun.gestures`（鼠标手势：按住右键画出手势，松开执行设好的动作，画时有轨迹和将要做的事；`手势` 或 `gestures` 列出手势、暂停；C++ 常驻、eager，要 `ui`（低级鼠标钩子、分层窗口、SendInput），手势填了程序或网址时用 `processes` 和 `winshun:open` 请 Win顺 打开；普通权限，碰不到以管理员身份运行的窗口）、`winshun.translate`（翻译：`tr 句子`，用你自己的 DeepL 或 OpenAI 兼容接口，要自己填 API 密钥；C++ 常驻，`debounceMs` 300，先推一行"翻译中…"）、`winshun.bookmarks`（浏览器书签：`bm 词` 搜 Chrome 和 Edge 的书签；C++ 一次性）、`winshun.ocr-search`（图片文字搜索：`ocr 词` 搜图片、扫描 PDF 和文档内嵌图片里的文字，也在“内容”和“全部”里出结果；C++ 常驻，插件包的最低版本是构建它的 Win顺 版本）、`winshun.devtools`（开发工具：先有 JSON 工具，`json` 看剪贴板或输入的 JSON，复制格式化、压缩、转义后的结果，Enter 打开窗口树形查看、搜索键名和值；直接粘贴进搜索框的 JSON 也认，`.json` 等文件右键「用 JSON 工具查看」；C++ 常驻、lazy，用 Win顺 自己的 Qt，要 `ui`、`clipboard:read`、`clipboard:write`，用到 `regex` 和 `files` 触发与 `details`；插件包的最低版本是构建它的 Win顺 版本）、`winshun.web`（网页搜索：不带程序的声明式插件，网站在插件设置里管理，见下面“网页搜索”）。以前随安装包、你又开着的，升级后 Win顺 自动从插件库装上，设置照旧。每个都是一份能跑的示例，有 README。
 
 别人写的插件、以及分享你自己的插件：[WinShun-plugins](https://github.com/LingCore/WinShun-plugins)（设置 → 插件 → 插件库 里直接安装和更新：下载后先核对大小和 sha256，再走和压缩包一样的安装；也可以自己下载 `.wsplugin`，在“已安装”里从压缩包安装；投稿见那里的 CONTRIBUTING）。插件库在打开这一页（十分钟内不重复取）、点“刷新”或安装时联网；开着“自动更新”、又装了插件库里的插件时，每天还会在后台检查一次更新。上次的列表存在数据文件夹的 `plugin-index.json`。
 
@@ -28,7 +28,7 @@ English version: [plugins.en.md](plugins.en.md).
 
 ## 快速开始
 
-插件 = 一个文件夹，放在 `%LOCALAPPDATA%\WinShun\plugins\<id>\`，里面一个 `plugin.json`。最快的路：设置 → 插件 → 高级 → 开发者模式 → **新建插件…**，选一种语言，模板连 SDK 文件一起生成好，打开开关就能用；改了脚本会自动重新加载，"消息记录"里能看到每一条往来。
+插件 = 一个文件夹，放在 `%LOCALAPPDATA%\WinShun\plugins\<id>\`，里面一个 `plugin.json`。最快的路：设置 → 插件 → 已安装 → 开发者模式（打开后多一个“开发者”标签）→ **新建插件…**，选一种语言，模板连 SDK 文件一起生成好，打开开关就能用；改了脚本会自动重新加载，"消息记录"里能看到每一条往来。
 
 下面三个例子各自五分钟。
 
@@ -444,7 +444,7 @@ manifest 的 `permissions` 是数组：`["processes", "clipboard:read", {"files:
 
 **新版本要更多权限，要再同意一次。** 你打开过的插件换了新版本（从插件库更新、装压缩包或文件夹，或者直接改了 `plugin.json`），只要它要的权限比你当初同意的多，就先停用：不启动，不回答查询，AI 用不了，也不发通知。卡片上会写明新版本多要了哪些权限。打开它的开关，会照常列出全部权限，并标出新增的几条；同意后照常使用，不同意就一直停着。权限没变或变少了，什么都不用做。随 Win顺 安装的插件跟着 Win顺 一起升级，照旧可信。只比较权限名：`files:read` 列的路径、`network:listen` 的端口变了，不会再问。
 
-**插件更新。** 设置 → 高级 → 更新里的“自动更新”开着时（默认），Win顺 每天从插件库的列表（带签名，经 `index.json.sig` 核对）查一次你装的插件。权限、读的路径、开的端口都没变的新版本，会在插件没在运行时直接换上；正在运行的先放在一边，下次启动 Win顺 时换上，也可以在插件库点“立即更新”。要新权限的新版本从不自动装：开着的插件会收到一条托盘通知（每个版本一次），“设置”里“插件”条目上的数字和托盘菜单的“N 个插件有新版本…”指向插件库里筛出的可更新项；点“更新并允许”，一步装上新版并同意新权限，保持开启；点“取消”则旧版照常用，这个版本不再计数、不再通知。插件库页的“全部更新”只更新不需要新权限的插件。列表没签名或签名不对、开发者模式、指向源码的开发中副本，都只提示，不自动替换。
+**插件更新。** 设置 → 常规 → 更新里的“自动更新”开着时（默认），Win顺 每天从插件库的列表（带签名，经 `index.json.sig` 核对）查一次你装的插件。权限、读的路径、开的端口都没变的新版本，会在插件没在运行时直接换上；正在运行的先放在一边，下次启动 Win顺 时换上，也可以在插件库点“立即更新”。要新权限的新版本从不自动装：开着的插件会收到一条托盘通知（每个版本一次），“设置”里“插件”条目上的数字和托盘菜单的“N 个插件有新版本…”指向插件库里筛出的可更新项；点“更新并允许”，一步装上新版并同意新权限，保持开启；点“取消”则旧版照常用，这个版本不再计数、不再通知。插件库页的“全部更新”只更新不需要新权限的插件。列表没签名或签名不对、开发者模式、指向源码的开发中副本，都只提示，不自动替换。
 
 只安装你信得过来源的插件。
 
@@ -476,7 +476,7 @@ manifest 写 `"ai": {"expose": true}`，并在设置 → AI 助手 打开"AI 可
 
 ## 调试
 
-- **开发者模式**（设置 → 插件 → 高级）：改了脚本自动重启常驻插件（底栏"已重新加载 X"）；"消息记录"记下每一条往来（时间、插件、方向 → ← stderr ·、方法、请求到响应的毫秒），点一条看整个消息；"打开 plugins.log"（`%LOCALAPPDATA%\WinShun\plugins.log`，插件的 stderr、协议错误、崩溃都在那）。
+- **开发者模式**（设置 → 插件 → 已安装里的开关，打开后多一个“开发者”标签）：改了脚本自动重启常驻插件（底栏"已重新加载 X"）；"消息记录"记下每一条往来（时间、插件、方向 → ← stderr ·、方法、请求到响应的毫秒），点一条看整个消息；"打开 plugins.log"（`%LOCALAPPDATA%\WinShun\plugins.log`，插件的 stderr、协议错误、崩溃都在那）。
 - **`ws plugin`**（Win顺 自带的命令行，先在 设置 → AI 助手 里启用命令行）：`ws plugin install <插件文件夹或 .wsplugin>` 把它装上（新装的先关着；盖在开着的版本上直接换成新的，改完再装一次就行），`ws plugin enable <id>` 打开（第一次要你在 Win顺 的窗口里确认权限），`ws plugin list --json` 看它的状态（`state`、进程的 `status`、`error`：manifest 的错、缺程序、上次崩溃）。AI 助手也这样装上试。
 - **让 AI 写**：`npx skills add LingCore/WinShun --skill winshun-plugin-dev` 给 Claude Code、Codex、Cursor 等装上写插件的 Skill（协议要点、上面这个循环、发布步骤），不用再手动复制开发提示。
 - **wsbench**（源码编译出的 `build\release\wsbench.exe`，不用开界面）：
