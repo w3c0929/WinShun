@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(WinShun
-    VERSION 0.33.1
+    VERSION 0.35.0
     DESCRIPTION "Fast file, folder and text-content search launcher for Windows"
     LANGUAGES C CXX) # C: miniz
 
@@ -43,6 +43,20 @@ if(MSVC)
     endif()
 endif()
 
+# zstd (BSD, third_party/zstd: lib/ of the 1.5.7 release, unchanged).
+# Win顺 applies delta updates (src/app/UpdateDelta) with the decompressor
+# alone; the compressor goes only into tools/delta and the tests.
+file(GLOB zstd_common_sources ${PROJECT_SOURCE_DIR}/third_party/zstd/common/*.c)
+file(GLOB zstd_decompress_sources ${PROJECT_SOURCE_DIR}/third_party/zstd/decompress/*.c)
+file(GLOB zstd_compress_sources ${PROJECT_SOURCE_DIR}/third_party/zstd/compress/*.c)
+add_library(zstd_decompress STATIC ${zstd_common_sources} ${zstd_decompress_sources})
+add_library(zstd_full STATIC ${zstd_common_sources} ${zstd_decompress_sources} ${zstd_compress_sources})
+foreach(zstd_target zstd_decompress zstd_full)
+    target_include_directories(${zstd_target} PUBLIC ${PROJECT_SOURCE_DIR}/third_party/zstd)
+    # No assembly (the Huffman decoder's is for GCC/Clang), no threads.
+    target_compile_definitions(${zstd_target} PRIVATE ZSTD_DISABLE_ASM)
+endforeach()
+
 add_subdirectory(src/extract)
 add_subdirectory(src/core)
 add_subdirectory(src/mcp)
@@ -53,6 +67,7 @@ add_subdirectory(src/semantic-plugin)
 add_subdirectory(src/localsend-plugin)
 add_subdirectory(src/break-plugin)
 add_subdirectory(src/explorer-tabs-plugin)
+add_subdirectory(src/gestures-plugin)
 add_subdirectory(src/switches-plugin)
 add_subdirectory(src/bookmarks-plugin)
 add_subdirectory(src/translate-plugin)
@@ -130,6 +145,8 @@ add_custom_target(library_plugins ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/src/explorer-tabs-plugin/package" "${library_plugins_dir}/winshun.explorer-tabs"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${TABS_PLUGIN_MANIFEST}" "${library_plugins_dir}/winshun.explorer-tabs/plugin.json"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:WinShunExplorerTabs>" "${library_plugins_dir}/winshun.explorer-tabs/WinShunExplorerTabs.exe"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/src/gestures-plugin/package" "${library_plugins_dir}/winshun.gestures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:WinShunGestures>" "${library_plugins_dir}/winshun.gestures/WinShunGestures.exe"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/src/bookmarks-plugin/package" "${library_plugins_dir}/winshun.bookmarks"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:WinShunBookmarks>" "${library_plugins_dir}/winshun.bookmarks/WinShunBookmarks.exe"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/src/translate-plugin/package" "${library_plugins_dir}/winshun.translate"
@@ -142,7 +159,7 @@ add_custom_target(library_plugins ALL
     # What is compiled into WinShunCaptureApp.dll; Qt, ONNX Runtime and the OCR models are Win顺's.
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PROJECT_SOURCE_DIR}/third_party/zxing-cpp/LICENSE" "${library_plugins_dir}/winshun.capture/licenses/zxing-cpp.txt"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PROJECT_SOURCE_DIR}/third_party/miniz/LICENSE" "${library_plugins_dir}/winshun.capture/licenses/miniz.txt"
-    DEPENDS WinShunSemantic WinShunLocalSend WinShunBreak WinShunExplorerTabs WinShunBookmarks WinShunTranslate WinShunCloudBackup WinShunCapture WinShunCaptureApp WinShunOcrSearch WinShunOcrSearchApp
+    DEPENDS WinShunSemantic WinShunLocalSend WinShunBreak WinShunExplorerTabs WinShunGestures WinShunBookmarks WinShunTranslate WinShunCloudBackup WinShunCapture WinShunCaptureApp WinShunOcrSearch WinShunOcrSearchApp
     COMMENT "Staging the library plugins into ${library_plugins_dir}"
     VERBATIM)
 
@@ -178,6 +195,17 @@ add_executable(capture-probe tools/capture-probe.cpp)
 target_link_libraries(capture-probe PRIVATE winshun_options windowsapp d3d11 dxgi dwmapi windowscodecs user32 gdi32 advapi32 ole32)
 set_target_properties(capture-probe PROPERTIES AUTOMOC OFF MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# Memory report a user runs on their own machine (tools/memreport/README.md).
+# One exe with the C runtime and miniz built in, no Qt: it runs beside any
+# installed Win顺 version and is sent on its own, not installed.
+add_executable(WinShunMemReport tools/memreport/memreport.cpp ${PROJECT_SOURCE_DIR}/third_party/miniz/miniz.c
+    ${PROJECT_SOURCE_DIR}/resources/WinShunMemReport.rc)
+target_include_directories(WinShunMemReport PRIVATE ${PROJECT_SOURCE_DIR}/third_party/miniz)
+target_compile_definitions(WinShunMemReport PRIVATE MINIZ_NO_STDIO MINIZ_NO_TIME MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
+target_link_libraries(WinShunMemReport PRIVATE winshun_options advapi32 ole32 pdh psapi shell32 user32 version wevtapi)
+set_target_properties(WinShunMemReport PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 qt_add_executable(recording-probe tools/recording-probe.cpp src/app/platform/KeyListener.cpp)
 target_include_directories(recording-probe PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
 target_link_libraries(recording-probe PRIVATE wscapture wscore Qt6::Gui shcore)
@@ -192,6 +220,14 @@ set_target_properties(capture-probe-qt PROPERTIES WIN32_EXECUTABLE OFF QT_QML_MO
 qt_add_executable(scroll-probe tools/scroll-probe.cpp)
 target_link_libraries(scroll-probe PRIVATE winshun_options Qt6::Gui Qt6::Quick windowsapp d3d11 dxgi dwmapi user32 gdi32 advapi32)
 set_target_properties(scroll-probe PROPERTIES WIN32_EXECUTABLE OFF QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+
+# Delta update packages (src/app/UpdateDelta.h), made and checked by
+# scripts/release.ps1: WinShunDelta make / apply / line. Not deployed.
+qt_add_executable(WinShunDelta tools/delta/main.cpp src/app/UpdateDelta.cpp src/app/UpdateDeltaMake.cpp
+    src/app/UpdatePackage.cpp src/app/platform/Http.cpp)
+target_include_directories(WinShunDelta PRIVATE src/app src/core)
+target_link_libraries(WinShunDelta PRIVATE wscore miniz zstd_full version winhttp ws2_32)
+set_target_properties(WinShunDelta PROPERTIES WIN32_EXECUTABLE OFF QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
 
 if(WINSHUN_ASAN AND MSVC)
     # Fuzzing the parsers (tools/wsfuzz.cpp) with libFuzzer. They are built

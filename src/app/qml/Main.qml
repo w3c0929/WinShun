@@ -62,6 +62,7 @@ Window {
     // gives the strip its room instead.
     readonly property int chromeHeight: searchBar.implicitHeight + (fullHeight || folderMode ? 0 : typeStrip.fullHeight) + 1 + 8
                                         + footer.implicitHeight + (showScopeBar ? scopeBar.implicitHeight : 0)
+                                        + favoriteTiles.height // the favorites as icons, over the rows
     // TypeStrip's animated height sizes this window through the column, so
     // its outer edge, rows and footer follow the same animation. At the
     // taskbar the list gives the strip its room and the window stays full height.
@@ -135,7 +136,7 @@ Window {
     function rowAtY(y, after) {
         const h = viewRowHeight
         if (panel || elsewhereRow < 0 || boxList.contentHeight <= 0)
-            return Math.floor(y / h)
+            return Math.floor(y / h) + tileRows // the tiles' rows take no room in the list
         const at = boxList.indexAt(boxList.contentX + 1, y)
         if (at >= 0)
             return at
@@ -216,6 +217,10 @@ Window {
     // keeps its own height (at the taskbar the list area is as tall as it gets).
     readonly property int hintSpace: showHints && !fullHeight && shownRows < fitRows ? hints.length * hintHeight : 0
     property int hintIndex: -1 // the hint the keyboard is on; -1: none
+    // Where the current row stood in the list when the launcher went
+    // (Settings::reopenWhereLeft): opened again on it, it stands there again.
+    property string leftPath
+    property real leftRowY
     property int rowsBeforeHints: 0 // view.count when the keyboard went onto the hints: where what one brings starts
     function enterHints() {
         rowsBeforeHints = view.count
@@ -399,7 +404,7 @@ Window {
     // is about to fill up again does not collapse and spring back.
     property int shownRows: 0
     function settleRows() {
-        const wanted = Math.min(launcher.results.count, fitRows)
+        const wanted = Math.min(launcher.results.count - tileRows, fitRows)
         if (wanted >= shownRows || !launcher.searching) {
             shownRows = wanted
             shrinkGrace.stop()
@@ -412,7 +417,7 @@ Window {
         id: shrinkGrace
         interval: 2000 // a content scan's first matches often take over a second
         onTriggered: {
-            window.shownRows = Math.min(window.launcher.results.count, window.fitRows)
+            window.shownRows = Math.min(window.launcher.results.count - window.tileRows, window.fitRows)
             window.settleEmpty()
         }
     }
@@ -538,6 +543,10 @@ Window {
     // the rows from the anchor (where the range started) to here.
     property int selectionAnchor: -1
     readonly property int selectedCount: launcher.results.selectedCount
+    // The favorites drawn as tiles (Settings::favoriteTiles): the list's first
+    // rows, left out of it here; the tiles over it are those rows.
+    readonly property int tileRows: panel ? 0 : launcher.tileRows
+    function isTileRow(index) { return index >= 0 && index < tileRows }
     function toggleRow(index) {
         window.launcher.toggleSelected(index)
         view.currentIndex = index
@@ -581,6 +590,8 @@ Window {
         listening: window.visible && window.active && !window.menuOpen && !window.clipboardBelow
         // 字母直达 (GitHub #175): the plain list only (its rows have the room for a letter).
         jumpEnabled: window.launcher.letterJump && window.gridColumns === 1 && !window.panel
+        trigger: window.launcher.letterJumpKey
+        letters: window.launcher.letterJumpKeys
     }
     // The rows the letters are on: from the first at least half in view to the last, one letter each.
     readonly property int lastLetterRow: Math.min(view.count - 1, firstShownRow + numberHints.letters.length - 1,
@@ -589,14 +600,27 @@ Window {
         return numberHints.jumping && index >= firstShownRow && index <= lastLetterRow
             ? numberHints.letterOf(index - firstShownRow) : ""
     }
-    // A key while the letters show: a letter opens its row (with Shift: where
-    // the file is), and is taken; anything else puts the numbers back and is
-    // that key as ever (Esc only puts them back).
+    // A key while the letters show: a letter opens its row; Shift+letter
+    // picks the row and puts the letters on its buttons (GitHub #357), where
+    // a letter is that button's click (delete: twice, as with the mouse).
+    // The letter is taken; anything else puts the numbers back and is that
+    // key as ever (Esc only puts them back).
     function letterKey(event) {
-        if (!numberHints.jumping || [Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta].includes(event.key))
+        if ((!numberHints.jumping && !numberHints.picking)
+                || [Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta].includes(event.key))
             return false
-        const offset = (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) === 0
-            ? numberHints.offsetOf(event.key) : -1
+        const plain = (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) === 0
+        const offset = plain ? numberHints.offsetOf(event) : -1
+        if (numberHints.picking) {
+            const bar = view.currentItem ? view.currentItem.actions : null
+            numberHints.leave()
+            if (offset < 0)
+                return event.key === Qt.Key_Escape
+            if (!event.isAutoRepeat && bar !== null && bar.clickLettered(offset)
+                    && view.currentItem && view.currentItem.deleteArmed)
+                numberHints.pick() // delete armed: its letter again deletes
+            return true
+        }
         const row = firstShownRow + offset
         const last = lastLetterRow
         numberHints.leave()
@@ -604,11 +628,24 @@ Window {
             if (row <= last && !event.isAutoRepeat) {
                 window.launcher.clearSelection() // that row alone
                 view.currentIndex = row
-                window.launcher.trigger(row, (event.modifiers & Qt.ShiftModifier) ? Launcher.Reveal : Launcher.Open)
+                if (event.modifiers & Qt.ShiftModifier) {
+                    window.launcher.keyboardMoved()
+                    window.launcher.chooseRow(row)
+                    view.positionViewAtIndex(row, ListView.Contain)
+                    numberHints.pick()
+                } else {
+                    window.launcher.trigger(row, Launcher.Open)
+                }
             }
             return true
         }
         return event.key === Qt.Key_Escape
+    }
+    Connections { // the row picked for its buttons' letters is no longer the one under the keyboard
+        target: view
+        enabled: numberHints.picking
+        function onCurrentIndexChanged() { numberHints.leave() }
+        function onCountChanged() { numberHints.leave() }
     }
     Connections {
         target: window.searchBar
@@ -687,8 +724,7 @@ Window {
         window.launcher.chooseRow(index) // its row now: Tab goes into the folder, as a click on it
         const fromKeyboard = globalPos === undefined
         if (fromKeyboard) {
-            view.positionViewAtIndex(index, ListView.Contain)
-            globalPos = view.currentItem.mapToGlobal(56, viewRowHeight - 6)
+            globalPos = rowPoint(index)
         }
         nameTip.dismiss()
         menuLoader.active = true
@@ -735,6 +771,10 @@ Window {
     }
     function rowPoint(index) { // under the row's icon, where the keyboard's menus open
         view.currentIndex = index
+        if (isTileRow(index)) { // under a tile's icon
+            const tile = favoriteTiles.tileAt(index)
+            return tile.mapToGlobal(tile.width / 2, 46)
+        }
         view.positionViewAtIndex(index, ListView.Contain)
         return view.currentItem.mapToGlobal(56, viewRowHeight - 6)
     }
@@ -742,6 +782,8 @@ Window {
     // Hidden: also free the menu window until it is needed again.
     onVisibleChanged: {
         if (!visible) {
+            leftPath = launcher.results.pathAt(view.currentIndex)
+            leftRowY = view.currentItem ? view.currentItem.y - view.contentY : 0
             endRename(false)
             closeContextMenu()
             footer.sortMenuOpen = false // not still open when the launcher comes back
@@ -887,6 +929,39 @@ Window {
             }
             event.accepted = true
             return
+        }
+        // On a favorite's tile (nothing typed, so ← → move nothing else): the
+        // arrows go along the grid; ↓ from its last line to the list's first row.
+        if (isTileRow(view.currentIndex) && hintIndex < 0 && searchBar.composition.length === 0 && !shift && !ctrl
+                && (event.modifiers & Qt.AltModifier) === 0) {
+            const at = view.currentIndex
+            const columns = favoriteTiles.columns
+            let next = -1
+            if (event.key === Qt.Key_Left) {
+                next = Math.max(0, at - 1)
+            } else if (event.key === Qt.Key_Right) {
+                next = Math.min(tileRows - 1, at + 1)
+            } else if (key === Qt.Key_Up) {
+                if (at < columns && showHome) {
+                    enterHome()
+                    event.accepted = true
+                    return
+                }
+                next = at >= columns ? at - columns : at
+            } else if (key === Qt.Key_Down) {
+                next = at + columns < tileRows ? at + columns
+                     : Math.floor(at / columns) < Math.floor((tileRows - 1) / columns) ? tileRows - 1 // the last line is short
+                     : view.count > tileRows ? tileRows : at
+            }
+            if (next >= 0) {
+                window.launcher.keyboardMoved()
+                selectionMoved()
+                view.currentIndex = next
+                selectionAnchor = -1
+                chooseCurrentRow()
+                event.accepted = true
+                return
+            }
         }
         if (key === Qt.Key_Down || key === Qt.Key_Up || key === Qt.Key_PageDown || key === Qt.Key_PageUp) {
             window.launcher.keyboardMoved() // Alt+P is for this row now, not the one under a pointer left where it was
@@ -1085,8 +1160,15 @@ Window {
         view.contentY = view.originY - view.topMargin
         // Back out of a folder (GitHub #361): its row, maybe further down.
         const start = launcher.results.startRow()
-        if (start > 0 && view.currentIndex === start)
+        if (start > 0 && view.currentIndex === start) {
             view.positionViewAtIndex(start, ListView.Contain)
+            // Opened again where it was left: as far down as it was then.
+            if (leftPath !== "" && launcher.results.pathAt(start) === leftPath && view.currentItem && !isTileRow(start)) {
+                const top = view.originY - view.topMargin
+                const bottom = view.originY + view.contentHeight + view.bottomMargin - view.height
+                view.contentY = Math.max(top, Math.min(bottom, view.currentItem.y - leftRowY))
+            }
+        }
     }
 
     Connections {
@@ -1255,6 +1337,8 @@ Window {
                 launcher.clearSelection()
             view.currentIndex = index
             selectionAnchor = index
+            if (launcher.doubleClickToOpen && launcher.clickPreviews)
+                launcher.previewRow(index) // after the row: an open preview has come to it already
         } else {
             view.currentIndex = index
             launcher.clickRow(index) // a selected row opens the selection
@@ -1344,7 +1428,7 @@ Window {
             SearchBar {
                 id: boxBar
                 minimal: window.pureEmpty
-                keysOnly: numberHints.jumping
+                keysOnly: numberHints.jumping || numberHints.picking
                 width: parent.width
                 launcher: window.launcher
                 placement: window.placement
@@ -1371,7 +1455,26 @@ Window {
             width: parent.width
             height: Theme.edge(window.dpr)
             color: Theme.layerEdge
-            visible: !window.pureEmpty && !window.clipboardBelow && (window.listRows > 0 || window.showEmptyState)
+            visible: !window.pureEmpty && !window.clipboardBelow && (window.listRows > 0 || window.showEmptyState || favoriteTiles.shown)
+        }
+
+        FavoriteTiles { // nothing typed, the favorites as icons (Settings::favoriteTiles)
+            id: favoriteTiles
+            objectName: "favoriteTiles"
+            readonly property bool shown: !window.pureEmpty && !window.clipboardBelow && !window.appsMode && !window.folderMode && count > 0
+            width: parent.width
+            height: shown ? implicitHeight : 0
+            visible: shown
+            launcher: window.launcher
+            dpr: window.dpr
+            viewY: layout.y + y
+            currentRow: window.isTileRow(view.currentIndex) ? view.currentIndex : -1
+            selectedCount: window.selectedCount
+            onClicked: (index, modifiers) => window.rowClicked(index, modifiers)
+            onDoubleClicked: (index, modifiers) => window.rowDoubleClicked(index, modifiers)
+            onMenuRequested: (index, globalPos, modifiers) => window.rowMenuRequested(index, globalPos, modifiers)
+            onPreviewRequested: (index) => window.rowPreviewRequested(index)
+            onHoverMoved: (index, globalPos) => window.rowHoverMoved(index, globalPos)
         }
 
         Item {
@@ -1501,9 +1604,9 @@ Window {
                     x: 20
                     height: Theme.labelRowHeight
                     verticalAlignment: Text.AlignVCenter
-                    visible: view.count > 0
+                    visible: view.count > window.tileRows
                     text: window.launcher.startList === Launcher.NoStartList ? qsTr("收藏")
-                          : window.launcher.hasFavorites
+                          : window.launcher.hasFavorites && !favoriteTiles.shown
                           ? (window.launcher.startList === Launcher.RecentlyModified ? qsTr("收藏和最近修改") : qsTr("收藏和最近"))
                           : (window.launcher.startList === Launcher.RecentlyModified ? qsTr("最近修改") : qsTr("最近"))
                     color: Theme.subtext
@@ -1574,7 +1677,7 @@ Window {
                 highlight: Item {
                     id: currentHighlight
                     width: boxList.width
-                    visible: boxList.currentItem !== null
+                    visible: boxList.currentItem !== null && !window.isTileRow(boxList.currentIndex) // a tile shows itself
                     transform: ScrollPixelAlignment { // on whole device pixels, as the rows
                         view: boxList
                         viewY: layout.y + listArea.y + boxList.y
@@ -1740,11 +1843,13 @@ Window {
                     id: resultRow
                     compact: window.folderMode
                     width: boxList.width
-                    height: window.rowHeight
+                    height: window.isTileRow(index) ? 0 : window.rowHeight // a favorite drawn as a tile over the list
+                    visible: !window.isTileRow(index)
                     showModified: window.launcher.showModified
                     showSize: window.launcher.showFileSize || window.launcher.sort === Launcher.LargestFirst || window.launcher.sort === Launcher.SmallestFirst
                     hint: window.numberOf(index)
                     hintLetter: window.letterOf(index)
+                    actionLetters: numberHints.picking && index === view.currentIndex ? numberHints.letters : ""
                     reserveHintSpace: (window.numberKey >= 0 && window.launcher.numberHints !== "off") || window.launcher.letterJump
                     // With more rows in the list than number keys (also when the window shows fewer:
                     // scrolled, some rows in view have a number and some none), or letters for every row,
@@ -1989,7 +2094,7 @@ Window {
             return
         view.currentIndex = index
         view.positionViewAtIndex(index, ListView.Contain)
-        const item = view.currentItem
+        const item = isTileRow(index) ? favoriteTiles.tileAt(index) : view.currentItem // under a tile's name, as under a row's
         if (!item) {
             window.launcher.cancelRename()
             return

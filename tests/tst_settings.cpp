@@ -390,6 +390,13 @@ private slots:
         again.load();
         QCOMPARE(again.webShortcuts, migrated.webShortcuts);
         QVERIFY(!again.webSuggestions);
+        QVERIFY(again.webBrowser.isEmpty()); // Windows' default browser
+        again.webBrowser = u"C:/Program Files/Mozilla Firefox/firefox.exe"_s;
+        QVERIFY(again.saveChecked());
+        ws::Settings browser;
+        browser.load();
+        QCOMPARE(browser.webBrowser, QDir::toNativeSeparators(again.webBrowser)); // as Windows writes it
+        QCOMPARE(browser.webShortcuts, migrated.webShortcuts);
         // Disabling and deleting every website are both intentional, persistent choices.
         again.pluginConfig(ws::webplugin::kId.toString()).enabled = false;
         again.webShortcuts.clear();
@@ -1493,6 +1500,9 @@ private slots:
         fresh.load();
         QCOMPARE(fresh.sort, u"match"_s);
         QVERIFY(!fresh.doubleClickToOpen);
+        QVERIFY(!fresh.clickPreviews);
+        QVERIFY(!fresh.favoriteTiles);
+        QVERIFY(fresh.pinnedOnTop);
         QVERIFY(fresh.previewFollowsPointer);
         QVERIFY(fresh.previewRestore); // GitHub #258: a preview left open comes back, unless turned off
         QCOMPARE(fresh.pluginMaxResident, 8); // GitHub #252
@@ -1502,6 +1512,9 @@ private slots:
             s.load();
             s.sort = name.toString();
             s.doubleClickToOpen = true;
+            s.clickPreviews = true;
+            s.favoriteTiles = true;
+            s.pinnedOnTop = false;
             s.previewFollowsPointer = false;
             s.previewRestore = false;
             s.pluginMaxResident = 0; // no limit
@@ -1510,6 +1523,9 @@ private slots:
             back.load();
             QCOMPARE(back.sort, name.toString());
             QVERIFY(back.doubleClickToOpen);
+            QVERIFY(back.clickPreviews);
+            QVERIFY(back.favoriteTiles);
+            QVERIFY(!back.pinnedOnTop);
             QVERIFY(!back.previewFollowsPointer);
             QVERIFY(!back.previewRestore);
             QCOMPARE(back.pluginMaxResident, 0);

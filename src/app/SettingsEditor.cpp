@@ -287,6 +287,14 @@ void SettingsEditor::setDoubleClickToOpen(bool on)
     commit();
 }
 
+void SettingsEditor::setClickPreviews(bool on)
+{
+    if (m_settings.clickPreviews == on)
+        return;
+    m_settings.clickPreviews = on;
+    commit();
+}
+
 void SettingsEditor::setTabEntersFavoriteFolder(bool on)
 {
     if (m_settings.tabEntersFavoriteFolder == on)
@@ -359,6 +367,39 @@ void SettingsEditor::setWebFallback(bool on)
     commit();
 }
 
+void SettingsEditor::setWebBrowser(const QString& program)
+{
+    const QString native = QDir::toNativeSeparators(program.trimmed());
+    if (m_settings.webBrowser == native)
+        return;
+    m_settings.webBrowser = native;
+    commit();
+}
+
+QVariantList SettingsEditor::webBrowsers() const
+{
+    static const std::vector<shell::InstalledBrowser> installed = shell::installedBrowsers();
+    QVariantList choices{QVariantMap{{u"text"_s, tr("默认浏览器")}, {u"value"_s, QString()}}};
+    bool listed = m_settings.webBrowser.isEmpty();
+    for (const auto& browser : installed) {
+        choices.append(QVariantMap{{u"text"_s, browser.name}, {u"value"_s, browser.program}});
+        listed = listed || browser.program.compare(m_settings.webBrowser, Qt::CaseInsensitive) == 0;
+    }
+    if (!listed)
+        choices.append(QVariantMap{{u"text"_s, QFileInfo(m_settings.webBrowser).completeBaseName()}, {u"value"_s, m_settings.webBrowser}});
+    return choices;
+}
+
+bool SettingsEditor::chooseWebBrowser()
+{
+    const HWND owner = m_window ? reinterpret_cast<HWND>(m_window->winId()) : nullptr;
+    const QString path = shell::pickFile(owner, tr("选择浏览器"), {{tr("程序"), u"*.exe"_s}});
+    if (path.isEmpty())
+        return false;
+    setWebBrowser(path);
+    return true;
+}
+
 void SettingsEditor::setSort(const QString& sort)
 {
     if (m_settings.sort == sort || !isSortName(sort))
@@ -401,11 +442,35 @@ void SettingsEditor::setFavoritesOnStart(bool on)
     commit();
 }
 
+void SettingsEditor::setFavoriteTiles(bool on)
+{
+    if (m_settings.favoriteTiles == on)
+        return;
+    m_settings.favoriteTiles = on;
+    commit();
+}
+
 void SettingsEditor::setClearOnOpen(bool on)
 {
     if (m_settings.clearOnOpen == on)
         return;
     m_settings.clearOnOpen = on;
+    commit();
+}
+
+void SettingsEditor::setPinnedOnTop(bool on)
+{
+    if (m_settings.pinnedOnTop == on)
+        return;
+    m_settings.pinnedOnTop = on;
+    commit();
+}
+
+void SettingsEditor::setReopenWhereLeft(bool on)
+{
+    if (m_settings.reopenWhereLeft == on)
+        return;
+    m_settings.reopenWhereLeft = on;
     commit();
 }
 
@@ -442,6 +507,25 @@ void SettingsEditor::setLetterJump(bool on)
     commit();
 }
 
+void SettingsEditor::setLetterJumpKey(const QString& key)
+{
+    if (m_settings.letterJumpKey == key || (key != u"auto" && key != u"ctrl" && key != u"alt" && key != u"shift"))
+        return;
+    m_settings.letterJumpKey = key;
+    commit();
+}
+
+void SettingsEditor::setLetterJumpKeys(const QString& keys)
+{
+    const QString normalized = Settings::normalizedJumpKeys(keys);
+    if (m_settings.letterJumpKeys == normalized) {
+        emit changed(); // the box shows what was taken, not what was typed
+        return;
+    }
+    m_settings.letterJumpKeys = normalized;
+    commit();
+}
+
 void SettingsEditor::setNumberHints(const QString& hints)
 {
     if (m_settings.numberHints == hints || (hints != u"held" && hints != u"always" && hints != u"off"))
@@ -471,6 +555,14 @@ void SettingsEditor::setScopeButton(bool on)
     if (m_settings.scopeButton == on)
         return;
     m_settings.scopeButton = on;
+    commit();
+}
+
+void SettingsEditor::setOpenAnimation(bool on)
+{
+    if (m_settings.openAnimation == on)
+        return;
+    m_settings.openAnimation = on;
     commit();
 }
 
@@ -1722,6 +1814,14 @@ void SettingsEditor::setAutoUpdate(bool on)
     if (m_settings.autoUpdate == on)
         return;
     m_settings.autoUpdate = on;
+    commit();
+}
+
+void SettingsEditor::setUsageReport(bool on)
+{
+    if (m_settings.usageReport == on)
+        return;
+    m_settings.usageReport = on;
     commit();
 }
 

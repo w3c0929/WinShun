@@ -195,6 +195,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool showModifiedTime READ showModifiedTime WRITE setShowModifiedTime NOTIFY changed FINAL)
     Q_PROPERTY(bool showFileSize READ showFileSize WRITE setShowFileSize NOTIFY changed FINAL)
     Q_PROPERTY(bool doubleClickToOpen READ doubleClickToOpen WRITE setDoubleClickToOpen NOTIFY changed FINAL)
+    Q_PROPERTY(bool clickPreviews READ clickPreviews WRITE setClickPreviews NOTIFY changed FINAL)
     Q_PROPERTY(bool tabEntersFavoriteFolder READ tabEntersFavoriteFolder WRITE setTabEntersFavoriteFolder NOTIFY changed FINAL)
     Q_PROPERTY(bool searchApps READ searchApps WRITE setSearchApps NOTIFY changed FINAL)
     Q_PROPERTY(bool searchSystem READ searchSystem WRITE setSearchSystem NOTIFY changed FINAL)
@@ -204,6 +205,8 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool rowDeleteButton READ rowDeleteButton WRITE setRowDeleteButton NOTIFY changed FINAL)
     Q_PROPERTY(bool webSuggestions READ webSuggestions WRITE setWebSuggestions NOTIFY changed FINAL)
     Q_PROPERTY(bool webFallback READ webFallback WRITE setWebFallback NOTIFY changed FINAL)
+    Q_PROPERTY(QString webBrowser READ webBrowser WRITE setWebBrowser NOTIFY changed FINAL)
+    Q_PROPERTY(QVariantList webBrowsers READ webBrowsers NOTIFY changed FINAL)
     Q_PROPERTY(QString sort READ sort WRITE setSort NOTIFY changed FINAL) // match | newest | oldest | name | folder | type | largest | smallest (kSortNames)
     Q_PROPERTY(QString startList READ startList WRITE setStartList NOTIFY changed FINAL) // opened | modified | none
     Q_PROPERTY(int recentItems READ recentItems WRITE setRecentItems NOTIFY changed FINAL)
@@ -213,17 +216,24 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(QString queryHistoryKeys READ queryHistoryKeys WRITE setQueryHistoryKeys NOTIFY changed FINAL)
     Q_PROPERTY(QString logoRightClick READ logoRightClick WRITE setLogoRightClick NOTIFY changed FINAL)
     Q_PROPERTY(bool favoritesOnStart READ favoritesOnStart WRITE setFavoritesOnStart NOTIFY changed FINAL)
+    Q_PROPERTY(bool favoriteTiles READ favoriteTiles WRITE setFavoriteTiles NOTIFY changed FINAL)
     Q_PROPERTY(bool clearOnOpen READ clearOnOpen WRITE setClearOnOpen NOTIFY changed FINAL)
+    Q_PROPERTY(bool reopenWhereLeft READ reopenWhereLeft WRITE setReopenWhereLeft NOTIFY changed FINAL)
+    Q_PROPERTY(bool pinnedOnTop READ pinnedOnTop WRITE setPinnedOnTop NOTIFY changed FINAL)
     Q_PROPERTY(bool englishOnOpen READ englishOnOpen WRITE setEnglishOnOpen NOTIFY changed FINAL)
     Q_PROPERTY(int clipboardFillSeconds READ clipboardFillSeconds WRITE setClipboardFillSeconds NOTIFY changed FINAL) // seconds, 0: off
     Q_PROPERTY(QString numberKeys READ numberKeys WRITE setNumberKeys NOTIFY changed FINAL) // ctrl | alt | off
     Q_PROPERTY(QString numberHints READ numberHints WRITE setNumberHints NOTIFY changed FINAL) // held | always | off
     Q_PROPERTY(bool letterJump READ letterJump WRITE setLetterJump NOTIFY changed FINAL)
+    Q_PROPERTY(QString letterJumpKey READ letterJumpKey WRITE setLetterJumpKey NOTIFY changed FINAL) // auto | ctrl | alt | shift
+    Q_PROPERTY(QString letterJumpKeys READ letterJumpKeys WRITE setLetterJumpKeys NOTIFY changed FINAL)
+    Q_PROPERTY(QString defaultLetterJumpKeys READ defaultLetterJumpKeys CONSTANT FINAL)
     Q_PROPERTY(bool shortcutHelp READ shortcutHelp WRITE setShortcutHelp NOTIFY changed FINAL)
     Q_PROPERTY(bool footerHints READ footerHints WRITE setFooterHints NOTIFY changed FINAL)
     Q_PROPERTY(bool pureSearch READ pureSearch WRITE setPureSearch NOTIFY changed FINAL)
     Q_PROPERTY(bool panelListsAll READ panelListsAll WRITE setPanelListsAll NOTIFY changed FINAL)
     Q_PROPERTY(bool scopeButton READ scopeButton WRITE setScopeButton NOTIFY changed FINAL)
+    Q_PROPERTY(bool openAnimation READ openAnimation WRITE setOpenAnimation NOTIFY changed FINAL)
     Q_PROPERTY(QString previewWith READ previewWith WRITE setPreviewWith NOTIFY changed FINAL) // auto | builtin
     Q_PROPERTY(QString previewHotkey READ previewHotkey WRITE setPreviewHotkey NOTIFY changed FINAL)
     Q_PROPERTY(QString previewHotkeyError READ previewHotkeyError NOTIFY changed FINAL)
@@ -322,6 +332,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(QString corners READ corners WRITE setCorners NOTIFY changed FINAL) // round | square
     Q_PROPERTY(QString uiStyle READ uiStyle WRITE setUiStyle NOTIFY changed FINAL) // fluent | brand | tactile | liquid
     Q_PROPERTY(bool autoUpdate READ autoUpdate WRITE setAutoUpdate NOTIFY changed FINAL)
+    Q_PROPERTY(bool usageReport READ usageReport WRITE setUsageReport NOTIFY changed FINAL)
     Q_PROPERTY(QString backupFolder READ backupFolder NOTIFY changed FINAL) // empty: no backups (see Backup)
     Q_PROPERTY(bool restartRequired READ restartRequired NOTIFY changed FINAL)
     Q_PROPERTY(bool isDefault READ isDefault NOTIFY changed FINAL)
@@ -654,8 +665,10 @@ public:
     QString uiStyle() const { return m_settings.uiStyle; }
     void setUiStyle(const QString& style);
     bool autoUpdate() const { return m_settings.autoUpdate; }
+    bool usageReport() const { return m_settings.usageReport; }
     QString backupFolder() const { return QDir::toNativeSeparators(m_settings.backupFolder); }
     void setAutoUpdate(bool on);
+    void setUsageReport(bool on);
     bool restartRequired() const { return Settings::resolveRenderer(m_settings.renderer) != m_runningRenderer; }
     bool isDefault() const;
     QString dataFolder() const { return Settings::dataDir(); }
@@ -748,6 +761,8 @@ public:
     void setShowFileSize(bool on);
     bool doubleClickToOpen() const { return m_settings.doubleClickToOpen; }
     void setDoubleClickToOpen(bool on);
+    bool clickPreviews() const { return m_settings.clickPreviews; }
+    void setClickPreviews(bool on);
     bool tabEntersFavoriteFolder() const { return m_settings.tabEntersFavoriteFolder; }
     void setTabEntersFavoriteFolder(bool on);
     bool searchApps() const { return m_settings.searchApps; }
@@ -766,6 +781,14 @@ public:
     void setWebSuggestions(bool on);
     bool webFallback() const { return m_settings.webFallback; }
     void setWebFallback(bool on);
+    // 用哪个浏览器打开: the program the sites open in, empty for Windows'
+    // default browser; the choices ({text, value}): the default, the
+    // browsers Windows lists, and the program picked when it is none of them.
+    QString webBrowser() const { return m_settings.webBrowser; }
+    void setWebBrowser(const QString& program);
+    QVariantList webBrowsers() const;
+    // Asks for a browser's program and makes it the one; false when none was picked.
+    Q_INVOKABLE bool chooseWebBrowser();
     QString sort() const { return m_settings.sort; }
     void setSort(const QString& sort);
     QString startList() const { return m_settings.startList; }
@@ -776,8 +799,14 @@ public:
     void setMaxRows(int rows);
     bool favoritesOnStart() const { return m_settings.favoritesOnStart; }
     void setFavoritesOnStart(bool on);
+    bool favoriteTiles() const { return m_settings.favoriteTiles; }
+    void setFavoriteTiles(bool on);
     bool clearOnOpen() const { return m_settings.clearOnOpen; }
     void setClearOnOpen(bool on);
+    bool reopenWhereLeft() const { return m_settings.reopenWhereLeft; }
+    bool pinnedOnTop() const { return m_settings.pinnedOnTop; }
+    void setPinnedOnTop(bool on);
+    void setReopenWhereLeft(bool on);
     bool englishOnOpen() const { return m_settings.englishOnOpen; }
     void setEnglishOnOpen(bool on);
     int clipboardFillSeconds() const { return m_settings.clipboardFillSeconds; }
@@ -788,6 +817,11 @@ public:
     void setNumberHints(const QString& hints);
     bool letterJump() const { return m_settings.letterJump; }
     void setLetterJump(bool on);
+    QString letterJumpKey() const { return m_settings.letterJumpKey; }
+    void setLetterJumpKey(const QString& key);
+    QString letterJumpKeys() const { return m_settings.letterJumpKeys; }
+    void setLetterJumpKeys(const QString& keys);
+    static QString defaultLetterJumpKeys() { return Settings::defaultJumpKeys(); }
     bool shortcutHelp() const { return m_settings.shortcutHelp; }
     void setShortcutHelp(bool on);
     bool footerHints() const { return m_settings.footerHints; }
@@ -795,6 +829,8 @@ public:
     bool pureSearch() const { return m_settings.pureSearch; }
     bool scopeButton() const { return m_settings.scopeButton; }
     void setScopeButton(bool on);
+    bool openAnimation() const { return m_settings.openAnimation; }
+    void setOpenAnimation(bool on);
     void setPureSearch(bool on);
     bool panelListsAll() const { return m_settings.panelListsAll; }
     void setPanelListsAll(bool on);

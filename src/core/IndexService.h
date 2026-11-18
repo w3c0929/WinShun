@@ -9,6 +9,7 @@
 #include "Ntfs.h"
 #include "RemoteContent.h"
 #include "ShareIndexer.h"
+#include "Win32Util.h"
 
 #include <QObject>
 #include <QString>
@@ -109,6 +110,15 @@ ScopedChanges changesInScope(std::vector<FsChange> changes,
 // asked for at the last moment is never lost: the pass sees it, or whoever
 // asked sees no pass running and starts one (walkOwedFolders).
 bool passOver(std::atomic<bool>& running, const std::function<bool()>& owed);
+
+// Whether a directory link found is walked under its own path (GitHub #350),
+// and why not, for the diagnostics (#364).
+enum class LinkVerdict { Wanted, LinkExcluded, Unreadable, TargetExcluded, ShareIndexed, VolumeIndexed, NoVolume };
+struct LinkCheck {
+    LinkVerdict verdict = LinkVerdict::Unreadable;
+    std::wstring target;
+    unsigned long error = 0; // GetLastError when the link could not be read
+};
 
 class IndexService : public QObject {
     Q_OBJECT
@@ -364,11 +374,14 @@ private:
     // GitHub #350: whether the index holds a directory link's target nowhere
     // else, so that it is walked under the link (m_autoLinks): a folder on a
     // disk not indexed, a volume with no drive letter, a share not among the
-    // network shares. Never a folder excluded, nor the link in one.
-    bool linkWanted(std::wstring_view link, const Crawler& crawler) const;
+    // network shares. Never a folder excluded, nor the link in one. With why
+    // not, for the diagnostics (GitHub #364).
+    LinkCheck checkLink(std::wstring_view link, const Crawler& crawler) const;
     // Worker thread: the links found on the volumes `read` (roots) replace
     // what was known of them; those not seen before are walked (`walkNow`)
     // or left to the walk of the pass under way. True when that changed.
+    // Worker thread: the links onChanges told of (m_linksMade), taken as made since.
+    void takeLinksMade(std::stop_token stop);
     bool takeLinks(std::stop_token stop, const std::vector<std::wstring>& read, const std::vector<std::wstring>& found,
         bool walkNow);
     std::unique_ptr<Followed> follow(std::size_t volume);
@@ -496,6 +509,11 @@ private:
     LostEventsBackoff m_lostBackoff; // GUI thread
     QTimer m_verifyTimer; // verifyDueFolders
     std::atomic<bool> m_running {false}; // a worker pass is under way (from launch() to ranOut())
+    // GitHub #364: directory links made on a walked volume, told by the
+    // watcher's thread (onChanges), taken by the worker's (takeLinksMade):
+    // guarded by m_journalMutex; m_linksWake wakes a worker following journals.
+    std::vector<std::wstring> m_linksMade;
+    win32::UniqueHandle m_linksWake {::CreateEventW(nullptr, FALSE, FALSE, nullptr)};
     mutable std::mutex m_foldersMutex;
     std::vector<FolderStatus> m_folderStatus; // folderStatuses(); guarded by m_foldersMutex
     bool m_stopped = false;

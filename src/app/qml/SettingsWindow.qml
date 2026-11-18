@@ -1192,6 +1192,7 @@ Window {
         anchors.top: titleBar.bottom
         anchors.bottom: parent.bottom
         editor: window.editor
+        updater: window.updater
     }
 
     Item {
@@ -3079,6 +3080,20 @@ Window {
                     }
                 }
 
+                SettingRow { // GitHub #365
+                    title: qsTr("弹出动画")
+                    description: qsTr("搜索框打开时从任务栏一侧轻轻升起并淡入，关闭时淡出。关掉后立即出现、立即消失")
+                    tip: qsTr("Windows 设置里关掉了“动画效果”时，始终没有动画")
+                    keywords: qsTr("动画;动效;淡入;淡出;弹出;升起;过渡;拖沓;立即显示;animation;motion;fade").split(";")
+                    ToggleSwitch {
+                        objectName: "openAnimationToggle"
+                        dpr: window.dpr
+                        checked: window.editor.openAnimation
+                        Accessible.name: qsTr("弹出动画")
+                        onToggled: (on) => window.editor.openAnimation = on
+                    }
+                }
+
                 SettingRow { // with what the box looks like, where it is looked for (GitHub #185)
                     title: qsTr("纯净搜索模式")
                     description: qsTr("搜索框空着时只保留输入栏，输入后恢复结果和范围标签；右上角的搜索历史和展开按钮一直隐藏，快捷键照常可用。完整搜索窗口、文件夹内搜索和任务栏搜索不受影响")
@@ -4127,10 +4142,10 @@ Window {
                 SettingRow {
                     id: sortRow
                     title: qsTr("排序")
-                    keywords: qsTr("排序;修改时间;修改日期;最新;最早;名称;文件名;所在文件夹;目录;类型;扩展名;大小;升序;降序;sort;date;size;type").split(";")
+                    keywords: qsTr("排序;修改时间;修改日期;最新;最早;名称;文件名;所在文件夹;目录;类型;扩展名;大小;升序;降序;次数;打开次数;运行次数;最常用;sort;date;size;type;count").split(";")
                     description: qsTr("文件和文件夹怎么排（“全部”里应用和设置仍在前面）；底栏左边也能切换（Ctrl+S 在前三种里轮换）")
 
-                    readonly property var sorts: ["match", "newest", "oldest", "name", "folder", "type", "largest", "smallest"]
+                    readonly property var sorts: ["match", "newest", "oldest", "name", "folder", "type", "largest", "smallest", "opened"]
                     readonly property int chosen: sorts.indexOf(window.editor.sort)
 
                     ScopeTabs {
@@ -4142,7 +4157,7 @@ Window {
                     // Too many for one line (#44): the other orders under the first.
                     body: [
                         ScopeTabs {
-                            labels: [qsTr("名称"), qsTr("所在文件夹"), qsTr("类型"), qsTr("大的在前"), qsTr("小的在前")]
+                            labels: [qsTr("名称"), qsTr("所在文件夹"), qsTr("类型"), qsTr("大的在前"), qsTr("小的在前"), qsTr("打开最多")]
                             current: sortRow.chosen - 3 // below 0 while one of the three above is in force
                             onActivated: (index) => window.editor.sort = sortRow.sorts[index + 3]
                         }
@@ -4319,6 +4334,22 @@ Window {
                         onToggled: (on) => window.editor.favoritesOnStart = on
                     }
                 }
+
+                SettingRow {
+                    title: qsTr("收藏的样式")
+                    keywords: qsTr("收藏;图标;平铺;网格;多行;排序;拖动;favorite;icon;grid").split(";")
+                    description: window.editor.favoriteTiles
+                                 ? qsTr("不输入时，收藏排成一格格图标，名称在下面，一屏放得更多；按住一个图标稍等再拖动，可以换位置")
+                                 : qsTr("不输入时，收藏和最近打开的一样一行一个")
+
+                    ScopeTabs {
+                        objectName: "favoriteTilesChoice"
+                        enabled: window.editor.favoritesOnStart
+                        labels: [qsTr("列表"), qsTr("图标")]
+                        current: window.editor.favoriteTiles ? 1 : 0
+                        onActivated: (index) => window.editor.favoriteTiles = index === 1
+                    }
+                }
             }
 
             SettingsSection {
@@ -4432,13 +4463,21 @@ Window {
 
                 SettingRow {
                     title: qsTr("点击结果")
-                    keywords: qsTr("单击;双击;点击;鼠标;误触;打开;选中;click;double").split(";")
-                    description: qsTr("单击就打开；或者单击只选中（高亮），双击或按 Enter 才打开，结果多时不怕点错")
+                    keywords: qsTr("单击;双击;点击;鼠标;误触;打开;选中;预览;看内容;click;double;preview").split(";")
+                    description: !window.editor.doubleClickToOpen
+                                 ? qsTr("单击就打开；也可以单击只选中，双击或按 Enter 才打开，结果多时不怕点错")
+                                 : window.editor.clickPreviews
+                                   ? qsTr("单击选中并预览，不用打开就能看内容；双击或按 Enter 打开")
+                                   : qsTr("单击只选中（高亮），双击或按 Enter 才打开，结果多时不怕点错")
 
                     ScopeTabs {
-                        labels: [qsTr("单击打开"), qsTr("双击打开")]
-                        current: window.editor.doubleClickToOpen ? 1 : 0
-                        onActivated: (index) => window.editor.doubleClickToOpen = index === 1
+                        objectName: "clickActionChoice"
+                        labels: [qsTr("单击打开"), qsTr("双击打开"), qsTr("单击预览")]
+                        current: !window.editor.doubleClickToOpen ? 0 : window.editor.clickPreviews ? 2 : 1
+                        onActivated: (index) => {
+                            window.editor.clickPreviews = index === 2
+                            window.editor.doubleClickToOpen = index !== 0
+                        }
                     }
                 }
 
@@ -4576,6 +4615,33 @@ Window {
                 }
 
                 SettingRow {
+                    title: qsTr("回到上次的位置")
+                    keywords: qsTr("上次;位置;滚动;记住;选中;恢复;scroll;position;remember").split(";")
+                    description: qsTr("再打开时停在上次选中的那一行，列表也滚到那里；关掉时从第一行开始。开着“每次打开时清空搜索”时不起作用")
+
+                    ToggleSwitch {
+                        objectName: "reopenWhereLeftSwitch"
+                        dpr: window.dpr
+                        enabled: !window.editor.clearOnOpen
+                        checked: window.editor.reopenWhereLeft
+                        onToggled: (on) => window.editor.reopenWhereLeft = on
+                    }
+                }
+
+                SettingRow { // feedback 2026-11-16
+                    title: qsTr("钉住时在最前")
+                    keywords: qsTr("钉住;置顶;最前;盖住;遮挡;Ctrl+T;pin;topmost;always on top").split(";")
+                    description: qsTr("按 Ctrl+T 钉住后，搜索框一直盖在别的窗口上面；关掉时点别的窗口会把它盖住，按打开 Win顺 的快捷键再回到前面")
+
+                    ToggleSwitch {
+                        objectName: "pinnedOnTopSwitch"
+                        dpr: window.dpr
+                        checked: window.editor.pinnedOnTop
+                        onToggled: (on) => window.editor.pinnedOnTop = on
+                    }
+                }
+
+                SettingRow {
                     title: qsTr("打开时切换为英文输入")
                     keywords: qsTr("输入法;英文;字母;中文;拼音首字母;IME;English").split(";")
                     description: qsTr("中文输入法在搜索框里先用英文，直接打字母和拼音首字母；在框里切回中文照常可用，关掉后恢复原样")
@@ -4663,13 +4729,74 @@ Window {
 
                 SettingRow {
                     title: qsTr("字母直达")
-                    description: qsTr("轻按一下数字键用的那个键（搜索框是 Ctrl，剪贴板是 Alt，按上面的设置）再松开，每一行前面出现一个字母，按字母直接打开这一行（剪贴板里是粘贴），第九行以后也有；加 Shift 是打开所在位置（剪贴板里是粘贴为纯文本）。再按一下或按 Esc 退出。启动器和剪贴板共用")
+                    description: qsTr("轻按一下下面选的键再松开，每一行前面出现一个字母，按字母直接打开这一行（剪贴板里是粘贴），第九行以后也有。搜索框里按 Shift+字母是选中这一行，它的按钮（打开所在位置、在终端中打开、复制、复制路径、删除）上再出现字母，按字母就是点那个按钮，删除要按两次；剪贴板里 Shift+字母是粘贴为纯文本。再按一下那个键或按 Esc 退出。启动器和剪贴板共用")
                     keywords: qsTr("快捷键;字母;单手;vim;vi;提示;跳转;直达;hint").split(";")
 
                     ToggleSwitch {
                         dpr: window.dpr
                         checked: window.editor.letterJump
                         onToggled: (on) => window.editor.letterJump = on
+                    }
+                }
+
+                SettingRow {
+                    sub: true
+                    shown: window.editor.letterJump
+                    title: qsTr("字母直达用的键")
+                    description: window.editor.letterJumpKey === "shift"
+                                 ? qsTr("搜索框里用中文输入法时，轻按 Shift 也会切换中英文")
+                                 : qsTr("跟数字键一样：搜索框和剪贴板各用数字键设置里的那个键")
+                    keywords: qsTr("字母直达;修饰键;Ctrl;Alt;Shift").split(";")
+
+                    ScopeTabs {
+                        labels: [qsTr("跟数字键一样"), "Ctrl", "Alt", "Shift"]
+                        current: Math.max(0, ["auto", "ctrl", "alt", "shift"].indexOf(window.editor.letterJumpKey))
+                        onActivated: (index) => window.editor.letterJumpKey = ["auto", "ctrl", "alt", "shift"][index]
+                    }
+                }
+
+                SettingRow {
+                    sub: true
+                    shown: window.editor.letterJump
+                    title: qsTr("用哪些字母")
+                    description: qsTr("按顺序给第一行、第二行……，可以有数字，例如左手用的 QWERTASDFGZXCVB12345")
+                    keywords: qsTr("字母直达;字母;数字;顺序;左手;单手").split(";")
+
+                    Row {
+                        spacing: 8
+
+                        InputBox {
+                            id: letterJumpKeysBox
+                            dpr: window.dpr
+                            width: 230
+                            text: window.editor.letterJumpKeys
+                            placeholder: window.editor.defaultLetterJumpKeys
+                            // Taken as cleaned up (upper case, A-Z and 0-9 once each): the box shows that.
+                            // Anything else in it (an input method's 汉字 for the letters typed) is not
+                            // taken: cleaned up, "阿斯顿a" would be the one letter A.
+                            function take() {
+                                error = !/^[A-Za-z0-9\s,;，；]*$/.test(text)
+                                if (error)
+                                    return
+                                window.editor.letterJumpKeys = text
+                                text = Qt.binding(() => window.editor.letterJumpKeys)
+                                showStart()
+                            }
+                            onEditingFinished: take()
+                            onAccepted: take()
+                            onTextChanged: if (error && /^[A-Za-z0-9\s,;，；]*$/.test(text)) error = false
+                        }
+                        FlatButton {
+                            dpr: window.dpr
+                            visible: window.editor.letterJumpKeys !== window.editor.defaultLetterJumpKeys
+                            text: qsTr("恢复默认")
+                            onClicked: {
+                                window.editor.letterJumpKeys = window.editor.defaultLetterJumpKeys
+                                letterJumpKeysBox.error = false
+                                letterJumpKeysBox.text = Qt.binding(() => window.editor.letterJumpKeys)
+                                letterJumpKeysBox.showStart()
+                            }
+                        }
                     }
                 }
             }
@@ -5616,7 +5743,7 @@ Window {
                 width: parent.width
                 title: qsTr("更新")
                 glyph: "\uE895"
-                note: qsTr("检查 Win顺 更新访问 lcstp.com，只发送 Windows 版本和安装方式；检查插件更新从 GitHub 或镜像下载插件库列表。不发送个人信息。")
+                note: qsTr("检查 Win顺 更新访问 lcstp.com，只发送 Windows 版本和安装方式；检查插件更新从 GitHub 或镜像下载插件库列表。匿名统计每天最多一次，只发送电脑标识的单向哈希（不能还原）、版本号和 Windows 版本，用来统计用户数。不发送文件、剪贴板或任何个人信息。")
 
                 SettingRow {
                     title: qsTr("版本 %1").arg(window.updater.currentVersion)
@@ -5648,12 +5775,24 @@ Window {
                 SettingRow {
                     title: qsTr("自动更新")
                     keywords: qsTr("升级;新版本;插件;update;plugin").split(";")
-                    description: qsTr("启动后和每隔 12 小时检查 Win顺 新版本，在托盘提示；插件每天检查一次，不要新权限的更新自动安装")
+                    description: qsTr("启动后和每隔 10 分钟检查 Win顺 新版本，在托盘提示；插件每天检查一次，不要新权限的更新自动安装")
 
                     ToggleSwitch {
                         dpr: window.dpr
                         checked: window.editor.autoUpdate
                         onToggled: (on) => window.editor.autoUpdate = on
+                    }
+                }
+
+                SettingRow {
+                    title: qsTr("发送匿名统计")
+                    keywords: qsTr("统计;用户数;隐私;联网;usage;statistics;privacy;telemetry").split(";")
+                    description: qsTr("每天最多一次告诉 lcstp.com 这台电脑在用 Win顺，用来统计用户数")
+
+                    ToggleSwitch {
+                        dpr: window.dpr
+                        checked: window.editor.usageReport
+                        onToggled: (on) => window.editor.usageReport = on
                     }
                 }
             }

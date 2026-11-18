@@ -407,6 +407,10 @@ std::vector<Entry> buildCatalog()
                     "true: the launcher's scopes (全部, 文件, 内容) are one button showing the current one; a click or Tab goes to the next. "
                     "Off: the tabs side by side."},
         &Settings::scopeButton));
+    add(boolean({"Appearance/OpenAnimation", QT_TRANSLATE_NOOP("AiSettings", "弹出动画"), "appearance", -1,
+                    "true: the search box fades in rising a little from the taskbar's side, and fades out. "
+                    "false: it appears and disappears at once. Never animated while Windows' animation effects are off."},
+        &Settings::openAnimation));
     add(choice({"Appearance/Theme", QT_TRANSLATE_NOOP("AiSettings", "主题"), "appearance", -1, "Light or dark windows."},
         &Settings::theme,
         {{u"system"_s, u"follow Windows' light or dark mode"_s, QT_TRANSLATE_NOOP("AiSettings", "跟随系统")},
@@ -527,7 +531,8 @@ std::vector<Entry> buildCatalog()
             {u"folder"_s, u"by the folder each is in, A to Z"_s, QT_TRANSLATE_NOOP("AiSettings", "按所在文件夹")},
             {u"type"_s, u"by file type (extension), then name"_s, QT_TRANSLATE_NOOP("AiSettings", "按类型")},
             {u"largest"_s, u"largest files first"_s, QT_TRANSLATE_NOOP("AiSettings", "大的在前")},
-            {u"smallest"_s, u"smallest files first"_s, QT_TRANSLATE_NOOP("AiSettings", "小的在前")}}));
+            {u"smallest"_s, u"smallest files first"_s, QT_TRANSLATE_NOOP("AiSettings", "小的在前")},
+            {u"opened"_s, u"most opened from WinShun first (by count), the rest best match"_s, QT_TRANSLATE_NOOP("AiSettings", "打开最多的在前")}}));
     {
         Entry& e = add(boolean({"Results/FoldersFirst", QT_TRANSLATE_NOOP("AiSettings", "文件夹排在文件前面"), "results", 0,
                                    "全部 and 文件 list the folders found before the files (else after)."},
@@ -550,9 +555,15 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Results/FavoritesOnStart", QT_TRANSLATE_NOOP("AiSettings", "不输入时显示收藏"), "results", 1,
                     "Show favorites before typing. Turning this off keeps their names and keywords searchable."},
         &Settings::favoritesOnStart));
+    add(boolean({"Results/FavoriteTiles", QT_TRANSLATE_NOOP("AiSettings", "收藏显示为图标"), "results", 1,
+                    "With nothing typed, the favorites are a grid of icons with their names under them, over the recent items, instead of rows. Held a moment and dragged, a tile moves to another place in the favorites' order."},
+        &Settings::favoriteTiles));
     add(boolean({"Results/DoubleClickToOpen", QT_TRANSLATE_NOOP("AiSettings", "双击打开结果"), "results", 1,
                     "A click on a result only selects it; a double click (or Enter) opens it. Off: a click opens it."},
         &Settings::doubleClickToOpen));
+    add(boolean({"Results/ClickPreviews", QT_TRANSLATE_NOOP("AiSettings", "单击预览"), "results", 1,
+                    "With Results/DoubleClickToOpen on: a click on a result also shows its preview (as a middle click does); a double click or Enter still opens it."},
+        &Settings::clickPreviews));
     add(boolean({"Results/TabEntersFavoriteFolder", QT_TRANSLATE_NOOP("AiSettings", "Tab 进入收藏文件夹"), "results", 1,
                     "In All, Tab browses a favorite folder the list selected by itself (such as the first row). Off by default: Tab switches search scopes there. A folder the user moved to with the arrow keys or clicked is always browsed by Tab, Ctrl+Backspace goes back. Shift+Tab and plugin/web completion keep their usual behavior."},
         &Settings::tabEntersFavoriteFolder));
@@ -628,6 +639,12 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Launcher/ClearOnOpen", QT_TRANSLATE_NOOP("AiSettings", "每次打开时清空搜索"), "results", 2,
                     "Each time the search box opens nothing is typed and the scope is 全部, instead of keeping the last words selected."},
         &Settings::clearOnOpen));
+    add(boolean({"Launcher/ReopenWhereLeft", QT_TRANSLATE_NOOP("AiSettings", "回到上次的位置"), "results", 2,
+                    "When the search box opens again with the same words, the row it was left on is selected and the list is as far down as it was, instead of starting on the first row."},
+        &Settings::reopenWhereLeft));
+    add(boolean({"Launcher/PinnedOnTop", QT_TRANSLATE_NOOP("AiSettings", "钉住时在最前"), "results", 2,
+                    "Pinned (Ctrl+T), the search box stays over every other window. Off: another window clicked covers it like any window, and the shortcut brings it back to the front."},
+        &Settings::pinnedOnTop));
     add(boolean({"Launcher/EnglishOnOpen", QT_TRANSLATE_NOOP("AiSettings", "打开时切换为英文输入"), "results", 2,
                     "Each time the search box opens, a Chinese input method there goes into its English mode, so letters and pinyin initials go straight into the search. Switching back in the box is kept for that opening; on closing it is put back as it was."},
         &Settings::englishOnOpen));
@@ -647,10 +664,18 @@ std::vector<Entry> buildCatalog()
             {u"always"_s, u"always"_s, QT_TRANSLATE_NOOP("AiSettings", "一直显示")},
             {u"off"_s, u"never"_s, QT_TRANSLATE_NOOP("AiSettings", "不显示")}}));
     add(boolean({"Results/LetterJump", QT_TRANSLATE_NOOP("AiSettings", "字母直达"), "results", 2,
-                    "Tapping the number keys' modifier (Ctrl or Alt) by itself puts a letter on every row in view of the "
-                    "search box and the clipboard; the letter opens (pastes) its row, with Shift it shows where the file "
-                    "is (pastes as plain text). The tap again or Esc leaves."},
+                    "Tapping a key by itself (Results/LetterJumpKey) puts a letter on every row in view of the search box "
+                    "and the clipboard; the letter opens (pastes) its row. In the search box Shift+letter picks the row and "
+                    "puts letters on its buttons (open location, terminal, copy, copy path, delete twice); in the clipboard "
+                    "it pastes as plain text. The tap again or Esc leaves. The letters and their order are chosen in the "
+                    "settings window."},
         &Settings::letterJump));
+    add(choice({"Results/LetterJumpKey", QT_TRANSLATE_NOOP("AiSettings", "字母直达用的键"), "results", 2,
+                   "The key tapped by itself for 字母直达: the number keys' modifier (Ctrl when they are off), or Ctrl, Alt or "
+                   "Shift. Shift also switches a Chinese input method in the search box."},
+        &Settings::letterJumpKey,
+        {{u"auto"_s, u"same as the number keys"_s, QT_TRANSLATE_NOOP("AiSettings", "跟数字键一样")},
+            {u"ctrl"_s, u"Ctrl"_s, "Ctrl"}, {u"alt"_s, u"Alt"_s, "Alt"}, {u"shift"_s, u"Shift"_s, "Shift"}}));
 
     // ---- 文件内容搜索 ----
     add(recording({"Content/Enabled", QT_TRANSLATE_NOOP("AiSettings", "文件内容搜索"), "content", 0,
@@ -837,6 +862,9 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Update/Automatic", QT_TRANSLATE_NOOP("AiSettings", "自动更新"), "advanced", -1,
                     "Checks for new versions of Win顺 now and then, and installs plugin updates that ask for no new permissions."},
         &Settings::autoUpdate));
+    add(boolean({"Update/UsageReport", QT_TRANSLATE_NOOP("AiSettings", "发送匿名统计"), "advanced", -1,
+                    "Once a day tells lcstp.com that this computer still uses Win顺, to count the users: a one-way hash of the computer's ID, the version and the Windows version. No files or personal information."},
+        &Settings::usageReport));
     {
         add(choice({"Launcher/Renderer", QT_TRANSLATE_NOOP("AiSettings", "界面绘制方式"), "advanced", -1,
                                   "How the windows are drawn. The graphics card (d3d11) is smoother and costs about 50 MB more memory; software is for machines with little memory. Needs Win顺 to restart."},

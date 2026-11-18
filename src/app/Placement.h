@@ -52,7 +52,7 @@ namespace ws {
 // when it gets taller (atTaskbar: it does not, the list keeps its height).
 //
 // Opening and closing are animated (slideIn, slideOut) unless the system's
-// animation effects are off: it fades in coming a little from the taskbar's
+// animation effects or the user's 弹出动画 (setAnimated) are off: it fades in coming a little from the taskbar's
 // side (elsewhere: rising), and fades out where it is. By the taskbar it
 // stays over it all the while, moving no further than the gap between them:
 // a see-through taskbar (TranslucentTB) showed a window that slid behind it,
@@ -103,6 +103,7 @@ class Placement : public QObject {
     Q_PROPERTY(bool windowSizing READ windowSizing NOTIFY windowSizingChanged FINAL)
     // The content's logical size, independent of unsolicited native resizes.
     Q_PROPERTY(QSize contentSize READ contentSize WRITE setContentSize NOTIFY contentSizeChanged FINAL)
+    Q_PROPERTY(bool panelFilled READ panelFilled NOTIFY panelFilledChanged FINAL) // togglePanelFill
 
 public:
     // `group`: the state file's section with its spot ("Launcher"). A window
@@ -168,6 +169,8 @@ public:
     bool sliding() const { return m_slide.state() == QAbstractAnimation::Running; }
     QPointF contentShift() const { return m_contentShift; }
     static bool animationsOn(); // the system's "animation effects"
+    // Off: slideIn and slideOut go straight there (弹出动画, GitHub #365).
+    void setAnimated(bool on) { m_animated = on; }
 
     // The search panel (Launcher::panel): the window as large as its user
     // left it (state.ini [Panel]: its size, and its spot as fractions of the
@@ -182,9 +185,12 @@ public:
     void enterPanel(QScreen* screen);
     void leavePanel();
     // The panel over its monitor's whole work area, or back where it was
-    // (F11, GitHub #354: a file's content read large). For this opening
-    // only: not remembered as its size.
+    // (F11, GitHub #354: a file's content read large; the button beside
+    // 收回). Not its size: whether it fills is remembered (state.ini
+    // Panel/Filled), and the next panel opens so. Moved or sized by its
+    // user meanwhile, it no longer fills.
     Q_INVOKABLE void togglePanelFill();
+    bool panelFilled() const { return m_panelFilled; }
     std::optional<taskbar::Spot> taskbarSpot() const { return m_taskbar ? m_taskbarSpot : std::nullopt; }
 
     // Glides back to the home spot and stays there from now on.
@@ -233,6 +239,7 @@ signals:
     void windowSizingChanged();
     void windowResized(QSize previousSize, QSize size);
     void sizeResetRequested();
+    void panelFilledChanged();
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -280,6 +287,8 @@ private:
     void setMoving(bool moving);
     void rememberSpot(); // after a move
     void savePanel(); // the panel's size and spot, after a move or a resize
+    void fillPanel(QScreen* screen); // over the work area, to the physical pixel
+    void setPanelFilled(bool filled, bool remember);
     void glideTo(const QPoint& target);
     void save() const;
     void saveDraggedPosition();
@@ -317,7 +326,10 @@ private:
     std::optional<taskbar::Spot> m_taskbarSpot; // ... as attachTaskbar was given it
     QPointer<QScreen> m_taskbarScreen; // the taskbar's
     bool m_panel = false; // see enterPanel
+    bool m_animated = true; // setAnimated
     std::optional<QRect> m_panelUnfilled; // togglePanelFill: where it was before it filled the work area
+    bool m_panelFilled = false; // now
+    bool m_panelFillWanted = false; // remembered: the next panel fills too
     QPointF m_panelAnchor {0.5, 0.1}; // the panel's spot: centre across, top down (fractions of the work area)
     QSize m_panelSize; // logical pixels; empty: not set yet
     bool m_dropped = false; // was attached, then moved by the user: stays there

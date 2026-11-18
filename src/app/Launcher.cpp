@@ -65,7 +65,9 @@
 
 #include <algorithm>
 #include <condition_variable>
+#include <limits>
 #include <mutex>
+#include <numeric>
 #include <thread>
 
 using namespace Qt::StringLiterals;
@@ -1527,6 +1529,14 @@ void Launcher::setWebShortcuts(const WebShortcuts& shortcuts)
         search();
 }
 
+void Launcher::openWebAddress(const QString& url) const
+{
+    if (m_webBrowser.isEmpty())
+        shell::openUrl(url);
+    else
+        shell::openUrlWith(m_webBrowser, url);
+}
+
 void Launcher::setWebFallback(bool on)
 {
     if (on == m_webFallback)
@@ -1707,6 +1717,14 @@ void Launcher::setDoubleClickToOpen(bool on)
     emit resultOptionsChanged();
 }
 
+void Launcher::setClickPreviews(bool on)
+{
+    if (on == m_clickPreviews)
+        return;
+    m_clickPreviews = on;
+    emit resultOptionsChanged();
+}
+
 void Launcher::setTabEntersFavoriteFolder(bool on)
 {
     if (on == m_tabEntersFavoriteFolder)
@@ -1736,11 +1754,13 @@ void Launcher::setExcludedFiles(const QStringList& types, const QStringList& nam
         search();
 }
 
-void Launcher::setLetterJump(bool on)
+void Launcher::setLetterJump(bool on, const QString& key, const QString& keys)
 {
-    if (m_letterJump == on)
+    if (m_letterJump == on && m_letterJumpKey == key && m_letterJumpKeys == keys)
         return;
     m_letterJump = on;
+    m_letterJumpKey = key;
+    m_letterJumpKeys = keys;
     emit resultOptionsChanged();
 }
 
@@ -1880,6 +1900,27 @@ void Launcher::setStartList(StartList list)
         search();
 }
 
+void Launcher::setFavoriteTiles(bool on)
+{
+    if (m_favoriteTilesOn == on)
+        return;
+    m_favoriteTilesOn = on;
+    if (m_window && m_window->isVisible() && searchText().isEmpty())
+        search();
+}
+
+void Launcher::moveFavoriteTile(int from, int to)
+{
+    const SearchResult* a = m_tiles.at(from);
+    const SearchResult* b = m_tiles.at(to);
+    if (!m_favorites || !a || !b)
+        return;
+    const qsizetype at = m_favorites->indexOf(a->path);
+    const qsizetype there = m_favorites->indexOf(b->path);
+    if (at >= 0 && there >= 0 && at != there)
+        m_favorites->move(at, there); // saved; the tiles come again in the new order (setFavorites)
+}
+
 void Launcher::setStartOptions(int recentItems, bool favorites)
 {
     if (m_recentItems == recentItems && m_favoritesOnStart == favorites)
@@ -1919,6 +1960,7 @@ SortOrder Launcher::nameOrder() const
     case BestMatch:
     case NewestFirst:
     case OldestFirst:
+    case MostOpened:
         break;
     }
     return {};
@@ -2038,6 +2080,14 @@ void Launcher::handleShown()
     // folder came back to, or one chosen before, is no longer meant (GitHub #361).
     m_chosenPath.clear();
     m_results.setStartPath({});
+    // Unless it is to come back where it was left (Settings::reopenWhereLeft):
+    // the same words still there (not cleared on opening), on the row left
+    // on, the pages scrolled through listed again.
+    if (m_reopenWhereLeft && !m_leftPath.isEmpty() && m_query == m_leftQuery) {
+        m_chosenPath = m_leftPath;
+        m_results.setStartPath(m_leftPath);
+        m_pages = m_leftPages;
+    }
     m_tabHeld = false;
     search(); // refresh: files may have changed, and "recent" certainly has
     emit historyChanged(); // things were opened since
@@ -2894,6 +2944,10 @@ void Launcher::handleHidden()
     m_previewHandedOver = false; // back with the launcher as left (m_previewWanted), wherever it opens
     m_index->contentIndexer()->setSearchBoxOpen(false);
     m_systemCommand = false;
+    // Where it was left, should it open there again (handleShown).
+    m_leftQuery = m_query;
+    m_leftPath = m_results.pathAt(m_currentRow);
+    m_leftPages = m_pages;
     m_results.setSelection({});
     m_held.reset();
     m_statusPoll.stop();
@@ -2977,7 +3031,8 @@ void Launcher::search(bool more)
     // The folder typed in, first or alone (typingKey), is a list of its own too.
     m_refresh = m_haveResults && !m_replacePending && text == m_shownText && m_scope == m_shownScope
         && fileExtensions() == m_shownExtensions && fileTypeFolders() == m_shownTypeFolders
-        && rankBy() == m_shownRankBy && nameOrder() == m_shownOrder && m_kindOrder == m_shownKindOrder
+        && rankBy() == m_shownRankBy && nameOrder() == m_shownOrder && (m_panel || m_sort == m_shownSort)
+        && m_kindOrder == m_shownKindOrder
         && m_preferredTypes == m_shownPreferredTypes && keywordKey == m_shownKeyword
         && (m_scope != Content || (m_contentFolder == m_shownContentFolder && pickKey(m_contentPick) == m_shownPick))
         && (!text.isEmpty() || m_startList == m_shownStartList) && panelKey() == m_shownPanelKey
@@ -3139,7 +3194,7 @@ void Launcher::search(bool more)
     if (m_recordHistory && !(text.isEmpty() && m_startList == NoStartList)) {
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         request.history = m_history->ranked(text, now);
-        request.historyAffinity = m_history->affinities(text, now);
+        request.historyAffinity = byOpenCount() ? m_history->counts() : m_history->affinities(text, now);
     }
     request.web = m_web;
     request.apps = m_searchApps;
@@ -3181,8 +3236,34 @@ void Launcher::search(bool more)
 
 // Rows for the current query and scope. Replacing another query's rows
 // moves the selection back to the first one; a refresh keeps it.
+bool Launcher::byOpenCount() const
+{
+    return m_sort == MostOpened && !m_panel && !m_keyword && !searchText().isEmpty();
+}
+
 void Launcher::showRows(SearchResults rows, QStringList highlights)
 {
+    // 打开最多: the rows opened most often first, each by its own count; a
+    // status row and a keyword typed (a site's) stay first, the rest
+    // (never opened) as best matched.
+    if (byOpenCount() && m_recordHistory) {
+        const auto count = [&](const SearchResult& r) {
+            // 1000: a typed keyword's row (SearchEngine's kTypedKeywordScore)
+            return r.statusRow || r.score >= 1000 ? std::numeric_limits<int>::max() : m_history->use(r.path).count;
+        };
+        std::vector<int> counts;
+        counts.reserve(rows.size());
+        for (const SearchResult& r : rows)
+            counts.push_back(count(r));
+        std::vector<qsizetype> order(rows.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::ranges::stable_sort(order, [&](qsizetype a, qsizetype b) { return counts[a] > counts[b]; });
+        SearchResults sorted;
+        sorted.reserve(rows.size());
+        for (const qsizetype i : order)
+            sorted.append(std::move(rows[i]));
+        rows = std::move(sorted);
+    }
     if (rows.isEmpty()) {
         if (std::optional<SearchResult> web = webFallbackRow())
             rows.append(std::move(*web)); // Enter looks the words up instead of 没有找到 (GitHub #320)
@@ -3217,6 +3298,25 @@ void Launcher::showRows(SearchResults rows, QStringList highlights)
                 r.runAsAdmin = true; // the row says so (管理员)
         }
     }
+    // Nothing typed in 全部, the favorites as tiles: their rows first (over
+    // a keep-awake's, which the tiles stand over anyway), drawn as tiles by
+    // Main.qml and left out of the list there. Rows still, so the keys, the
+    // menu, the preview and the selection are a row's.
+    SearchResults tiles;
+    if (m_favoriteTilesOn && m_favoritesOnStart && !m_panel && !m_keyword && m_scope == All && searchText().isEmpty()) {
+        std::stable_partition(rows.begin(), rows.end(), [](const SearchResult& r) { return r.favorite && !r.statusRow; });
+        for (const SearchResult& r : rows) {
+            if (!r.favorite || r.statusRow)
+                break;
+            tiles.append(r);
+        }
+    }
+    const int tileRows = static_cast<int>(tiles.size());
+    m_tiles.assign(std::move(tiles), {}); // what the tiles draw: these rows' copies
+    if (m_tileRows != tileRows) {
+        m_tileRows = tileRows;
+        emit tileRowsChanged(); // before the rows: the list counts them out as it takes these
+    }
     m_results.assign(std::move(rows), std::move(highlights));
     m_shownText = searchText();
     m_shownScope = m_scope;
@@ -3224,6 +3324,7 @@ void Launcher::showRows(SearchResults rows, QStringList highlights)
     m_shownTypeFolders = fileTypeFolders();
     m_shownRankBy = rankBy();
     m_shownOrder = nameOrder();
+    m_shownSort = m_sort;
     m_shownStartList = m_startList;
     m_shownKindOrder = m_kindOrder;
     m_shownPreferredTypes = m_preferredTypes;
@@ -3312,7 +3413,7 @@ void Launcher::searchSuggestedPaths()
     if (m_recordHistory) {
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         request.history = m_history->ranked(request.text, now);
-        request.historyAffinity = m_history->affinities(request.text, now);
+        request.historyAffinity = byOpenCount() ? m_history->counts() : m_history->affinities(request.text, now);
     }
     m_requestId = m_engine->submit(std::move(request));
     m_nameRequestId = m_requestId;
@@ -5395,6 +5496,24 @@ void Launcher::togglePreview(int row)
     setPreviewWanted(true);
 }
 
+void Launcher::previewRow(int row)
+{
+    if (!m_preview)
+        return;
+    if (detailsShown()) { // the panel's details: their 预览 tab
+        if (m_contentPane->tab() != ContentPane::PreviewTab)
+            togglePreview(row);
+        return;
+    }
+    const std::optional<FilePreview::Item> item = previewItem(m_results.at(row));
+    if (!item)
+        return;
+    m_preview->forgetClosedExternal(); // QuickLook or Seer closed on its own meanwhile
+    if (m_preview->isOpen() && m_preview->isShowing(item->path))
+        return;
+    togglePreview(row); // opens it, or (open on another file) shows this one
+}
+
 void Launcher::previewHover(int row)
 {
     if (m_previewFollowsPointer && m_preview && m_preview->isOpen() && row >= 0 && row < m_results.count())
@@ -6220,10 +6339,11 @@ void Launcher::performWeb(const SearchResult& web, Action action)
     case RunAsAdmin: {
         // WINSHUN_WEB_DRYRUN (tests): said in the log (WINSHUN_LOG_INFO), not opened.
         static const bool dryRun = qEnvironmentVariableIsSet("WINSHUN_WEB_DRYRUN");
-        qInfo().noquote() << (dryRun ? u"Web: would open %1%2"_s : u"Web: open %1%2"_s)
-                                 .arg(web.target, web.suggestion ? u" (a suggestion)"_s : QString());
+        qInfo().noquote() << (dryRun ? u"Web: would open %1%2%3"_s : u"Web: open %1%2%3"_s)
+                                 .arg(web.target, web.suggestion ? u" (a suggestion)"_s : QString(),
+                                     m_webBrowser.isEmpty() ? QString() : u" in "_s + m_webBrowser);
         if (!dryRun)
-            shell::openUrl(web.target);
+            openWebAddress(web.target);
         emit dismissRequested();
         break;
     }
@@ -6372,7 +6492,7 @@ void Launcher::performMany(const SearchResults& items, Action action, const Serv
             if (r.isWeb()) {
                 if (admin)
                     continue;
-                shell::openUrl(r.target);
+                openWebAddress(r.target);
                 ++started;
                 continue; // not remembered (see performWeb)
             }

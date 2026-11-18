@@ -33,7 +33,9 @@
 
 测试只按需跑：不跑全部 CTest，发布也一样。用 `-Tests` 传本次改动涉及的测试（ctest `-R` 正则，例如 `-Tests 'tst_capture|tst_clipimage'`）；不传就不跑测试。新功能和修复照常做实际验证。
 
-脚本构建（传了 `-Tests` 就跑这几个测试），再生成标准安装包、便携包、完整离线安装包、独立增强 OCR 组件 ZIP 及 `SHA256SUMS.txt`。输出目录内运行着 Win顺，或部署目录含 `data` 时应换一个新目录。不要删除用户数据以绕过保护。
+脚本构建（传了 `-Tests` 就跑这几个测试），再生成标准安装包、便携包、完整离线安装包、独立增强 OCR 组件 ZIP、增量更新包及 `SHA256SUMS.txt`。输出目录内运行着 Win顺，或部署目录含 `data` 时应换一个新目录。不要删除用户数据以绕过保护。
+
+增量更新包（见 [architecture.md](architecture.md) “增量更新”）：脚本从 GitHub 下最近 `-DeltaCount`（默认 3）个能用增量的已发布版本的便携包，各生成一个 `WinShun-<版本>-x64-delta-from-<旧版本>.zip`（`build\…\WinShunDelta.exe make`，带增量安装程序 `WinShun-<版本>-x64-delta-setup.exe`），再用同一个工具按 Win顺 的代码还原一遍，和这次部署逐个文件比对，不一致就停下。比安装包的 60% 还大的不发。生成的隐藏行写进 `<输出目录>\delta-notes-line.txt`，`-Publish` 时加在发布说明末尾（`docs/release-notes` 里的原文不改）一起上传；这些包也是 Release 附件，也写进 `SHA256SUMS.txt`。发布后查 lcstp.com 的回答时，`body` 末尾应有这行 `<!-- winshun-delta 1 … -->`。只有源码里有 `src/app/UpdateDelta.cpp` 的已发布版本才会用增量，所以第一个带增量更新的版本发布时一个包也不生成（脚本打印 “cannot apply one”），属正常；从下一个版本起才有。
 
 构建依赖与应用内公开 GitHub 文件的默认镜像统一维护在 `resources/downloads/github-mirrors.txt`；修改后重新配置并构建。`cmake/Download.cmake` 优先镜像、再原站，每个响应都按固定 SHA256 检查，失败不使用半个文件；下载回归包含本地故障注入，公网验证需显式开启 `WINSHUN_UPDATE_LIVE=1`，不会运行安装程序。见 [镜像审计记录](download-mirrors-audit.md)。
 
@@ -49,7 +51,7 @@
 
 - **占用文件的实测（自动，必过）**：`tools/verify-installer.ps1 -WorkDir <新目录>`。它用同一份 `installer/WinShun.iss` 编译测试版（`/DTestInstall`：独立的 AppId 和程序名，不建快捷方式、不跑 [Run]、不写卸载项、不提权，不会碰本机装着或运行着的 Win顺），真的安装、真的静默升级，覆盖：正常升级、自己的程序还在运行、别的程序加载着库不放、别的程序在读文件、文件被独占打开（应当很快放弃、说明是谁、旧版本完好）。`scripts/release.ps1` 在打包前自动运行，失败就不出包。改过 `installer/` 下任何文件，或 `src/updater`、`Updater.cpp` 里启动安装程序的部分，提交前就要先跑一遍。
 - **真实升级（在开发机上做，先问用户）**：`tools/verify-installed-upgrade.ps1` 对本机 Program Files 里装着的那份做真实更新，每种方式都可以加 `-Hold`（另一个程序加载着程序目录里的库不放），跑完核对版本、新版本是否以普通权限启动、索引服务、自启任务、设置和历史。它会关掉并**替换**本机装着的 Win顺、弹 UAC，所以每次都要先得到用户同意；跑完本机装的就是新构建。
-  - `-Mode InApp -Feed <发布目录> -Version <新版本>`：**应用内更新整条链路**（检查、下载、校验、安装程序、守护的助手、新版本启动）。本机起一个只听 127.0.0.1 的假更新服务（`tools/update-feed.py`），已装的那份带着 `WINSHUN_UPDATE_AUTOINSTALL` 启动后自己完成更新。已装的版本要有这个开关（0.25.0 之后的版本）。每次发布至少跑这一项。
+  - `-Mode InApp -Feed <发布目录> -Version <新版本>`：**应用内更新整条链路**（检查、下载、校验、安装程序、守护的助手、新版本启动）。本机起一个只听 127.0.0.1 的假更新服务（`tools/update-feed.py`），已装的那份带着 `WINSHUN_UPDATE_AUTOINSTALL` 启动后自己完成更新。已装的版本要有这个开关（0.25.0 之后的版本）。每次发布至少跑这一项。已装的版本能用增量、发布目录里有对应它的增量包时，走的是增量更新（报告的 `downloaded` 是 `…-delta-from-….zip`）；加 `-NoDelta` 测完整包这条路。
   - `-Mode Setup -Setup <安装包>`：按应用内更新的参数直接静默运行安装包。
   - `-Mode Wizard -Setup <安装包>`：像双击那样走向导，页面由提权的 `tools/installer-wizard-clicks.ps1` 点过去。改过向导页面或安装模式的询问时跑。
   - `-Mode Portable -PortableZip <旧便携包> -Feed <发布目录> -Version <新版本>`：便携版自己更新（换文件的助手）。改过 `src/updater` 时跑；期间会暂时退出已装的那份，结束后恢复。
@@ -64,7 +66,7 @@
 
 提交所有本次必要改动并推送。保存已验证的提交 SHA，再次检查远端有无同版本 Release。
 
-先创建草稿 Release，使用明确的提交 SHA 为目标，上传标准安装包、便携包、完整离线安装包、增强 OCR 组件 ZIP 和 SHA256 文件。确认五个附件齐全、大小及远端 SHA256 与本地一致后，才发布草稿并设为最新正式版本。最后确认公开 Release、最新版本接口和标签提交一致；不要在没有核验结果时仅凭上传命令成功报告完成。
+先创建草稿 Release，使用明确的提交 SHA 为目标，上传标准安装包、便携包、完整离线安装包、增强 OCR 组件 ZIP、增量更新包和 SHA256 文件。确认附件齐全、大小及远端 SHA256 与本地一致后，才发布草稿并设为最新正式版本。最后确认公开 Release、最新版本接口和标签提交一致；不要在没有核验结果时仅凭上传命令成功报告完成。
 
 软件内更新问的是 lcstp.com，它最多 10 分钟后才从 GitHub 同步到新版本。发布后用 `curl` 查这两个地址，核对 `tag_name`、文件名、`size` 和 `digest` 是否和 `SHA256SUMS.txt` 一致：
 
@@ -72,6 +74,25 @@
 curl.exe -s 'https://lcstp.com/updates/winshun/stable.json?platform=windows&arch=x64&osVersion=10.0.22631'
 curl.exe -s 'https://lcstp.com/updates/winshun/stable.json?platform=windows&arch=x64&osVersion=10.0.22631&package=portable'
 ```
+
+### 推送方式：立即推送 / 正常推送
+
+每次发布由开发者决定用哪一种。用户没说就用正常推送；用户说“立即推送”“马上推给大家”“这是重要更新”之类，就用立即推送。发布前给用户的汇报里写明这次用的是哪一种。
+
+| | 正常推送（默认，`-Push Normal`） | 立即推送（`-Push Now`） |
+|---|---|---|
+| 用户什么时候看到托盘提示 | 每份 Win顺 在发布后 24 小时内各自固定的一个随机时刻（`update.ini` 的 `RolloutSlot`，第一次用时随机抽取） | lcstp.com 同步到新版本后（最多 10 分钟），下一次检查（每 10 分钟一次）就提示 |
+| 提示的样子 | “Win顺 x.y.z 可以更新了” | “Win顺 x.y.z 是重要更新 / 建议尽快更新”，更新对话框标题也这样写 |
+| 没更新时再提醒 | 同一版本最多三天一次 | 每天一次，直到更新或跳过 |
+| 适合 | 平常的功能和修复。分批到达，万一新版本有问题只影响先到的一部分人，下载也分散 | 严重问题、安全问题、更新链路本身的问题 |
+
+两种方式下，用户自己点“检查更新”或打开设置里的更新页，都能马上看到新版本；跳过的版本两种都不再自动提醒。
+
+做法：`-Push Now` 让脚本在发布说明末尾加一行隐藏注释 `<!-- winshun-push now -->`（和 `winshun-delta` 那行一样，`docs/release-notes` 里的原文不改；原文里手写了这行，脚本会停下）。lcstp.com 原样转发说明正文，服务器不用改。发布后核对 lcstp.com 回答的 `body`：立即推送时应有这行，正常推送时没有。
+
+发布后改主意：正常推送改成立即推送，就把公开 Release 的说明下载下来（`gh release view vX.Y.Z --repo LingCore/WinShun --json body --jq .body > notes.md`），在末尾加上这行，再 `gh release edit vX.Y.Z --repo LingCore/WinShun --notes-file notes.md`。lcstp.com 10 分钟内同步，各客户端在下一次检查时按立即推送提示。去掉这行就回到正常推送，已经弹出的提示不会撤回。
+
+客户端从启动时起每 10 分钟查一次 lcstp.com（第二次起带上一次回答的 ETag，没变时服务器只回 304，没有正文）。只有带这套逻辑的版本才认这行（源码里 `src/core/Release.cpp` 有 `release::push`）；之前的版本仍是启动时和每 12 小时检查，不分推送方式。所以第一个带这功能的版本自己仍按旧版本的节奏到达用户；用户装上它之后，再往后的发布才能立即推到他们那里。实现见 [architecture.md](architecture.md) “检查更新和发布”，测试 `tst_updater` 的 `pushNowOrInTurn`；本机假服务 `tools/update-feed.py` 加 `--push-now` 模拟立即推送。
 
 Scoop：`scripts/release.ps1 -Publish` 在 Release 创建成功之后，把 `bucket/winshun.json` 的 `version`、`url`、`hash` 改成这次的便携包（只改这三处，保持 4 空格缩进和无 BOM 的 UTF-8），只提交这一个文件（`git commit --only`，工作区里可能有别人的修改）为 “Scoop: winshun <版本>” 并推送。用户用 `scoop bucket add winshun https://github.com/LingCore/WinShun` 加入的就是主仓库，所以推送要在 Release 之后，清单不能比 zip 先到。`checkver` / `autoupdate` 写好了（`$sha256\s+$basename` 只匹配便携包那一行），发布后可以用 Scoop 自带的 `bin\checkver.ps1 -App winshun -Dir bucket -Update`（先复制一份目录）核对：它会用公开的 SHA256SUMS.txt 算出同样的值。`tests/tst_scoopinstall.cpp` 检查清单是合法 JSON、正则能在样例校验文件里只匹配便携包。
 

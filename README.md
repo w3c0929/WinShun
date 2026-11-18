@@ -22,7 +22,8 @@
 <a id="screenshots"></a>
 
 <p align="center">
-  <a href="https://github.com/LingCore/WinShun/releases/latest"><b>⬇️ 下载 Download</b></a> ·
+  <a href="https://lcstp.com/projects/winshun#downloads"><b>⬇️ 国内下载</b></a> ·
+  <a href="https://github.com/LingCore/WinShun/releases/latest"><b>GitHub 下载 Download</b></a> ·
   <a href="docs/使用说明.md">📖 使用说明</a> ·
   <a href="docs/截图.md">🖼️ 截图 Screenshots</a> ·
   <a href="https://github.com/LingCore/WinShun-plugins">🧩 插件库 Plugins</a> ·
@@ -49,7 +50,7 @@
 
 ### 三步上手
 
-1. 到 [Releases 页面](https://github.com/LingCore/WinShun/releases/latest) 下载 `WinShun-版本号-x64-setup.exe`，双击安装。Windows 提示“已保护你的电脑”时，点 **更多信息 → 仍要运行**（还没有代码签名证书）。
+1. 到[官网下载页](https://lcstp.com/projects/winshun#downloads)（国内加速线路）或 [GitHub Releases](https://github.com/LingCore/WinShun/releases/latest) 下载 `WinShun-版本号-x64-setup.exe`，双击安装。Windows 提示“已保护你的电脑”时，点 **更多信息 → 仍要运行**（还没有代码签名证书）。
 2. 第一次启动有两页简单设置：内容索引、剪贴板历史、截图要不要开，用哪个键打开 Win顺。选好点 **开始使用**；不想选就点 **稍后设置**，以后在设置里随时改。
 3. 连按两下 `Ctrl`，打字，按 `Enter` 打开。再按两下 `Ctrl` 或按 `Esc` 关掉。
 
@@ -93,6 +94,7 @@
 | 浏览器书签 | `bm 关键词`，搜 Chrome、Edge 的书签，拼音也行；打开开关后 `bh 关键词` 搜浏览历史 | 插件库 |
 | 局域网传输 | `传`，和开着 [LocalSend](https://localsend.org) 的手机、电脑互传文件 | 插件库 |
 | 休息提醒 | 定时提醒休息，`休息` 看还有多久 | 插件库 |
+| 鼠标手势 | 按住右键画一下：← 后退、→ 前进、↓→ 关闭窗口、↑↓ 打开搜索框等，每个都能改，`手势` 暂停 | 插件库 |
 | 资源管理器标签页 | 新开的资源管理器窗口并成标签页，还能在下次登录后打开上次的标签页（Windows 11 22H2 起） | 插件库 |
 | [云备份](docs/使用说明.md#外观设置和备份) | 设置自动备份到 WebDAV（坚果云、NAS）或 GitHub 私有仓库，`cloud` 立即备份或恢复 | 插件库 |
 
@@ -137,7 +139,7 @@
 
 ### 下载安装
 
-到 [Releases 页面](https://github.com/LingCore/WinShun/releases/latest) 下载。系统要求：Windows 10 或 11，64 位。
+到[官网下载页](https://lcstp.com/projects/winshun#downloads)（走国内加速线路，和 GitHub 上的是同一份文件）或 [GitHub Releases](https://github.com/LingCore/WinShun/releases/latest) 下载。系统要求：Windows 10 或 11，64 位。
 
 | 下载哪个 | 适合谁 |
 |---|---|
@@ -192,6 +194,34 @@ winget install LingCore.WinShun
 </details>
 
 ### 最近更新
+
+**0.35.0**
+
+- 🖱️ **鼠标手势**（新插件）：按住右键画一下就能后退、关窗口、叫出搜索框。
+- 🔲 **收藏排成图标**；🎬 **预览里放视频**；📊 **排序：打开最多**；↔️ **长截图可以横着截**（截图与录屏 1.1.23）。
+- ⬇️ **增量更新**，下一次更新起只下载变了的部分；网页搜索可以用指定浏览器打开，单击预览，搜索面板记住铺满屏幕，Clover、360 文件夹的标签页里也能用文件夹菜单。
+
+详见 [0.35.0 发布说明](docs/release-notes/v0.35.0.md)。
+
+**0.34.2**
+
+- 🛠️ **修复** 较早的 Windows 10 上托盘图标几乎看不见、深色标题栏不生效、录屏直接失败、截图排除自己窗口时变黑（截图与录屏 1.1.22）。
+
+详见 [0.34.2 发布说明](docs/release-notes/v0.34.2.md)。
+
+**0.34.1**
+
+- 🛠️ **修复** 较早的 Windows 10 上闲着时不归还内存，一直占着两三百 MB（截图与录屏 1.1.21、图片文字搜索 1.0.20 一起修了）。
+
+详见 [0.34.1 发布说明](docs/release-notes/v0.34.1.md)。
+
+**0.34.0**
+
+- 🔤 **字母直达可以换键、换字母**，`Shift`+字母点一行上的按钮（#357）。
+- ✖️ **贴图角上的关闭按钮**，鼠标从哪边进来就在哪个角（截图与录屏 1.1.20）；⚡ **可以关掉弹出动画**（#365）。
+- 🛠️ **修复** Total Commander 通过 Everything 接口看不到文件夹大小、“遍历”方式的磁盘不收录目录链接（#364）；以管理员身份运行时更新后回到管理员身份（#363）；下拉菜单的滚动条能拖了。
+
+详见 [0.34.0 发布说明](docs/release-notes/v0.34.0.md)。
 
 **0.33.0**
 
@@ -257,6 +287,7 @@ Listary、PowerToys 的“查找鼠标”默认也用双击 Ctrl，关掉其中�
 完全免费，MIT 开源。不会上传你的文件和索引，索引和历史只存在本机（`%LOCALAPPDATA%\WinShun`）。只在这些时候联网：
 
 - **检查新版本**：连接 lcstp.com，只发送系统版本和安装方式，不带个人信息（可以关）。
+- **匿名统计**：每天最多一次告诉 lcstp.com 这台电脑在用 Win顺，用来统计用户数。只发送电脑标识的单向哈希（不能还原，也对不上作者的其他软件）、版本号和 Windows 版本（设置 › 高级 › 发送匿名统计，可以关）。打开“拾穗计划”页时从 lcstp.com 取各个作品的用户数。
 - **下载更新**：你点“下载并安装”后，经第三方镜像或 GitHub 下载安装包，并用 SHA-256 校验。
 - **网站图标**：第一次显示某个网页搜索或书签时，取一次那个网站的图标。
 - **插件库**：打开设置里的“插件库”页、点“刷新”或安装插件时，取列表和插件；开着“自动更新”时每天检查一次已装插件有没有新版（可以关）。从旧版升级时，以前开着、现在不再随 Win顺 自带的插件（截图与录屏、翻译等）也从插件库取一次。
@@ -310,7 +341,7 @@ WinShun (Win顺, "Windows made smooth"): press `Ctrl` twice and a search box pop
 
 ### Get started
 
-1. Download `WinShun-<version>-x64-setup.exe` from the [Releases page](https://github.com/LingCore/WinShun/releases/latest) and run it. If Windows says “Windows protected your PC”, click **More info → Run anyway**: the app is not code-signed yet.
+1. Download `WinShun-<version>-x64-setup.exe` from the [Releases page](https://github.com/LingCore/WinShun/releases/latest) (or the [official site](https://lcstp.com/projects/winshun#downloads), faster from mainland China) and run it. If Windows says “Windows protected your PC”, click **More info → Run anyway**: the app is not code-signed yet.
 2. The first start shows two short setup pages: the content index, clipboard history, screenshots, and the key that opens WinShun. Choose **Get started**, or **Set up later** and change anything in the settings whenever you like.
 3. Press `Ctrl` twice, type, press `Enter`. `Ctrl` twice again or `Esc` closes it.
 
@@ -354,6 +385,7 @@ Some plugins come with WinShun; the rest are installed when you want them from *
 | Browser bookmarks | `bm words` searches Chrome and Edge bookmarks, pinyin too; once turned on, `bh words` searches the browsing history | Plugin library |
 | LAN transfer | `ls ` to send files to and from phones and PCs running [LocalSend](https://localsend.org) | Plugin library |
 | Break reminder | Reminds you to take breaks; `break` shows the time left | Plugin library |
+| Mouse gestures | Hold the right button and draw: ← back, → forward, ↓→ close the window, ↑↓ the search box and more, each one changeable; `gestures` pauses them | Plugin library |
 | Explorer tabs | New File Explorer windows open as tabs, and the tabs from last time come back after a logon (Windows 11 22H2 or newer) | Plugin library |
 | [Cloud backup](docs/features.en.md#looks-and-settings) | Keeps the settings backup on a WebDAV server or in a private GitHub repository; `cloud` backs up or restores | Plugin library |
 
@@ -398,7 +430,7 @@ Regex, kinds and more: [Query syntax](docs/features.en.md#file-search).
 
 ### Download and install
 
-Get it from the [Releases page](https://github.com/LingCore/WinShun/releases/latest). Requires Windows 10 or 11, 64-bit.
+Get it from the [Releases page](https://github.com/LingCore/WinShun/releases/latest), or from the [official site](https://lcstp.com/projects/winshun#downloads) (the same files, faster from mainland China). Requires Windows 10 or 11, 64-bit.
 
 | Download | For |
 |---|---|
@@ -453,6 +485,34 @@ Standard and portable packages install enhanced text recognition on demand. Open
 </details>
 
 ### What's new
+
+**0.35.0**
+
+- 🖱️ **Mouse gestures** (new plugin): hold the right button and draw to go back, close a window or open the search box.
+- 🔲 **Favorites as icons**; 🎬 **videos play in the preview**; 📊 **sort by Opened most**; ↔️ **sideways long screenshots** (Screenshot and recording 1.1.23).
+- ⬇️ **Delta updates**, downloading only what changed from the next update on; web searches in a chosen browser, click to preview, the search panel remembers filling the screen, and the folder menu works in Clover and 360 Folder tabs.
+
+See the [0.35.0 release notes](docs/release-notes/v0.35.0.md).
+
+**0.34.2**
+
+- 🛠️ **Fixed** on older Windows 10: a nearly invisible tray icon, dark title bars not applied, recording failing at once, and WinShun's own windows turning black when left out of a screenshot (Screenshot and recording 1.1.22).
+
+See the [0.34.2 release notes](docs/release-notes/v0.34.2.md).
+
+**0.34.1**
+
+- 🛠️ **Fixed** older Windows 10 builds never giving memory back when idle, holding two or three hundred MB all day (Screenshot and recording 1.1.21 and Picture text search 1.0.20 too).
+
+See the [0.34.1 release notes](docs/release-notes/v0.34.1.md).
+
+**0.34.0**
+
+- 🔤 **Letter jump with your own key and letters**, and `Shift`+letter presses a row's buttons (#357).
+- ✖️ **A close button in a pin's corner**, on the side the mouse came in from (Screenshot and recording 1.1.20); ⚡ **the open animation can be turned off** (#365).
+- 🛠️ **Fixed** Total Commander getting no folder sizes through the Everything interface, and directory links not taken on walked disks (#364); an update started as administrator comes back as administrator (#363); drop-down scroll bars can be dragged.
+
+See the [0.34.0 release notes](docs/release-notes/v0.34.0.md).
 
 **0.33.0**
 
@@ -518,6 +578,7 @@ Under **Settings › Advanced › Diagnostic logs**, click “Export diagnostic 
 Free and MIT-licensed. Your files and index are never uploaded; the index and history stay on your PC (`%LOCALAPPDATA%\WinShun`). It goes online only:
 
 - **to check for new versions** at lcstp.com, sending only the Windows version and the kind of install, nothing personal (you can turn it off);
+- **for anonymous usage statistics**: at most once a day it tells lcstp.com that this PC uses WinShun, to count the users. It sends a one-way hash of the computer's ID (it cannot be reversed or matched with the author's other apps), the version and the Windows version (Settings › Advanced › Send anonymous statistics; you can turn it off). The 拾穗计划 (Gleaning) page fetches each work's number of users from lcstp.com when it opens;
 - **to download an update** when you click “Download and install”, through third-party mirrors or GitHub, checked against its SHA-256;
 - **for site icons**: once, the first time a web search site or bookmark is shown;
 - **for the plugin library**: when you open its page in the settings, press Refresh or install a plugin, and once a day to check installed plugins for updates while Automatic updates is on (you can turn it off). After an upgrade, plugins you had on that no longer come with WinShun (Screenshot and recording, Translate and others) are fetched from it once;

@@ -211,6 +211,9 @@ public:
     // field comes back into the window and the box goes idle (as for the
     // panel): the window stays where it stands, a window of its own now.
     void launcherPinnedChanged();
+    // Over every window (its WindowStaysOnTopHint), but not while pinned
+    // with Settings::pinnedOnTop off.
+    void applyLauncherTopmost();
     // --dump <file> from another copy (tests): the launcher's state and rows as JSON.
     void dumpLauncher(const QString& file) const;
     void showClipboard();
@@ -409,6 +412,7 @@ private:
     // is asked for on a worker, then the launcher opens in that folder, on
     // that window's screen, and the keys follow; with no folder there, the
     // keys go back to Explorer.
+    std::optional<QString> hostedPlace(HWND frame, HWND control) const; // 360文件夹's tab: hostedexplorer::place
     void folderTyped(HWND root, HWND tab, bool opus, std::uint64_t request);
     void desktopTyped(HWND desktop, std::uint64_t request); // typed on the desktop's icons: the launcher, for the whole PC
     void typingFolderKnown(HWND root, HWND tab, bool opus, std::uint64_t request, bool known, const QString& folder);

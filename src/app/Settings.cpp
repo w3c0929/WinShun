@@ -608,6 +608,16 @@ QStringList Settings::defaultIndexFolders()
     return folders;
 }
 
+QString Settings::normalizedJumpKeys(const QString& keys)
+{
+    QString result;
+    for (const QChar c : keys.toUpper()) {
+        if (((c >= u'A' && c <= u'Z') || (c >= u'0' && c <= u'9')) && !result.contains(c))
+            result += c;
+    }
+    return result.isEmpty() ? defaultJumpKeys() : result;
+}
+
 QString Settings::filePath()
 {
     return QSettings(QSettings::IniFormat, QSettings::UserScope, u"WinShun"_s, u"WinShun"_s).fileName();
@@ -967,6 +977,7 @@ void Settings::load()
     showFileSize = readOrDefault(s, u"Results/ShowFileSize"_s, d.showFileSize);
     folderKeyword = normalizedTypeKeyword(readOrDefault(s, u"Results/FolderKeyword"_s, d.folderKeyword)).value_or(d.folderKeyword);
     doubleClickToOpen = readOrDefault(s, u"Results/DoubleClickToOpen"_s, d.doubleClickToOpen);
+    clickPreviews = readOrDefault(s, u"Results/ClickPreviews"_s, d.clickPreviews);
     tabEntersFavoriteFolder = readOrDefault(s, u"Results/TabEntersFavoriteFolder"_s, d.tabEntersFavoriteFolder);
     thumbnails = readOrDefault(s, u"Results/Thumbnails"_s, d.thumbnails);
     rowDeleteButton = readOrDefault(s, u"Results/DeleteButton"_s, d.rowDeleteButton);
@@ -983,9 +994,12 @@ void Settings::load()
     startList = readOrDefault(s, u"Results/StartList"_s, d.startList).trimmed().toLower();
     recentItems = std::clamp(readOrDefault(s, u"Results/RecentItems"_s, d.recentItems), 1, 200);
     favoritesOnStart = readOrDefault(s, u"Results/FavoritesOnStart"_s, d.favoritesOnStart);
+    favoriteTiles = readOrDefault(s, u"Results/FavoriteTiles"_s, d.favoriteTiles);
     if (startList != u"modified" && startList != u"none")
         startList = d.startList;
     clearOnOpen = readOrDefault(s, u"Launcher/ClearOnOpen"_s, d.clearOnOpen);
+    reopenWhereLeft = readOrDefault(s, u"Launcher/ReopenWhereLeft"_s, d.reopenWhereLeft);
+    pinnedOnTop = readOrDefault(s, u"Launcher/PinnedOnTop"_s, d.pinnedOnTop);
     englishOnOpen = readOrDefault(s, u"Launcher/EnglishOnOpen"_s, d.englishOnOpen);
     clipboardFillSeconds = std::clamp(readOrDefault(s, u"Launcher/ClipboardFill"_s, d.clipboardFillSeconds), 0, 60);
     numberKeys = readOrDefault(s, u"Results/NumberKeys"_s, d.numberKeys).trimmed().toLower();
@@ -995,11 +1009,16 @@ void Settings::load()
     if (numberHints != u"held" && numberHints != u"always" && numberHints != u"off")
         numberHints = d.numberHints;
     letterJump = readOrDefault(s, u"Results/LetterJump"_s, d.letterJump);
+    letterJumpKey = readOrDefault(s, u"Results/LetterJumpKey"_s, d.letterJumpKey).trimmed().toLower();
+    if (letterJumpKey != u"ctrl" && letterJumpKey != u"alt" && letterJumpKey != u"shift")
+        letterJumpKey = d.letterJumpKey;
+    letterJumpKeys = normalizedJumpKeys(readOrDefault(s, u"Results/LetterJumpKeys"_s, d.letterJumpKeys));
     shortcutHelp = readOrDefault(s, u"Results/ShortcutHelp"_s, d.shortcutHelp);
     footerHints = readOrDefault(s, u"Results/FooterHints"_s, d.footerHints);
     pureSearch = readOrDefault(s, u"Results/PureSearch"_s, d.pureSearch);
     panelListsAll = readOrDefault(s, u"Panel/ListAll"_s, d.panelListsAll);
     scopeButton = readOrDefault(s, u"Appearance/ScopeButton"_s, d.scopeButton);
+    openAnimation = readOrDefault(s, u"Appearance/OpenAnimation"_s, d.openAnimation);
     previewWith = readOrDefault(s, u"Results/PreviewWith"_s, d.previewWith).trimmed().toLower();
     if (previewWith != u"builtin")
         previewWith = d.previewWith;
@@ -1053,6 +1072,7 @@ void Settings::load()
     }
 
     autoUpdate = readOrDefault(s, u"Update/Automatic"_s, d.autoUpdate);
+    usageReport = readOrDefault(s, u"Update/UsageReport"_s, d.usageReport);
     // Picked folders some program garbled before they were kept (#346): as they were.
     backupFolder = ungarbledPath(readOrDefault(s, u"Backup/Folder"_s, d.backupFolder));
 
@@ -1262,7 +1282,7 @@ void Settings::load()
                     legacyCommands = object.value(u"commands"_s).toArray();
             }
             webplugin::mergeLegacyCommands(webShortcuts, config, legacyCommands);
-            webplugin::store(config, webShortcuts, webSuggestions, webFallback);
+            webplugin::store(config, webShortcuts, webSuggestions, webFallback, webBrowser);
             config.enabled = !firstRun || legacy || config.enabled;
             if (config.enabled && config.confirmed.isEmpty())
                 config.confirmed = {u"none"_s}; // URL-only; the migration adds no permission.
@@ -1274,6 +1294,7 @@ void Settings::load()
     webShortcuts = webplugin::shortcuts(plugin(webplugin::kId));
     webSuggestions = webplugin::suggestions(plugin(webplugin::kId));
     webFallback = webplugin::fallback(plugin(webplugin::kId));
+    webBrowser = QDir::toNativeSeparators(webplugin::browser(plugin(webplugin::kId)).trimmed());
     // System switches used to be unconditional native backends. Preserve
     // existing users' system-search choice once; a fresh profile starts off.
     // Persist the marker even when off, so the second load is not an upgrade.
@@ -1371,6 +1392,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Results/ShowFileSize"_s, showFileSize);
     s.setValue(u"Results/FolderKeyword"_s, folderKeyword);
     s.setValue(u"Results/DoubleClickToOpen"_s, doubleClickToOpen);
+    s.setValue(u"Results/ClickPreviews"_s, clickPreviews);
     s.setValue(u"Results/TabEntersFavoriteFolder"_s, tabEntersFavoriteFolder);
     s.setValue(u"Results/Thumbnails"_s, thumbnails);
     s.setValue(u"Results/DeleteButton"_s, rowDeleteButton);
@@ -1386,17 +1408,23 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/QueryHistoryKeys"_s, queryHistoryKeys);
     s.setValue(u"Launcher/LogoRightClick"_s, logoRightClick);
     s.setValue(u"Results/FavoritesOnStart"_s, favoritesOnStart);
+    s.setValue(u"Results/FavoriteTiles"_s, favoriteTiles);
     s.setValue(u"Launcher/ClearOnOpen"_s, clearOnOpen);
+    s.setValue(u"Launcher/ReopenWhereLeft"_s, reopenWhereLeft);
+    s.setValue(u"Launcher/PinnedOnTop"_s, pinnedOnTop);
     s.setValue(u"Launcher/EnglishOnOpen"_s, englishOnOpen);
     s.setValue(u"Launcher/ClipboardFill"_s, clipboardFillSeconds);
     s.setValue(u"Results/NumberKeys"_s, numberKeys);
     s.setValue(u"Results/NumberHints"_s, numberHints);
     s.setValue(u"Results/LetterJump"_s, letterJump);
+    s.setValue(u"Results/LetterJumpKey"_s, letterJumpKey);
+    s.setValue(u"Results/LetterJumpKeys"_s, letterJumpKeys);
     s.setValue(u"Results/ShortcutHelp"_s, shortcutHelp);
     s.setValue(u"Results/FooterHints"_s, footerHints);
     s.setValue(u"Results/PureSearch"_s, pureSearch);
     s.setValue(u"Panel/ListAll"_s, panelListsAll);
     s.setValue(u"Appearance/ScopeButton"_s, scopeButton);
+    s.setValue(u"Appearance/OpenAnimation"_s, openAnimation);
     s.setValue(u"Results/PreviewWith"_s, previewWith);
     s.setValue(u"Results/PreviewHotkey"_s, previewHotkey);
     s.setValue(u"Results/OpenHotkey"_s, openHotkey);
@@ -1415,6 +1443,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Appearance/Corners"_s, corners);
     s.setValue(u"Appearance/UiStyle"_s, uiStyle);
     s.setValue(u"Update/Automatic"_s, autoUpdate);
+    s.setValue(u"Update/UsageReport"_s, usageReport);
     s.setValue(u"Backup/Folder"_s, backupFolder);
     s.setValue(u"Index/ExcludedPaths"_s, excludedPaths);
     s.setValue(u"Index/ExcludedNames"_s, excludedNames);
@@ -1504,7 +1533,7 @@ bool Settings::saveChecked() const
         pluginConfigs.append(config);
         web = std::prev(pluginConfigs.end());
     }
-    webplugin::store(*web, webShortcuts, webSuggestions, webFallback);
+    webplugin::store(*web, webShortcuts, webSuggestions, webFallback, webBrowser);
     writePlugins(s, pluginConfigs);
     s.setValue(u"Plugins/WebSearchMigrated"_s, true);
     s.sync();

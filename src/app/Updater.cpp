@@ -1,7 +1,10 @@
 #include "Updater.h"
 
 #include "Settings.h"
+#include "UpdateDelta.h"
+#include "UsageReport.h"
 #include "platform/Http.h"
+#include "platform/Integrity.h"
 #include "platform/Shell.h"
 
 #include <QCoreApplication>
@@ -11,6 +14,7 @@
 #include <QFileInfo>
 #include <QOperatingSystemVersion>
 #include <QPointer>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
@@ -31,11 +35,18 @@ namespace ws {
 
 namespace {
 
-// Checked at every start, then every 12 hours (looked at hourly, so a
-// sleeping PC catches up when it wakes).
-constexpr auto kInterval = std::chrono::hours(12);
-// An automatic reminder for the same version, at most this often.
+// Checked at every start, then every 10 minutes (looked at every 5, so a
+// sleeping PC catches up when it wakes), so that a version the publisher
+// pushes at once (release::Push::Now) reaches everyone within minutes of
+// lcstp.com having it. Cheap: from the second check of a run on, the
+// request carries the last answer's ETag, and an unchanged answer is a 304
+// without a body.
+constexpr auto kInterval = std::chrono::minutes(10);
+constexpr auto kLook = std::chrono::minutes(5);
+// An automatic reminder for the same version, at most this often; daily
+// for a version pushed at once.
 constexpr auto kRemindInterval = std::chrono::days(3);
+constexpr auto kRemindIntervalNow = std::chrono::days(1);
 // The packages are 40-60 MB; a hundred times more is no update of ours.
 constexpr qint64 kMaxPackageBytes = 400LL << 20;
 // Where the downloads page is, for a copy that cannot update itself.
@@ -109,13 +120,30 @@ QString quoted(const QString& path)
 
 using update::helperRunning;
 
+// A download's file name. Named here, not after the service's "name":
+// nothing it sends becomes a path.
+QString packageFile(const QString& version, const QString& kind)
+{
+    static const QRegularExpression unsafe(u"[^0-9A-Za-z.\\-]"_s);
+    return updatesDir() + u"\\WinShun-%1-x64-%2"_s.arg(QString(version).remove(unsafe), kind);
+}
+
+// Delta updates (UpdateDelta.h) unless a test asks for the full package.
+bool deltaAllowed()
+{
+    return !qEnvironmentVariableIsSet("WINSHUN_UPDATE_NODELTA");
+}
+
 } // namespace
 
 struct Updater::Job {
     release::Info release;
-    release::Asset asset;
+    release::Asset asset; // what is downloaded: the delta package, or the full one
+    release::Asset full; // the full package, should the delta not do
+    bool delta = false;
     update::Kind kind = update::Kind::None;
-    QString file; // the package, in updatesDir()
+    QString file; // the package, in updatesDir(); a delta's Setup once it is built
+    QString deltaDir; // installed, delta: the Setup and its "payload", in updatesDir()
     QString stage; // portable: the new files, unpacked
     QString backup;
     std::atomic<bool> cancel {false};
@@ -123,6 +151,8 @@ struct Updater::Job {
     // Held from its check until Setup has ended (or the zip is unpacked):
     // nobody can change it in between.
     update::HeldFile held;
+    // A delta's files built for Setup and the Setup itself, held likewise.
+    std::vector<std::unique_ptr<update::HeldFile>> holds;
 };
 
 Updater::Updater(QObject* parent)
@@ -132,8 +162,10 @@ Updater::Updater(QObject* parent)
     m_kind = update::installKind(appDir(), !Settings::portableFolder().isEmpty());
     if (m_kind == update::Kind::Scoop)
         m_scoop = scoop::detect(appDir());
-    m_timer.setInterval(1h);
+    m_timer.setInterval(kLook);
     connect(&m_timer, &QTimer::timeout, this, &Updater::checkIfDue);
+    m_reportTimer.setInterval(1h);
+    connect(&m_reportTimer, &QTimer::timeout, this, &Updater::reportIfDue);
     m_progressTimer.setInterval(200);
     connect(&m_progressTimer, &QTimer::timeout, this, [this] {
         if (m_job && m_job->received != m_received) {
@@ -216,6 +248,84 @@ void Updater::setAutomatic(bool on)
     QTimer::singleShot(20s, this, &Updater::checkIfDue);
 }
 
+void Updater::setReporting(bool on)
+{
+    if (!on) {
+        m_reportTimer.stop();
+        return;
+    }
+    if (m_reportTimer.isActive())
+        return;
+    m_reportTimer.start();
+    // After the update check's 20 s: the network has had its time to come up.
+    QTimer::singleShot(30s, this, &Updater::reportIfDue);
+}
+
+void Updater::reportIfDue()
+{
+    if (!m_reportTimer.isActive() || m_reporting)
+        return; // turned off meanwhile, or one on its way
+    const QDate today = QDate::currentDate();
+    if (!usage::due(state().value(u"Usage/LastReport"_s).toDate(), today))
+        return;
+    const QString url = usage::reportUrl(feedUrl(false));
+    if (url.isEmpty())
+        return;
+    // Remembered before it is sent: a failure waits for tomorrow, as
+    // MacShun's does, rather than asking again every hour of a day offline.
+    state().setValue(u"Usage/LastReport"_s, today);
+    m_reporting = true;
+    const QOperatingSystemVersion os = QOperatingSystemVersion::current();
+    const QString osVersion = u"%1.%2.%3"_s.arg(os.majorVersion()).arg(os.minorVersion()).arg(os.microVersion());
+    const QString version = currentVersion();
+    QThreadPool::globalInstance()->start([self = QPointer(this), url, osVersion, version] {
+        const QString id = usage::installId(usage::kProject, usage::machineGuid());
+        int status = 0;
+        if (!id.isEmpty()) {
+            const QByteArray body = usage::reportBody(id, version, osVersion);
+            status = http::post(url, {{u"Content-Type"_s, u"application/json"_s}}, body, 15000, 4096).status;
+        }
+        QMetaObject::invokeMethod(qApp, [self, status, hasId = !id.isEmpty()] {
+            if (!self)
+                return;
+            self->m_reporting = false;
+            if (!hasId)
+                qInfo().noquote() << "Usage report: no machine identifier, not sent";
+            else if (status < 200 || status >= 300)
+                qInfo().noquote() << "Usage report not taken:" << status;
+        }, Qt::QueuedConnection);
+    });
+}
+
+void Updater::fetchUserCounts()
+{
+    if (m_userCountsAsked.isValid() && m_userCountsAsked.secsTo(QDateTime::currentDateTime()) < 600)
+        return;
+    const QString url = usage::projectsUrl(feedUrl(false));
+    if (url.isEmpty())
+        return;
+    m_userCountsAsked = QDateTime::currentDateTime();
+    QThreadPool::globalInstance()->start([self = QPointer(this), url] {
+        const http::Response response = http::get(url, {}, 15000, 1 << 20);
+        const QHash<QString, int> counts = response.status == 200 ? usage::userCounts(response.body) : QHash<QString, int>();
+        QMetaObject::invokeMethod(qApp, [self, counts, status = response.status] {
+            if (!self)
+                return;
+            if (status != 200) {
+                self->m_userCountsAsked = {}; // the next opening asks again
+                return;
+            }
+            QVariantMap map;
+            for (auto it = counts.begin(); it != counts.end(); ++it)
+                map.insert(it.key(), it.value());
+            if (map != self->m_userCounts) {
+                self->m_userCounts = map;
+                emit self->userCountsChanged();
+            }
+        }, Qt::QueuedConnection);
+    });
+}
+
 void Updater::setChinese(bool chinese)
 {
     if (m_chinese == chinese)
@@ -245,18 +355,31 @@ void Updater::check(bool manual)
 
     // Scoop installs the portable zip.
     const QString url = feedUrl(m_kind == update::Kind::Portable || m_kind == update::Kind::Scoop);
-    QThreadPool::globalInstance()->start([self = QPointer(this), url, manual] {
-        const http::Response response = http::get(url, {}, 20000, 1 << 20);
+    // The answer this run already has, unless the user asks: a 304 then.
+    QList<std::pair<QString, QString>> headers;
+    if (!manual && m_checkedThisRun && !m_etag.isEmpty())
+        headers.append({u"If-None-Match"_s, m_etag});
+    QThreadPool::globalInstance()->start([self = QPointer(this), url, headers, manual] {
+        const http::Response response = http::get(url, headers, 20000, 1 << 20);
         QMetaObject::invokeMethod(qApp, [self, response, manual] {
             if (self)
-                self->finishCheck(response.status, response.body, response.error, manual);
+                self->finishCheck(response.status, response.body, response.error, response.etag, manual);
         }, Qt::QueuedConnection);
     });
 }
 
-void Updater::finishCheck(int status, const QByteArray& body, unsigned long error, bool manual)
+void Updater::finishCheck(int status, const QByteArray& body, unsigned long error, const QString& etag, bool manual)
 {
     m_checking = false;
+    if (status == 304 && m_checkedThisRun) {
+        // Nothing new since the last answer; a normal version's turn
+        // (release::announceDue) may have come meanwhile.
+        m_lastChecked = QDateTime::currentDateTime();
+        state().setValue(u"LastChecked"_s, m_lastChecked);
+        emit changed();
+        announceIfDue();
+        return;
+    }
     std::optional<release::Info> latest;
     const release::Answer answer = release::judge(status, body, currentVersion(), &latest);
     if (answer == release::Answer::Invalid) {
@@ -279,6 +402,7 @@ void Updater::finishCheck(int status, const QByteArray& body, unsigned long erro
     }
 
     m_checkedThisRun = true;
+    m_etag = etag;
     m_lastChecked = QDateTime::currentDateTime();
     state().setValue(u"LastChecked"_s, m_lastChecked);
     m_problem.clear();
@@ -301,23 +425,62 @@ void Updater::finishCheck(int status, const QByteArray& body, unsigned long erro
         install();
         return;
     }
-    if (manual || shouldRemind(latest->version)) {
+    if (manual) {
         QSettings s = state();
         s.setValue(u"PromptedVersion"_s, latest->version);
         s.setValue(u"PromptedAt"_s, QDateTime::currentDateTime());
-        emit found(manual);
+        emit found(true);
+        return;
     }
+    announceIfDue();
 }
 
-// Skipped versions are not announced again; others at most every few days.
+bool Updater::urgent() const
+{
+    return m_release && release::push(m_release->notes) == release::Push::Now;
+}
+
+// This copy's moment within a day of a normal version's publishing
+// (release::announceDue): drawn once, kept beside the checks.
+int Updater::rolloutSlot()
+{
+    QSettings s = state();
+    bool ok = false;
+    const int kept = s.value(u"RolloutSlot"_s).toInt(&ok);
+    if (ok && kept >= 0 && kept < release::kRolloutSeconds)
+        return kept;
+    const int slot = static_cast<int>(QRandomGenerator::global()->bounded(release::kRolloutSeconds));
+    s.setValue(u"RolloutSlot"_s, slot);
+    return slot;
+}
+
+// The automatic notice (found(false)): when the version's push says its
+// turn has come here, and the reminders allow one.
+void Updater::announceIfDue()
+{
+    if (!m_release || m_stage != Stage::Idle)
+        return;
+    if (!release::announceDue(*m_release, rolloutSlot(), QDateTime::currentDateTimeUtc()))
+        return;
+    if (!shouldRemind(m_release->version))
+        return;
+    QSettings s = state();
+    s.setValue(u"PromptedVersion"_s, m_release->version);
+    s.setValue(u"PromptedAt"_s, QDateTime::currentDateTime());
+    emit found(false);
+}
+
+// Skipped versions are not announced again; others at most every few days
+// (daily when pushed at once).
 bool Updater::shouldRemind(const QString& version) const
 {
     const QSettings s = state();
     if (s.value(u"SkippedVersion"_s).toString() == version)
         return false;
+    const auto interval = urgent() ? std::chrono::seconds(kRemindIntervalNow) : std::chrono::seconds(kRemindInterval);
     const QDateTime promptedAt = s.value(u"PromptedAt"_s).toDateTime();
     return s.value(u"PromptedVersion"_s).toString() != version || !promptedAt.isValid()
-        || promptedAt.secsTo(QDateTime::currentDateTime()) >= std::chrono::seconds(kRemindInterval).count();
+        || promptedAt.secsTo(QDateTime::currentDateTime()) >= interval.count();
 }
 
 void Updater::openDownloadPage()
@@ -396,11 +559,6 @@ void Updater::install()
         fail(tr("更新服务器给出的安装包信息不完整（没有校验值），为了安全没有下载。请稍后再试。"));
         return;
     }
-    const QStringList urls = release::downloadUrls(*asset, loopbackHttpAllowed());
-    if (urls.isEmpty()) {
-        fail(tr("更新服务器没有给出可用的下载地址，请稍后再试。"));
-        return;
-    }
     if (!QDir().mkpath(updatesDir())) {
         fail(tr("没法创建下载文件夹 %1。").arg(updatesDir()));
         return;
@@ -409,17 +567,40 @@ void Updater::install()
     auto job = std::make_shared<Job>();
     job->release = *m_release;
     job->asset = *asset;
+    job->full = *asset;
     job->kind = m_kind;
-    // Named here, not after the service's "name": nothing it sends becomes a path.
-    static const QRegularExpression unsafe(u"[^0-9A-Za-z.\\-]"_s);
-    const QString version = QString(job->release.version).remove(unsafe);
-    job->file = updatesDir() + u"\\WinShun-%1-x64-%2"_s.arg(version,
-                    package == release::Package::Setup ? u"setup.exe"_s : u"portable.zip"_s);
+    job->file = packageFile(job->release.version, package == release::Package::Setup ? u"setup.exe"_s : u"portable.zip"_s);
     job->stage = appDir() + u'\\' + QLatin1StringView(kStageFolder);
     job->backup = appDir() + u'\\' + QLatin1StringView(kBackupFolder);
+    // Only the files that changed, when the release has a package for
+    // this version: a few MB instead of the whole program.
+    if (deltaAllowed()) {
+        if (const auto delta = update::delta::offer(*m_release, *asset, currentVersion()); delta && delta->size < asset->size) {
+            job->delta = true;
+            job->asset = *delta;
+            job->file = packageFile(job->release.version, u"delta.zip"_s);
+            job->deltaDir = packageFile(job->release.version, u"delta"_s);
+        }
+    }
     m_job = job;
+    startDownload(job);
+}
+
+void Updater::startDownload(const std::shared_ptr<Job>& job)
+{
+    const QStringList urls = release::downloadUrls(job->asset, loopbackHttpAllowed());
+    if (urls.isEmpty()) {
+        if (job->delta)
+            fallBackToFull(job, u"no download address"_s);
+        else
+            fail(tr("更新服务器没有给出可用的下载地址，请稍后再试。"));
+        return;
+    }
+    if (job->delta)
+        qInfo().noquote() << "Update: delta package" << job->asset.name << job->asset.size << "bytes";
+    job->received = 0;
     m_received = 0;
-    m_total = asset->size;
+    m_total = job->asset.size;
     setStage(Stage::Downloading);
 
     QThreadPool::globalInstance()->start([self = QPointer(this), job, urls] {
@@ -433,6 +614,25 @@ void Updater::install()
                 self->downloaded(job, result.ok, result.cancelled, result.failures.join(u'\n'));
         }, Qt::QueuedConnection);
     });
+}
+
+// The delta package did not do (not downloaded, or not fitting the files
+// here): the full package then, as if there had been none.
+void Updater::fallBackToFull(const std::shared_ptr<Job>& job, const QString& why)
+{
+    qWarning().noquote() << "Update: the delta package did not do, downloading the full one:" << why;
+    job->holds.clear();
+    job->held.close();
+    QFile::remove(job->file);
+    if (!job->deltaDir.isEmpty())
+        QDir(job->deltaDir).removeRecursively();
+    if (job->kind == update::Kind::Portable && !helperRunning())
+        QDir(job->stage).removeRecursively();
+    job->delta = false;
+    job->asset = job->full;
+    job->deltaDir.clear();
+    job->file = packageFile(job->release.version, job->kind == update::Kind::Portable ? u"portable.zip"_s : u"setup.exe"_s);
+    startDownload(job);
 }
 
 void Updater::cancelInstall()
@@ -450,6 +650,10 @@ void Updater::downloaded(const std::shared_ptr<Job>& job, bool ok, bool cancelle
         QFile::remove(job->file);
         return;
     }
+    if (!ok && job->delta) {
+        fallBackToFull(job, why);
+        return;
+    }
     if (!ok) {
         qWarning().noquote() << u"Update download failed:\n"_s + why;
         fail(tr("下载没有成功：几个下载地址都连不上，或下载到的文件没有通过校验（已删除）。请检查网络后重试。"));
@@ -464,8 +668,47 @@ void Updater::downloaded(const std::shared_ptr<Job>& job, bool ok, bool cancelle
         const bool portable = job->kind == update::Kind::Portable;
         if (!job->held.open(job->file))
             why = u"cannot hold the file"_s;
-        else if (job->held.sha256(portable ? &bytes : nullptr, kMaxPackageBytes) != job->asset.sha256.toLatin1())
+        else if (job->held.sha256(portable || job->delta ? &bytes : nullptr, kMaxPackageBytes) != job->asset.sha256.toLatin1())
             why = u"SHA-256 differs"_s;
+        if (why.isEmpty() && job->delta) {
+            // The new version's files from the ones here and the patches,
+            // each checked (UpdateDelta.h); held for Setup until it ends.
+            job->held.close();
+            QFile::remove(job->file); // used: no longer needed
+            update::delta::ApplyOptions options;
+            options.cancel = &job->cancel;
+            if (portable) {
+                if (QFileInfo::exists(job->stage) && !helperRunning())
+                    QDir(job->stage).removeRecursively(); // left by an update that did not finish
+                why = update::delta::apply(bytes, appDir(), job->stage, options);
+                if (why.isEmpty()) {
+                    const QString version = update::fileVersion(job->stage + u"\\WinShun.exe"_s);
+                    if (!release::sameVersion(version, job->release.version))
+                        why = u"WinShun.exe is version %1, not %2"_s.arg(version, job->release.version);
+                }
+            } else {
+                QDir(job->deltaDir).removeRecursively();
+                options.setupTarget = job->deltaDir + u"\\WinShun-setup.exe"_s;
+                options.hold = &job->holds;
+                if (job->kind == update::Kind::CurrentUser)
+                    options.skip = {u"WinShunService.exe"_s}; // Setup leaves it out for the user alone
+                why = update::delta::apply(bytes, appDir(), job->deltaDir + u"\\payload"_s, options);
+                if (why.isEmpty()) {
+                    job->file = options.setupTarget;
+                    const QString version = update::fileVersion(job->file);
+                    if (!release::sameVersion(version, job->release.version))
+                        why = u"Setup is version %1, not %2"_s.arg(version, job->release.version);
+                }
+            }
+            bytes.clear();
+            if (job->cancel && why.isEmpty())
+                why = u"cancelled"_s;
+            QMetaObject::invokeMethod(qApp, [self, job, why] {
+                if (self)
+                    self->verified(job, why);
+            }, Qt::QueuedConnection);
+            return;
+        }
         // Where a publisher check belongs once the packages are signed: the
         // certificate (its thumbprint) fixed in this program, and
         // WinVerifyTrust on the held file compared with it, never with
@@ -503,13 +746,20 @@ void Updater::downloaded(const std::shared_ptr<Job>& job, bool ok, bool cancelle
 void Updater::verified(const std::shared_ptr<Job>& job, const QString& why)
 {
     const auto discard = [job] {
+        job->holds.clear();
         job->held.close();
         QFile::remove(job->file);
+        if (!job->deltaDir.isEmpty())
+            QDir(job->deltaDir).removeRecursively();
         if (job->kind == update::Kind::Portable)
             QDir(job->stage).removeRecursively();
     };
     if (job != m_job || job->cancel) {
         discard();
+        return;
+    }
+    if (!why.isEmpty() && job->delta) {
+        fallBackToFull(job, why);
         return;
     }
     if (!why.isEmpty()) {
@@ -540,12 +790,16 @@ void Updater::runSetup(const std::shared_ptr<Job>& job)
     const QString args = u"/SILENT /SUPPRESSMSGBOXES /NORESTART /SP- %1 /LOG=%2"_s.arg(
         job->kind == update::Kind::AllUsers ? u"/ALLUSERS"_s : u"/CURRENTUSER"_s, quoted(log));
     setPending(job->release.version);
+    update::rememberElevation(Settings::dataDir(), integrity::processElevated()); // #363
     auto setup = std::make_shared<win32::UniqueHandle>(shell::startUnelevated(QDir::toNativeSeparators(job->file).toStdWString(), args.toStdWString()));
     if (!setup->valid()) {
         qWarning() << "Update: Setup did not start" << ::GetLastError();
         setPending({});
         job->held.close();
+        job->holds.clear();
         QFile::remove(job->file);
+        if (!job->deltaDir.isEmpty())
+            QDir(job->deltaDir).removeRecursively();
         fail(tr("安装程序没能启动，旧版本照常可用。请重试。"));
         return;
     }
@@ -582,7 +836,10 @@ void Updater::setupEnded(unsigned long exitCode)
     qWarning() << "Update: Setup ended with" << exitCode << "while this version still runs";
     setPending({});
     m_job->held.close();
+    m_job->holds.clear();
     QFile::remove(m_job->file);
+    if (!m_job->deltaDir.isEmpty())
+        QDir(m_job->deltaDir).removeRecursively();
     if (exitCode == 0) {
         setStage(Stage::Idle);
         return;
@@ -614,6 +871,7 @@ void Updater::runPortableSwap(const std::shared_ptr<Job>& job)
         return;
     }
     setPending(job->release.version);
+    update::rememberElevation(Settings::dataDir(), integrity::processElevated()); // #363
     const QString args = u"--portable --pid %1 --ready %2 --app %3 --stage %4 --backup %5 --log %6"_s
                              .arg(::GetCurrentProcessId())
                              .arg(ready, quoted(appDir()), quoted(job->stage), quoted(job->backup),
@@ -793,6 +1051,9 @@ void Updater::cleanUp()
         }
         all = QFile::remove(entry.absoluteFilePath()) && all;
     }
+    // A delta update's Setup and files (that Setup may still be ending).
+    for (const QFileInfo& entry : updates.entryInfoList({u"WinShun-*-x64-delta"_s}, QDir::Dirs | QDir::NoDotAndDotDot))
+        all = QDir(entry.absoluteFilePath()).removeRecursively() && all;
     if (m_kind == update::Kind::Portable) {
         for (const auto folder : {kStageFolder, kBackupFolder}) {
             QDir dir(appDir() + u'\\' + QLatin1StringView(folder));

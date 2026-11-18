@@ -8,6 +8,7 @@
 #include <QObject>
 #include <QTimer>
 #include <QVariantList>
+#include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
 
 #include <atomic>
@@ -52,6 +53,8 @@ class Updater : public QObject {
     Q_PROPERTY(bool available READ available NOTIFY changed FINAL) // a newer version is out
     Q_PROPERTY(QString availableVersion READ availableVersion NOTIFY changed FINAL)
     Q_PROPERTY(bool skipped READ skipped NOTIFY changed FINAL) // the user skipped that version
+    // The publisher pushed it at once (release::Push::Now): an important update.
+    Q_PROPERTY(bool urgent READ urgent NOTIFY changed FINAL)
     // From its release notes, in the UI language (see release::summary).
     Q_PROPERTY(QString summary READ summary NOTIFY changed FINAL)
     Q_PROPERTY(QVariantList highlights READ highlights NOTIFY changed FINAL) // [{symbol, text}]
@@ -67,6 +70,10 @@ class Updater : public QObject {
     Q_PROPERTY(double downloadedMB READ downloadedMB NOTIFY installChanged FINAL)
     Q_PROPERTY(double packageMB READ packageMB NOTIFY installChanged FINAL)
     Q_PROPERTY(QString installProblem READ installProblem NOTIFY installChanged FINAL) // why the last attempt failed
+    // How many computers use each of the author's works, as the 拾穗 service
+    // counts them (usage::userCounts): {"winshun": 1234, ...}; empty until
+    // fetchUserCounts() has an answer. For the 拾穗计划 page.
+    Q_PROPERTY(QVariantMap userCounts READ userCounts NOTIFY userCountsChanged FINAL)
 
 public:
     explicit Updater(QObject* parent = nullptr);
@@ -77,6 +84,7 @@ public:
     bool available() const { return m_release.has_value(); }
     QString availableVersion() const { return m_release ? m_release->version : QString(); }
     bool skipped() const;
+    bool urgent() const;
     QString summary() const;
     QVariantList highlights() const;
     QString problem() const { return m_problem; }
@@ -90,12 +98,17 @@ public:
     double downloadedMB() const { return m_received / 1048576.0; }
     double packageMB() const { return m_total / 1048576.0; }
     QString installProblem() const { return m_installProblem; }
+    QVariantMap userCounts() const { return m_userCounts; }
 
     void setAutomatic(bool on); // at startup and when the setting changes
     // At start, once notice() is connected: how the last update went, and
     // what it left removed. (Not for a preview's Updater.)
     void afterStart();
     void setChinese(bool chinese); // which half of the release notes to show
+    // The daily usage report (设置 › 高级 › 发送匿名统计): 30 s after it is
+    // turned on (at start), then hourly, the day's one report when it is
+    // still due (usage::due). Off stops it; nothing more is sent.
+    void setReporting(bool on);
 
     // `manual`: the user asked, so a failure is reported and a newer version
     // is always shown (found()), even a skipped one.
@@ -105,10 +118,14 @@ public:
     Q_INVOKABLE void install(); // download, check and install the newer version
     Q_INVOKABLE void cancelInstall(); // while downloading
     Q_INVOKABLE void copyScoopCommand(); // for a Scoop copy that cannot run it itself
+    // Asks the service for userCounts, when the page showing them opens; at
+    // most once in ten minutes. A failure leaves the counts as they were.
+    Q_INVOKABLE void fetchUserCounts();
 
 signals:
     void changed();
     void installChanged();
+    void userCountsChanged();
     // A newer version: asked for, or an automatic check that should remind.
     void found(bool manual);
     // After an update, at the next start: how it went (a tray notification).
@@ -119,10 +136,14 @@ private:
     struct Job; // a download and check under way
 
     void checkIfDue();
-    void finishCheck(int status, const QByteArray& body, unsigned long error, bool manual);
+    void finishCheck(int status, const QByteArray& body, unsigned long error, const QString& etag, bool manual);
+    void announceIfDue();
+    int rolloutSlot();
     bool shouldRemind(const QString& version) const;
     void setStage(Stage stage);
     void fail(const QString& problem);
+    void startDownload(const std::shared_ptr<Job>& job);
+    void fallBackToFull(const std::shared_ptr<Job>& job, const QString& why);
     void downloaded(const std::shared_ptr<Job>& job, bool ok, bool cancelled, const QString& why);
     void verified(const std::shared_ptr<Job>& job, const QString& why);
     void runSetup(const std::shared_ptr<Job>& job);
@@ -132,12 +153,14 @@ private:
     void reportLastUpdate(); // at start
     void cleanUp(); // what earlier updates left
     void setPending(const QString& version);
+    void reportIfDue();
 
     std::optional<release::Info> m_release; // newer than this one
     update::Kind m_kind = update::Kind::None;
     std::optional<scoop::Install> m_scoop; // when m_kind is Scoop
     bool m_checking = false;
     bool m_checkedThisRun = false;
+    QString m_etag; // of this run's last answer from the service
     bool m_chinese = true;
     QString m_problem;
     QDateTime m_lastChecked;
@@ -148,6 +171,10 @@ private:
     QString m_installProblem;
     std::shared_ptr<Job> m_job;
     QTimer m_progressTimer; // the download's bytes, shown a few times a second
+    QTimer m_reportTimer; // the usage report's hourly look
+    bool m_reporting = false; // a report on its way
+    QVariantMap m_userCounts;
+    QDateTime m_userCountsAsked;
 };
 
 } // namespace ws

@@ -30,6 +30,7 @@
 #include "DropPie.h"
 #include "DropPieHelper.h"
 #include "FolderMenu.h"
+#include "HostedExplorer.h"
 #include "History.h"
 #include "Host.h"
 #include "TranslateText.h"
@@ -1013,8 +1014,12 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
             showUpdate();
             return;
         }
-        m_messages->showNotification(tr("Win顺 %1 可以更新了").arg(m_updater->availableVersion()),
-            tr("点这里查看更新内容"), [this] { showUpdate(); });
+        if (m_updater->urgent())
+            m_messages->showNotification(tr("Win顺 %1 是重要更新").arg(m_updater->availableVersion()),
+                tr("建议尽快更新，点这里查看更新内容"), [this] { showUpdate(); });
+        else
+            m_messages->showNotification(tr("Win顺 %1 可以更新了").arg(m_updater->availableVersion()),
+                tr("点这里查看更新内容"), [this] { showUpdate(); });
     });
     // After an update put in place from here: whether it came in.
     connect(m_updater.get(), &Updater::notice, this,
@@ -1294,6 +1299,7 @@ bool App::createWindow()
     m_qml->addImageProvider(u"preview"_s, m_preview->imageProvider()); // the picture in the preview (Alt+P)
     m_qml->addImageProvider(u"panepreview"_s, m_launcher->contentPane()->filePreview()->imageProvider()); // the search panel's 预览 tab
     m_placement = std::make_unique<Placement>(Settings::dataDir() + u"\\state.ini"_s, u"Launcher"_s);
+    m_placement->setAnimated(m_settings.openAnimation); // 弹出动画 (applySettings came before it)
     m_frame = std::make_unique<WindowFrame>(false);
     m_qml->setInitialProperties({
         {u"launcher"_s, QVariant::fromValue(m_launcher.get())},
@@ -1541,6 +1547,7 @@ void App::applyWebSearch()
     m_launcher->setWebShortcuts(shortcuts);
     m_launcher->setWebSuggestions(!shortcuts.isEmpty() && m_settings.webSuggestions);
     m_launcher->setWebFallback(m_settings.webFallback);
+    m_launcher->setWebBrowser(m_settings.webBrowser);
 }
 
 bool App::openWebSearch(const QString& query)
@@ -1552,8 +1559,10 @@ bool App::openWebSearch(const QString& query)
         return false;
     static const bool dryRun = qEnvironmentVariableIsSet("WINSHUN_WEB_DRYRUN");
     qInfo().noquote() << (dryRun ? u"Web: would open %1 (the words read from a picture)"_s : u"Web: open %1 (the words read from a picture)"_s).arg(url);
-    if (!dryRun)
+    if (!dryRun && m_settings.webBrowser.isEmpty())
         shell::openUrl(url);
+    else if (!dryRun)
+        shell::openUrlWith(m_settings.webBrowser, url);
     return true;
 }
 
@@ -1945,6 +1954,7 @@ void App::applySettings(bool initial)
     shellmenu::applyUriProtocol(m_settings.uriProtocol);
     shellmenu::applyPasteFile(m_settings.pasteFileEnabled && m_settings.pasteFileMenu);
     m_updater->setAutomatic(m_settings.autoUpdate);
+    m_updater->setReporting(m_settings.usageReport);
     if (m_pluginUpdates) {
         m_pluginUpdates->setAutomatic(m_settings.autoUpdate);
         m_pluginUpdates->setPolicy(m_settings.pluginDeveloperMode, m_settings.plugins);
@@ -1959,6 +1969,7 @@ void App::applySettings(bool initial)
     m_launcher->setResultOptions(m_settings.foldersFirst ? KindOrder::FoldersFirst : KindOrder::FilesFirst,
         m_settings.showModified, m_settings.showFileSize, m_settings.thumbnails, m_settings.numberKeys);
     m_launcher->setDoubleClickToOpen(m_settings.doubleClickToOpen);
+    m_launcher->setClickPreviews(m_settings.clickPreviews);
     m_launcher->setTabEntersFavoriteFolder(m_settings.tabEntersFavoriteFolder);
     m_launcher->setSearchKinds(m_settings.searchApps, m_settings.searchSystem);
     m_launcher->setRunningTray(m_settings.runningTray);
@@ -1973,25 +1984,30 @@ void App::applySettings(bool initial)
             : m_settings.startList == u"none"                     ? Launcher::NoStartList
                                                                  : Launcher::RecentlyOpened);
     m_launcher->setStartOptions(m_settings.recentItems, m_settings.favoritesOnStart);
+    m_launcher->setFavoriteTiles(m_settings.favoriteTiles);
     m_preview->setBuiltInOnly(m_settings.previewWith == u"builtin");
     m_launcher->setPreviewHotkey(m_settings.previewHotkey);
     m_launcher->setOpenHotkey(m_settings.openHotkey);
     m_launcher->setPreviewFollowsPointer(m_settings.previewFollowsPointer);
     m_launcher->setPreviewRestore(m_settings.previewRestore);
+    m_launcher->setReopenWhereLeft(m_settings.reopenWhereLeft);
+    applyLauncherTopmost();
     m_preview->setTextExtensions(m_settings.contentExtensions);
     m_clipboard->setNumberKeys(m_settings.clipboardNumberKeys);
     m_launcher->setNumberHints(m_settings.numberHints);
-    m_launcher->setLetterJump(m_settings.letterJump);
+    m_launcher->setLetterJump(m_settings.letterJump, m_settings.letterJumpKey, m_settings.letterJumpKeys);
     watchCopies();
     m_launcher->setRowDeleteButton(m_settings.rowDeleteButton);
     m_launcher->setScopeButton(m_settings.scopeButton);
+    if (m_placement)
+        m_placement->setAnimated(m_settings.openAnimation);
     m_launcher->setKeyboardHints(m_settings.shortcutHelp, m_settings.footerHints);
     m_launcher->setMaxRows(m_settings.maxRows);
     m_launcher->setPureSearch(m_settings.pureSearch && !m_launcherOverBox);
     m_launcher->setPanelListsAll(m_settings.panelListsAll);
     tellLauncherFolders();
     m_clipboard->setNumberHints(m_settings.numberHints);
-    m_clipboard->setLetterJump(m_settings.letterJump);
+    m_clipboard->setLetterJump(m_settings.letterJump, m_settings.letterJumpKey, m_settings.letterJumpKeys);
     const QString clipboardSize = m_settings.clipboardUiSize == u"follow" ? m_settings.uiSize : m_settings.clipboardUiSize;
     const bool clipboardResized = clipboardSize != m_clipboard->uiSize();
     m_clipboard->setRowOptions(m_settings.clipboardClickToPaste, m_settings.clipboardPictureSize, clipboardSize);
@@ -3303,6 +3319,20 @@ void App::restoreLauncherInputMode()
     win::restoreInputMode(std::exchange(m_lettersSwitch, {}));
 }
 
+// Any thread with COM: the folder 360文件夹's tab shows (folderview::Hit::hosted).
+std::optional<QString> App::hostedPlace(HWND frame, HWND control) const
+{
+    QElapsedTimer clock;
+    clock.start();
+    const hostedexplorer::Shown shown = hostedexplorer::shown(frame, control);
+    const std::shared_ptr<FileIndex> index = m_index ? m_index->index() : nullptr;
+    const std::optional<QString> place = hostedexplorer::place(shown, index.get());
+    qInfo().noquote() << u"360文件夹: %1 names listed, folder %2, %3 ms"_s.arg(shown.names.size())
+                             .arg(place ? (place->isEmpty() ? u"(the whole PC)"_s : u"known"_s) : u"not told"_s)
+                             .arg(clock.elapsed());
+    return place;
+}
+
 void App::folderTyped(HWND root, HWND tab, bool opus, std::uint64_t request)
 {
     if (!m_typing || !m_typing->pending(request))
@@ -3316,8 +3346,16 @@ void App::folderTyped(HWND root, HWND tab, bool opus, std::uint64_t request)
         clock.start();
         // Opus's tab without a folder on disk (This PC, a library, FTP): known
         // all the same, and searched as the whole PC (GitHub #82).
-        const std::optional<std::wstring> place
-            = opus ? filemanager::opusPlace(tab) : filemanager::explorerPlace(tab);
+        // 360文件夹's tab: told by what it shows (hostedexplorer::place).
+        std::optional<std::wstring> place;
+        if (opus) {
+            place = filemanager::opusPlace(tab);
+        } else if (folderview::classifyWindow(root).hosted) {
+            if (const std::optional<QString> hosted = hostedPlace(root, tab))
+                place = hosted->toStdWString();
+        } else {
+            place = filemanager::explorerPlace(tab);
+        }
         const QString folder = QString::fromStdWString(place.value_or({}));
         const bool known = place.has_value(); // with no folder: This PC and the like, the whole PC is searched (#82, #329)
         qInfo().noquote() << (opus ? u"Opus typing:" : u"Explorer typing:")
@@ -3463,7 +3501,7 @@ bool App::openInTypingTab(const QString& folder, const QString& select)
     const TypingOrigin from = std::exchange(m_typingOrigin, {});
     if (!from.tab)
         return false;
-    const HWND root = ::IsWindow(from.tab) ? ::GetAncestor(from.tab, GA_ROOT) : nullptr;
+    const HWND root = ::IsWindow(from.tab) ? folderview::frameOf(from.tab) : nullptr;
     if (!root || root != from.root) {
         qWarning() << "Folder typing: the tab typed in is gone; the folder opens in a new window";
         return false;
@@ -4625,6 +4663,7 @@ void App::applyFolderMenu()
             m_dialogJump->go(dialog, folder.toStdWString(), false);
             return true;
         });
+        menu->setHostedFolder([this](HWND frame, HWND control) { return hostedPlace(frame, control).value_or(QString()); });
         menu->setDialogOf([this](HWND window) -> HWND { // ... over the bar beside one: that dialog
             if (!m_dialogJump || !m_dialogJump->dialog() || !m_dialogJump->isCompanion(window))
                 return nullptr;
@@ -5510,6 +5549,7 @@ void App::showLauncher(const QString& asked, const std::optional<taskbar::Spot>&
     m_boxPressGrace.stop();
     m_launcherShown.start();
     m_frontTakenBack = 0;
+    applyLauncherTopmost(); // left not topmost by a pin of before, perhaps
     m_idleTrim->used();
     m_index->shares().lookedAt(); // a WebDAV server stopped meanwhile shows as offline (GitHub #114)
     if (!launcherShown()) { // what a screenshot of the history pastes into (jt, Enter)
@@ -6269,6 +6309,9 @@ void App::clipboardShiftTapped()
     // keys with it. Not a Chinese one: a Shift alone means nothing to it.
     // Taking the focus for the input method would close what closes without
     // it there (VS Code's quick open), and the paste would go nowhere.
+    // Shift chosen for 字母直达 (GitHub #357): the tap is for the letters.
+    if (m_settings.letterJump && m_settings.letterJumpKey == u"shift")
+        return;
     const HKL layout = ::GetKeyboardLayout(::GetWindowThreadProcessId(::GetForegroundWindow(), nullptr));
     if (win::isChineseLayout(layout))
         emit m_clipboard->pinyinHintRequested();
@@ -7042,8 +7085,18 @@ void App::togglePanel()
         setPanel(!m_launcher->panel());
 }
 
+void App::applyLauncherTopmost()
+{
+    if (!m_window || !m_window->handle())
+        return;
+    const bool topmost = !m_launcher->pinned() || m_settings.pinnedOnTop;
+    ::SetWindowPos(reinterpret_cast<HWND>(m_window->winId()), topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+}
+
 void App::launcherPinnedChanged()
 {
+    applyLauncherTopmost();
     // Over the box, its field drawn there: pinned, the window is one of its
     // own (it stays while the user works elsewhere, and can be dragged
     // away), so the field comes back into it and the box goes idle. Where it
@@ -7312,10 +7365,12 @@ void App::restart(const QStringList& arguments, Elevation elevation)
 }
 
 // Started by an in-app update's helper while 管理员直读 is set (main.cpp,
-// GitHub #274): restarted as administrator, as a manual start would have
-// been, once the helper is done (it has seen this copy come up and cleared
-// the old files away) and nothing of ours is open under the user's hands.
-// UAC asks; declined, Win顺 comes back with normal rights (startAgain).
+// GitHub #274), or after an update started by a copy run as administrator
+// (#363: raised by hand for plugins that need it): restarted as
+// administrator, as a manual start would have been, once the helper is done
+// (it has seen this copy come up and cleared the old files away) and nothing
+// of ours is open under the user's hands. UAC asks; declined, Win顺 comes
+// back with normal rights (startAgain). Once: the mark is cleared.
 void App::elevateOnceUpdated()
 {
     auto* timer = new QTimer(this);
@@ -7326,14 +7381,19 @@ void App::elevateOnceUpdated()
         if (helper && std::chrono::steady_clock::now() < given)
             return;
         // Still wanted: the mode may have been changed meanwhile.
-        const bool wanted = !helper && m_settings.indexAccess == u"direct" && userIsAdministrator()
-            && !integrity::processElevated();
+        const bool direct = m_settings.indexAccess == u"direct";
+        const bool raised = update::elevatedBeforeUpdate(Settings::dataDir());
+        const bool wanted = !helper && (direct || raised) && userIsAdministrator() && !integrity::processElevated();
         if (wanted
             && (launcherShown() || (m_settingsWindow && m_settingsWindow->isVisible())
                 || (m_clipWindow && m_clipWindow->isVisible())))
             return; // once they are put away
         timer->deleteLater();
-        diagnostics::record(u"elevation-after-update"_s, {{u"restart"_s, wanted}, {u"helper_still_running"_s, helper}});
+        update::rememberElevation(Settings::dataDir(), false);
+        diagnostics::record(u"elevation-after-update"_s, {{u"restart"_s, wanted}, {u"helper_still_running"_s, helper},
+            {u"direct_read"_s, direct}, {u"elevated_before_update"_s, raised}});
+        qWarning() << "Update: back as administrator after the update:" << wanted << "(direct read" << direct
+                   << ", elevated before" << raised << ")";
         if (wanted)
             restart({u"--background"_s}, Elevation::Elevated);
     });

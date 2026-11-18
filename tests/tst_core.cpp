@@ -6,6 +6,7 @@
 #include "ContentIndex.h"
 #include "ContentIndexer.h"
 #include "ContentPattern.h"
+#include "DiagnosticLog.h"
 #include "ContentScanner.h"
 #include "Crawler.h"
 #include "DocExtractor.h"
@@ -56,6 +57,7 @@
 #include "WebSuggest.h"
 #include "Win32Util.h"
 #include "KnownFolderOverride.h"
+#include "ShownFolder.h"
 
 #include <QRegularExpression>
 #include "Writer.h"
@@ -3601,6 +3603,10 @@ private slots:
         auto options = walkedOptions(std::nullopt, rules);
         options.selectedDrives = std::vector<std::wstring>{root};
         options.volumeAccess = access;
+        // GitHub #364: what was found and why, in the diagnostics, without paths.
+        QTemporaryDir profile;
+        diagnostics::initialize(profile.path());
+        const auto disableLog = qScopeGuard([] { diagnostics::initialize({}); });
         {
             IndexService service(store.path(), options);
             service.start();
@@ -3620,6 +3626,32 @@ private slots:
             service.shutdown();
         }
         {
+            QFile events(QDir(profile.path()).filePath(u"diagnostics/events.jsonl"_s));
+            QVERIFY(events.open(QIODevice::ReadOnly | QIODevice::Text));
+            const QByteArray text = events.readAll();
+            QVERIFY2(!text.contains(QDir(tree.path()).dirName().toUtf8()), "a path in the diagnostics");
+            bool walked = false;
+            bool indexed = false;
+            bool madeSince = false;
+            for (const QByteArray& line : text.split('\n')) {
+                const QJsonObject entry = QJsonDocument::fromJson(line).object();
+                if (entry.value(u"event"_s).toString() != u"directory-links"_s)
+                    continue;
+                const QJsonObject details = entry.value(u"details"_s).toObject();
+                const QJsonObject results = details.value(u"results"_s).toObject();
+                walked = walked || results.value(u"walked"_s).toInteger() > 0;
+                indexed = indexed || results.value(u"disk-indexed"_s).toInteger() > 0;
+                madeSince = madeSince || details.value(u"made_since"_s).toBool();
+                for (const QJsonValue& link : details.value(u"links"_s).toArray()) {
+                    if (link.toObject().value(u"result"_s).toString() == u"walked"_s) {
+                        QCOMPARE(link.toObject().value(u"to"_s).toString().compare(away.left(2), Qt::CaseInsensitive), 0);
+                        QVERIFY(link.toObject().value(u"opens"_s).toBool());
+                    }
+                }
+            }
+            QVERIFY2(walked && indexed && madeSince, text.constData());
+        }
+        {
             QFile scope(QDir(store.path()).filePath(u"scope.json"_s));
             QVERIFY(scope.open(QIODevice::ReadOnly));
             const QJsonArray links = QJsonDocument::fromJson(scope.readAll()).object().value(u"links"_s).toArray();
@@ -3632,6 +3664,77 @@ private slots:
                 && indexedIn(again, t + u"\\pics\\后来\\later.txt"_s), 60'000);
         again.shutdown();
         qInfo("Live %s: links found in the MFT and the journal, remembered", pipe.isEmpty() ? "direct" : "service");
+    }
+
+    // GitHub #364: a disk walked (no way to its MFT) finds its directory
+    // links too, during the walk and as they are made. Needs no elevation.
+    void directoryLinksFoundByWalking()
+    {
+        const QString otherDisk = qEnvironmentVariable("WINSHUN_TEST_OTHER_DISK_DIR");
+        if (otherDisk.isEmpty())
+            QSKIP("Set WINSHUN_TEST_OTHER_DISK_DIR to a folder on another disk than %TEMP%");
+        QTemporaryDir tree;
+        QTemporaryDir store;
+        QTemporaryDir elsewhere(otherDisk + u"/links-XXXXXX"_s);
+        QVERIFY(tree.isValid() && store.isValid() && elsewhere.isValid());
+        MadeLinks made;
+        QVERIFY(makeScopeTree(tree.path()));
+        const QString t = QDir::toNativeSeparators(tree.path());
+        const QString away = QDir::toNativeSeparators(elsewhere.path());
+        QVERIFY(away.left(2).compare(t.left(2), Qt::CaseInsensitive) != 0);
+        QVERIFY(QDir(away).mkpath(u"later"_s));
+        for (const QString& file : {u"away.txt"_s, u"later/later.txt"_s}) {
+            QFile f(QDir(away).filePath(file));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+        }
+        const QString alias = made << t + u"\\docs\\远处"_s;
+        QVERIFY(makeJunction(alias, away));
+        const QString nearby = made << t + u"\\docs\\近处"_s;
+        QVERIFY(makeJunction(nearby, t + u"\\other"_s)); // on the disk indexed: found where it is
+
+        QTemporaryDir profile;
+        diagnostics::initialize(profile.path());
+        const auto disableLog = qScopeGuard([] { diagnostics::initialize({}); });
+        // The other disk is not chosen, and not excluded (a whole drive excluded
+        // is not to be reached through a link either).
+        auto rules = branchRules(t);
+        std::erase_if(rules.excludedPaths, [&](const std::wstring& p) { return win32::equalsIgnoreCase(p, away.left(2).toStdWString()); });
+        auto options = walkedOptions(std::nullopt, rules);
+        options.selectedDrives = std::vector<std::wstring>{t.left(2).toStdWString()};
+        IndexService service(store.path(), options);
+        service.start();
+        QTRY_VERIFY_WITH_TIMEOUT(allReady(service), 60'000);
+        QTRY_VERIFY_WITH_TIMEOUT(indexedIn(service, alias + u"\\away.txt"_s), 20'000);
+        QVERIFY(indexedIn(service, alias + u"\\later\\later.txt"_s));
+        QVERIFY(!indexedIn(service, away + u"\\away.txt"_s));
+        QVERIFY(!indexedIn(service, nearby + u"\\o.txt"_s));
+        // One made since, seen by the volume's watcher.
+        const QString later = made << t + u"\\pics\\后来"_s;
+        QVERIFY(makeJunction(later, away + u"\\later"_s));
+        QTRY_VERIFY_WITH_TIMEOUT(indexedIn(service, later + u"\\later.txt"_s), 30'000);
+        service.shutdown();
+
+        QFile events(QDir(profile.path()).filePath(u"diagnostics/events.jsonl"_s));
+        QVERIFY(events.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QByteArray text = events.readAll();
+        QVERIFY2(!text.contains(QDir(tree.path()).dirName().toUtf8()), "a path in the diagnostics");
+        bool walkedRead = false;
+        bool madeSince = false;
+        for (const QByteArray& line : text.split('\n')) {
+            const QJsonObject entry = QJsonDocument::fromJson(line).object();
+            if (entry.value(u"event"_s).toString() != u"directory-links"_s)
+                continue;
+            const QJsonObject details = entry.value(u"details"_s).toObject();
+            const QJsonObject results = details.value(u"results"_s).toObject();
+            if (details.value(u"made_since"_s).toBool())
+                madeSince = madeSince || results.value(u"walked"_s).toInteger() == 1;
+            else
+                walkedRead = walkedRead
+                    || (details.value(u"read"_s).toArray().contains(t.left(2)) && results.value(u"walked"_s).toInteger() == 1
+                        && results.value(u"disk-indexed"_s).toInteger() == 1);
+        }
+        QVERIFY2(walkedRead && madeSince, text.constData());
+        QVERIFY(!text.contains("directory-links-not-looked-for"));
     }
 
     void chosenFoldersOnly()
@@ -11031,13 +11134,13 @@ private slots:
         constexpr qint64 now = 1'800'000'000'000;
         SearchEngine engine(&service, &apps, &catalog);
         QSignalSpy spy(&engine, &SearchEngine::resultsReady);
-        const auto search = [&](const QString& text, int limit = 20) {
+        const auto search = [&](const QString& text, int limit = 20, bool byCount = false) {
             SearchEngine::Request request;
             request.text = text;
             request.scope = Scope::All;
             request.limit = limit;
             request.history = history.ranked(text, now);
-            request.historyAffinity = history.affinities(text, now);
+            request.historyAffinity = byCount ? history.counts() : history.affinities(text, now);
             spy.clear();
             engine.submit(std::move(request));
             if (spy.isEmpty() && !spy.wait(5000))
@@ -11063,12 +11166,16 @@ private slots:
         for (int i = 0; i < 3; ++i)
             history.record(app.launchPath(), u"port"_s, now - 3 + i);
         QCOMPARE(search(u"port"_s).value(0).path, app.launchPath());
+        // 打开最多: by the count alone, not by what was opened lately.
+        QCOMPARE(search(u"port"_s, 20, true).value(0).path, portable);
 
         History restored(dir.filePath(u"history.txt"_s));
         restored.load();
         QCOMPARE(History::affinity(restored.affinities(u"port"_s, now), portable).group, 0);
         QVERIFY(History::affinity(restored.affinities(u"port"_s, now), portable).learned());
         QVERIFY(!History::affinity(restored.affinities(u"port"_s, now + 140LL * 86'400'000), portable).learned());
+        QCOMPARE(History::affinity(restored.counts(), portable).weight, 100.0); // never fades
+        QCOMPARE(History::affinity(restored.counts(), app.launchPath()).weight, 3.0);
     }
 
     void entityPreferenceAcrossChineseAndPinyin()
@@ -14579,6 +14686,29 @@ private slots:
             DoubleTapDetector altOnly({.key = Key::Alt});
             QVERIFY(!tapTwice(altOnly, shift, 0));
         }
+    }
+
+    // 360文件夹's folder, told by its title's candidates and the names listed.
+    void shownFolderPick()
+    {
+        using shownfolder::Candidate;
+        QVERIFY(shownfolder::listedAs(u"report.txt"_s, u"report"_s)); // extension hidden
+        QVERIFY(shownfolder::listedAs(u"Report.TXT"_s, u"report.txt"_s));
+        QVERIFY(!shownfolder::listedAs(u"report.txt"_s, u"repo"_s));
+        QVERIFY(!shownfolder::listedAs(u".gitignore"_s, u""_s));
+        const Candidate work {u"D:\\work\\files"_s, {u"a.txt"_s, u"b.png"_s, u"notes"_s}};
+        const Candidate other {u"C:\\old\\files"_s, {u"a.txt"_s, u"zzz.doc"_s}};
+        QCOMPARE(shownfolder::pick({work, other}, {u"a"_s, u"b"_s, u"notes"_s}), std::optional(work.path));
+        QCOMPARE(shownfolder::pick({other, work}, {u"a"_s, u"b"_s}), std::optional(work.path)); // all of two
+        QCOMPARE(shownfolder::pick({other, work}, {u"a"_s}), std::nullopt); // both have it
+        QCOMPARE(shownfolder::pick({work}, {u"x"_s}), std::nullopt); // not listed there
+        QCOMPARE(shownfolder::pick({work}, {}), std::optional(work.path)); // empty: the only one
+        QCOMPARE(shownfolder::pick({work, other}, {}), std::nullopt);
+        QCOMPARE(shownfolder::pick({}, {u"a"_s}), std::nullopt);
+        // A profile lists Windows' folders by their own names: three in five do.
+        const Candidate profile {u"C:\\Users\\me"_s, {u"Documents"_s, u"Downloads"_s, u"Desktop"_s, u"go"_s, u"src"_s, u"x.txt"_s}};
+        QCOMPARE(shownfolder::pick({profile}, {u"文档"_s, u"下载"_s, u"go"_s, u"src"_s, u"x"_s}), std::optional(profile.path));
+        QCOMPARE(shownfolder::pick({profile}, {u"文档"_s, u"下载"_s, u"桌面"_s, u"src"_s, u"x"_s}), std::nullopt);
     }
 
     void doubleClick()

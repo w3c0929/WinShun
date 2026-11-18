@@ -31,9 +31,9 @@ inline double roundedSizeMB(double mb)
 
 // The orders of the results (Settings::sort), in Launcher::Sort's order:
 // best match, newest, oldest, then by name, by the folder each is in, by
-// type, largest first, smallest first (GitHub #44).
+// type, largest first, smallest first (GitHub #44), the most opened first.
 inline constexpr QStringView kSortNames[] {
-    u"match", u"newest", u"oldest", u"name", u"folder", u"type", u"largest", u"smallest"};
+    u"match", u"newest", u"oldest", u"name", u"folder", u"type", u"largest", u"smallest", u"opened"};
 
 inline bool isSortName(QStringView name)
 {
@@ -218,6 +218,9 @@ struct Settings {
     // A click on a result only selects it; a double click or Enter opens it
     // (GitHub #44: a stray click opened things). Off: a click opens.
     bool doubleClickToOpen = false;
+    // With doubleClickToOpen: the click also shows the row's preview, as the
+    // middle click does (feedback 2026-11-10: a look inside without opening).
+    bool clickPreviews = false;
     // GitHub #81: Tab switches scopes by default, including on favorites.
     // Opt in to the former behavior: in 全部, Tab browses a favorite folder.
     bool tabEntersFavoriteFolder = false;
@@ -246,9 +249,19 @@ struct Settings {
     QString queryHistoryKeys = QStringLiteral("ctrl"); // ctrl | alt | off, local Up/Down navigation
     QString logoRightClick = QStringLiteral("menu"); // menu | top | center | restore
     bool favoritesOnStart = true; // show favorites before typing; keywords always work (#135)
+    // Those favorites as a grid of icons over the rows, their names under
+    // them (feedback 2026-11-12/15); off: rows like the rest.
+    bool favoriteTiles = false;
     // Each time the launcher opens, nothing is typed and the scope is 全部, as
     // at its first opening (GitHub #24); else it keeps the words, selected.
     bool clearOnOpen = false;
+    // Opened again on the same words, on the row it was left on and as far
+    // down the list (feedback 2026-11-17); off: the first row, as ever (#361).
+    bool reopenWhereLeft = false;
+    // Pinned (Ctrl+T), the search box stays over every other window; off: a
+    // window clicked covers it, as any other (feedback 2026-11-16), and the
+    // shortcut brings it back to the front.
+    bool pinnedOnTop = true;
     // Each time the launcher opens, its input method goes into English mode:
     // letters and pinyin initials find most names (GitHub #201). Switched
     // back in the box, it stays so for that opening; put back on closing.
@@ -267,6 +280,15 @@ struct Settings {
     // every row in view of the search box and the clipboard; the letter
     // opens or pastes its row. Off: a tap of Ctrl or Alt means nothing.
     bool letterJump = false;
+    // The key tapped for the letters (GitHub #357): auto (the number keys'
+    // modifier, Ctrl when they are off) | ctrl | alt | shift.
+    QString letterJumpKey = QStringLiteral("auto");
+    // The letters, the first row's first: A-Z and 0-9, each once
+    // (normalizedJumpKeys); the home row first unless the user chose others.
+    QString letterJumpKeys = defaultJumpKeys();
+    static QString defaultJumpKeys() { return QStringLiteral("ASDFGHJKLQWERTYUIOPZXCVBNM"); }
+    // Upper case, A-Z and 0-9 only, each once; the default for none left.
+    static QString normalizedJumpKeys(const QString& keys);
     bool shortcutHelp = true;
     bool footerHints = true;
     bool pureSearch = false; // empty floating launcher: just the input, without start results or chrome
@@ -277,6 +299,10 @@ struct Settings {
     // current one and goes to the next when clicked, in place of the tabs
     // side by side (GitHub #185, #244). Tab moves through them either way.
     bool scopeButton = false;
+    // The search box fades in rising a little from the taskbar's side, and
+    // fades out (Placement::slideIn, slideOut); off: there and gone at once
+    // (GitHub #365). Windows' own "animation effects" off: never animated.
+    bool openAnimation = true;
     // auto | builtin: what Alt+P on a row shows the file with. auto: QuickLook
     // or Seer when one is running in the background (FilePreview), else
     // Win顺's own preview window; builtin: always that.
@@ -346,6 +372,7 @@ struct Settings {
 
     // [Update]
     bool autoUpdate = true; // look for new versions on GitHub (see Updater)
+    bool usageReport = true; // once a day, this computer counted as a user (Updater::setReporting)
 
     // [Backup]
     QString backupFolder; // where the settings are backed up (see Backup); empty: not
@@ -505,6 +532,9 @@ struct Settings {
     // (WebSuggester). On: only words typed after a site's keyword go out,
     // to that site, which the user is about to search anyway.
     bool webSuggestions = true;
+    // The program the sites open in, its full path; empty: Windows' default
+    // browser (the web plugin's "browser").
+    QString webBrowser;
     // Nothing found on this PC: a row that searches the first site of the
     // list for the words typed, so Enter looks them up (GitHub #320).
     bool webFallback = true;

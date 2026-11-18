@@ -162,6 +162,7 @@ set(qml_files
     qml/TypeStrip.qml
     qml/ResultRow.qml
     qml/ElsewhereCaption.qml
+    qml/FavoriteTiles.qml
     qml/ScopeBar.qml
     qml/Panel.qml
     qml/ContentPaneView.qml
@@ -208,6 +209,7 @@ set(qml_files
     qml/SoftShadow.qml
     qml/PreviewWindow.qml
     qml/PreviewBody.qml
+    qml/VideoPreview.qml
     qml/HoverTip.qml
     qml/InfoDot.qml
     qml/ShortcutTip.qml
@@ -258,6 +260,7 @@ set(qml_files
     qml/AuthorAvatar.qml
     qml/GleaningBackdrop.qml
     qml/GleaningPage.qml
+    qml/QqGroupCard.qml
     qml/AiAccessSection.qml
     qml/AiClientsSection.qml
     qml/AiCommandLineSection.qml
@@ -309,6 +312,7 @@ set(gleaning_images
     ${PROJECT_SOURCE_DIR}/resources/gleaning/winshun.png
     ${PROJECT_SOURCE_DIR}/resources/gleaning/macshun.png
     ${PROJECT_SOURCE_DIR}/resources/gleaning/ghxi.png
+    ${PROJECT_SOURCE_DIR}/resources/gleaning/qq-group.svg
     ${PROJECT_SOURCE_DIR}/resources/gleaning/ikun.mp3
 )
 foreach(file IN LISTS gleaning_images)
@@ -350,10 +354,12 @@ qt_add_qml_module(WinShun
         FileDropTarget.cpp FileDropTarget.h
         FileFacts.cpp FileFacts.h
         FilePreview.cpp FilePreview.h
+        VideoView.cpp VideoView.h # a video in the preview, by Windows' media engine
         LineHighlighter.cpp LineHighlighter.h
         ContentPane.cpp ContentPane.h
         PictureFile.cpp PictureFile.h
         FolderMenu.cpp FolderMenu.h
+        HostedExplorer.cpp HostedExplorer.h # 360文件夹's folder, told by what it shows
         DropPie.cpp DropPie.h # the favorite folders round the pointer while dragging files (DropPieWindow.qml)
         DropPieText.cpp DropPieText.h
         GleaningScene.cpp GleaningScene.h
@@ -382,7 +388,7 @@ qt_add_qml_module(WinShun
         SystemTheme.cpp SystemTheme.h
         PhosphorGlyph.cpp PhosphorGlyph.h
         UiSize.h
-        Updater.cpp Updater.h UpdatePackage.cpp UpdatePackage.h UninstallCleanup.cpp UninstallCleanup.h
+        Updater.cpp Updater.h UpdatePackage.cpp UpdatePackage.h UpdateDelta.cpp UpdateDelta.h UninstallCleanup.cpp UninstallCleanup.h
         Backup.cpp Backup.h BackupFiles.cpp BackupFiles.h
         WindowFrame.cpp WindowFrame.h
 )
@@ -445,12 +451,12 @@ target_link_libraries(WinShun PRIVATE
     wscapture # the screen capture (src/capture)
     Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network
     Qt6::Svg # SvgIcon: web shortcuts' SVG icons, drawn once into the PNG kept
-    comctl32 d2d1 dwmapi dwrite dxgi imm32 oleacc oleaut32 shcore shell32 shlwapi ole32 user32 uxtheme version winhttp winmm
+    comctl32 d2d1 d3d11 dwmapi dwrite dxgi imm32 oleacc oleaut32 shcore shell32 shlwapi ole32 user32 uxtheme version winhttp winmm
     credui iphlpapi mpr psapi userenv windowscodecs
     mfplat mfreadwrite mfuuid delayimp dbghelp
     windowsapp # TextRecognizer: Windows.Media.Ocr, through C++/WinRT from the Windows SDK
     onnxruntime_headers) # PaddleOcr
-target_link_libraries(WinShun PRIVATE advapi32 userenv miniz comdlg32 gdi32) # native report printing
+target_link_libraries(WinShun PRIVATE advapi32 userenv miniz zstd_decompress comdlg32 gdi32) # native report printing; delta updates
 # The execution level (asInvoker, since 0.8.0) comes from app.manifest alone,
 # with the rest of the manifest; the linker's own UAC fragment would be a
 # second one. Media Foundation is loaded only when used (SoundClip): Windows

@@ -755,6 +755,10 @@
         <translation>Rounded</translation>
     </message>
     <message>
+        <source>弹出动画</source>
+        <translation>Open animation</translation>
+    </message>
+    <message>
         <source>直角</source>
         <translation>Square</translation>
     </message>
@@ -1151,6 +1155,14 @@
         <translation>Off</translation>
     </message>
     <message>
+        <source>字母直达用的键</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>跟数字键一样</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>截图历史的关键词</source>
         <translation>Keyword for the screenshot history</translation>
     </message>
@@ -1165,6 +1177,10 @@
     <message>
         <source>右键菜单里的“粘贴为文件”</source>
         <translation>“Paste as file” in the right-click menu</translation>
+    </message>
+    <message>
+        <source>发送匿名统计</source>
+        <translation>Send anonymous statistics</translation>
     </message>
     <message>
         <source>界面绘制方式</source>
@@ -2534,6 +2550,10 @@
 <context>
     <name>Gleaning</name>
     <message>
+        <source>麦田</source>
+        <translation>Wheat Field</translation>
+    </message>
+    <message>
         <source>拾穗计划</source>
         <translation>Gleaning</translation>
     </message>
@@ -2567,7 +2587,32 @@
     </message>
 </context>
 <context>
+    <name>QqGroupCard</name>
+    <message>
+        <source>QQ 群 · %1</source>
+        <translation>QQ group · %1</translation>
+    </message>
+    <message>
+        <source>群号 %1</source>
+        <translation>Group %1</translation>
+    </message>
+    <message>
+        <source>用手机 QQ 扫码，进群一起交流
+建议和问题请到官网反馈</source>
+        <translation>Scan with QQ on your phone to chat with others
+Send suggestions and problems on our website</translation>
+    </message>
+    <message>
+        <source>在电脑 QQ 中打开</source>
+        <translation>Open in QQ on this computer</translation>
+    </message>
+</context>
+<context>
     <name>GleaningPage</name>
+    <message>
+        <source>加入 QQ 群</source>
+        <translation>Join our QQ group</translation>
+    </message>
     <message>
         <source>开源</source>
         <translation>Open source</translation>
@@ -2579,6 +2624,10 @@
     <message>
         <source>正在使用</source>
         <translation>In use</translation>
+    </message>
+    <message>
+        <source>%1 位用户</source>
+        <translation>%1 users</translation>
     </message>
     <message>
         <source>更多作品正在路上</source>
@@ -5012,12 +5061,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>upgrade;new version;plugin;update</translation>
     </message>
     <message>
-        <source>启动后和每隔 12 小时检查 Win顺 新版本，在托盘提示；插件每天检查一次，不要新权限的更新自动安装</source>
-        <translation>Checks for new versions of WinShun at startup and every 12 hours and shows them in the tray; checks plugins daily and installs updates that need no new permissions</translation>
-    </message>
-    <message>
-        <source>检查 Win顺 更新访问 lcstp.com，只发送 Windows 版本和安装方式；检查插件更新从 GitHub 或镜像下载插件库列表。不发送个人信息。</source>
-        <translation>Checking for WinShun updates contacts lcstp.com and sends only the Windows version and the kind of install; checking plugins downloads the plugin library list from GitHub or a mirror. Nothing personal is sent.</translation>
+        <source>启动后和每隔 10 分钟检查 Win顺 新版本，在托盘提示；插件每天检查一次，不要新权限的更新自动安装</source>
+        <translation>Checks for new versions of WinShun at startup and every 10 minutes and shows them in the tray; checks plugins daily and installs updates that need no new permissions</translation>
     </message>
     <message>
         <source>在桌面上直接打字搜索</source>
@@ -6759,6 +6804,10 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Updates</translation>
     </message>
     <message>
+        <source>检查 Win顺 更新访问 lcstp.com，只发送 Windows 版本和安装方式；检查插件更新从 GitHub 或镜像下载插件库列表。匿名统计每天最多一次，只发送电脑标识的单向哈希（不能还原）、版本号和 Windows 版本，用来统计用户数。不发送文件、剪贴板或任何个人信息。</source>
+        <translation>Checking for WinShun updates contacts lcstp.com and sends only the Windows version and the kind of install; checking for plugin updates downloads the plugin library list from GitHub or a mirror. Anonymous statistics go at most once a day and send only a one-way hash of the computer ID (it cannot be reversed), the version and the Windows version, to count the users. No files, clipboard or personal information are sent.</translation>
+    </message>
+    <message>
         <source>版本 %1</source>
         <translation>Version %1</translation>
     </message>
@@ -6785,6 +6834,18 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>查看 %1</source>
         <translation>See %1</translation>
+    </message>
+    <message>
+        <source>发送匿名统计</source>
+        <translation>Send anonymous statistics</translation>
+    </message>
+    <message>
+        <source>统计;用户数;隐私;联网;usage;statistics;privacy;telemetry</source>
+        <translation>usage;statistics;users;privacy;online;telemetry</translation>
+    </message>
+    <message>
+        <source>每天最多一次告诉 lcstp.com 这台电脑在用 Win顺，用来统计用户数</source>
+        <translation>At most once a day tells lcstp.com that this PC uses WinShun, to count the users</translation>
     </message>
     <message>
         <source>备份</source>
@@ -7290,10 +7351,6 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Letter jump</translation>
     </message>
     <message>
-        <source>轻按一下数字键用的那个键（搜索框是 Ctrl，剪贴板是 Alt，按上面的设置）再松开，每一行前面出现一个字母，按字母直接打开这一行（剪贴板里是粘贴），第九行以后也有；加 Shift 是打开所在位置（剪贴板里是粘贴为纯文本）。再按一下或按 Esc 退出。启动器和剪贴板共用</source>
-        <translation>Tap the number keys&apos; modifier by itself (Ctrl in the search box, Alt in the clipboard, as set above): every row gets a letter, and the letter opens that row (pastes it, in the clipboard), the rows past the ninth too; with Shift it shows where the file is (pastes as plain text). The tap again or Esc leaves. Shared by the launcher and the clipboard</translation>
-    </message>
-    <message>
         <source>快捷键;字母;单手;vim;vi;提示;跳转;直达;hint</source>
         <translation>shortcut;letter;one hand;vim;vi;hint;jump</translation>
     </message>
@@ -7459,6 +7516,22 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Text size and line height of the search bar, the clipboard and the search bar by file dialogs; the Settings window is unchanged. Dense is one small line per result. The clipboard can be set separately on the Clipboard page</translation>
     </message>
     <message>
+        <source>弹出动画</source>
+        <translation>Open animation</translation>
+    </message>
+    <message>
+        <source>搜索框打开时从任务栏一侧轻轻升起并淡入，关闭时淡出。关掉后立即出现、立即消失</source>
+        <translation>The search bar rises a little from the taskbar side and fades in when it opens, and fades out when it closes. Off: it appears and disappears at once</translation>
+    </message>
+    <message>
+        <source>Windows 设置里关掉了“动画效果”时，始终没有动画</source>
+        <translation>With "Animation effects" off in Windows Settings, there is never an animation</translation>
+    </message>
+    <message>
+        <source>动画;动效;淡入;淡出;弹出;升起;过渡;拖沓;立即显示;animation;motion;fade</source>
+        <translation>animation;motion;fade;transition;slide;popup;instant;sluggish</translation>
+    </message>
+    <message>
         <source>索引范围;范围;整个磁盘;选中的文件夹;工作文件夹;普通用户;没有管理员权限;scope</source>
         <translation>index scope;whole disk;chosen folders;work folders;standard user;no administrator rights;scope</translation>
     </message>
@@ -7564,6 +7637,42 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>仅在搜索结果中生效，再按一次关闭，鼠标中键点一行也行。可直接录制空格：刚输入完时空格照常输入，选过结果或打开预览后才开关预览；Shift+空格始终输入空格。Backspace 清除，Esc 取消。</source>
         <translation>Works only in search results; press again to turn it off, or middle-click a row. You can record Space itself: right after typing, Space types a space as usual, and it toggles the preview only after you have selected a result or opened the preview; Shift+Space always types a space. Backspace clears, Esc cancels.</translation>
+    </message>
+    <message>
+        <source>轻按一下下面选的键再松开，每一行前面出现一个字母，按字母直接打开这一行（剪贴板里是粘贴），第九行以后也有。搜索框里按 Shift+字母是选中这一行，它的按钮（打开所在位置、在终端中打开、复制、复制路径、删除）上再出现字母，按字母就是点那个按钮，删除要按两次；剪贴板里 Shift+字母是粘贴为纯文本。再按一下那个键或按 Esc 退出。启动器和剪贴板共用</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>字母直达用的键</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>搜索框里用中文输入法时，轻按 Shift 也会切换中英文</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>跟数字键一样：搜索框和剪贴板各用数字键设置里的那个键</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>字母直达;修饰键;Ctrl;Alt;Shift</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>跟数字键一样</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>用哪些字母</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>按顺序给第一行、第二行……，可以有数字，例如左手用的 QWERTASDFGZXCVB12345</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>字母直达;字母;数字;顺序;左手;单手</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>剪贴板大小</source>
@@ -8806,6 +8915,10 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>WinShun %1 is available</translation>
     </message>
     <message>
+        <source>Win顺 %1 是重要更新</source>
+        <translation>WinShun %1 is an important update</translation>
+    </message>
+    <message>
         <source>检查更新失败</source>
         <translation>Couldn’t check for updates</translation>
     </message>
@@ -9026,6 +9139,14 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>点这里查看更新内容</source>
         <translation>Click to see what’s new</translation>
+    </message>
+    <message>
+        <source>Win顺 %1 是重要更新</source>
+        <translation>WinShun %1 is an important update</translation>
+    </message>
+    <message>
+        <source>建议尽快更新，点这里查看更新内容</source>
+        <translation>Please update soon. Click to see what’s new</translation>
     </message>
     <message>
         <source>Win顺已在后台运行</source>

@@ -71,6 +71,11 @@ class Launcher : public QObject {
     Q_PROPERTY(QString historyKeys READ historyKeys NOTIFY historyChanged FINAL)
     Q_PROPERTY(QString logoRightClick READ logoRightClick NOTIFY logoRightClickChanged FINAL)
     Q_PROPERTY(ws::ResultModel* results READ results CONSTANT FINAL)
+    // Settings::favoriteTiles: with nothing typed in 全部, the favorites'
+    // rows are the first tileRows rows, drawn as tiles over the list
+    // (Main.qml), which leaves them out; favoriteTiles holds their copies.
+    Q_PROPERTY(ws::ResultModel* favoriteTiles READ favoriteTiles CONSTANT FINAL)
+    Q_PROPERTY(int tileRows READ tileRows NOTIFY tileRowsChanged FINAL)
     Q_PROPERTY(ws::PanelColumns* panelColumns READ panelColumns CONSTANT FINAL)
     Q_PROPERTY(ws::ContentPane* contentPane READ contentPane CONSTANT FINAL)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged FINAL)
@@ -137,11 +142,15 @@ class Launcher : public QObject {
     // A click on a row only selects it; a double click (or Enter) opens it
     // (Settings::doubleClickToOpen, GitHub #44).
     Q_PROPERTY(bool doubleClickToOpen READ doubleClickToOpen NOTIFY resultOptionsChanged FINAL)
+    // With it, the click shows the row's preview too (Settings::clickPreviews).
+    Q_PROPERTY(bool clickPreviews READ clickPreviews NOTIFY resultOptionsChanged FINAL)
     // The modifier that opens the nth row shown with a digit: "ctrl", "alt",
     // or "" for none (Settings::numberKeys).
     Q_PROPERTY(QString numberKeys READ numberKeys NOTIFY resultOptionsChanged FINAL)
     Q_PROPERTY(QString numberHints READ numberHints NOTIFY resultOptionsChanged FINAL)
     Q_PROPERTY(bool letterJump READ letterJump NOTIFY resultOptionsChanged FINAL) // Settings::letterJump
+    Q_PROPERTY(QString letterJumpKey READ letterJumpKey NOTIFY resultOptionsChanged FINAL) // auto | ctrl | alt | shift
+    Q_PROPERTY(QString letterJumpKeys READ letterJumpKeys NOTIFY resultOptionsChanged FINAL)
     // A file's row has a delete button among its buttons (the settings, GitHub #316).
     Q_PROPERTY(bool rowDeleteButton READ rowDeleteButton NOTIFY resultOptionsChanged FINAL)
     Q_PROPERTY(bool shortcutHelp READ shortcutHelp NOTIFY resultOptionsChanged FINAL)
@@ -333,7 +342,9 @@ public:
     Q_ENUM(Action)
     // The first three as ws::RankBy and ws::StartList; the rest are a
     // ws::SortOrder over the names (#44), the content matches staying as ranked.
-    enum Sort { BestMatch, NewestFirst, OldestFirst, ByName, ByFolder, ByType, LargestFirst, SmallestFirst };
+    // MostOpened: by how many times each was opened from Win顺 (History's
+    // count, no fading with time), the rest as best matched (showRows).
+    enum Sort { BestMatch, NewestFirst, OldestFirst, ByName, ByFolder, ByType, LargestFirst, SmallestFirst, MostOpened };
     Q_ENUM(Sort)
     enum StartList { RecentlyOpened, RecentlyModified, NoStartList }; // none: only the favorites
     Q_ENUM(StartList)
@@ -417,6 +428,12 @@ public:
     void setCurrentRow(int row);
     QVariantMap keyHints() const { return m_keyHints; }
     ResultModel* results() { return &m_results; }
+    ResultModel* favoriteTiles() { return &m_tiles; }
+    void setFavoriteTiles(bool on);
+    int tileRows() const { return m_tileRows; }
+    // A tile held and dropped on another's place: the favorites' order
+    // changed so (Favorites::move).
+    Q_INVOKABLE void moveFavoriteTile(int from, int to);
     QString statusText() const { return m_flash.isEmpty() ? m_status : m_flash; }
     bool busy() const;
     qreal progress() const;
@@ -520,6 +537,9 @@ public:
     // 没有结果时用网页搜索 (Settings::webFallback): nothing found in 全部,
     // a row searching the first site of the list for the words (GitHub #320).
     void setWebFallback(bool on);
+    // 用哪个浏览器打开 (Settings::webBrowser): the program the sites open
+    // in; empty: Windows' default browser.
+    void setWebBrowser(const QString& program) { m_webBrowser = program; }
     // Its user's favorites (may be none): with every request, and the
     // rows refreshed when they change.
     void setFavorites(Favorites* favorites);
@@ -546,6 +566,8 @@ public:
     bool showFileSize() const { return m_showFileSize; }
     bool doubleClickToOpen() const { return m_doubleClickToOpen; }
     void setDoubleClickToOpen(bool on);
+    bool clickPreviews() const { return m_clickPreviews; }
+    void setClickPreviews(bool on);
     void setTabEntersFavoriteFolder(bool on);
     QString numberKeys() const { return m_numberKeys; }
     QString numberHints() const { return m_numberHints; }
@@ -553,13 +575,17 @@ public:
     void setPreviewHotkey(const QString& shortcut);
     void setPreviewFollowsPointer(bool on) { m_previewFollowsPointer = on; } // Settings::previewFollowsPointer
     void setPreviewRestore(bool on) { m_previewRestore = on; } // Settings::previewRestore
+    void setReopenWhereLeft(bool on) { m_reopenWhereLeft = on; } // Settings::reopenWhereLeft
     Q_INVOKABLE bool isPreviewKey(int key, int modifiers) const;
     QString openHotkey() const { return m_openHotkey; }
     void setOpenHotkey(const QString& shortcut);
     Q_INVOKABLE bool isOpenKey(int key, int modifiers) const;
     void setNumberHints(const QString& hints);
     bool letterJump() const { return m_letterJump; }
-    void setLetterJump(bool on);
+    // Settings::letterJump, letterJumpKey, letterJumpKeys (GitHub #357).
+    void setLetterJump(bool on, const QString& key, const QString& keys);
+    QString letterJumpKey() const { return m_letterJumpKey; }
+    QString letterJumpKeys() const { return m_letterJumpKeys; }
     bool rowDeleteButton() const { return m_rowDeleteButton; }
     void setRowDeleteButton(bool shown);
     bool shortcutHelp() const { return m_shortcutHelp; }
@@ -781,6 +807,10 @@ public:
     // launcher. closePreview: true when there was one to close.
     void setPreview(FilePreview* preview);
     Q_INVOKABLE void togglePreview(int row);
+    // The row clicked (Settings::clickPreviews): its preview, opened or
+    // brought to it; left as it is when it shows it already. Quiet on a row
+    // with nothing to preview.
+    Q_INVOKABLE void previewRow(int row);
     // The mouse rests on a row: an open preview shows its file, the current
     // row keeps the selection (the next move of it shows its file again).
     Q_INVOKABLE void previewHover(int row);
@@ -890,6 +920,7 @@ signals:
     void fileChoiceChanged();
     void favoriteSettingsRequested(const QString& path); // ... on its 收藏夹 page, at this favorite
     void favoritesChanged();
+    void tileRowsChanged();
     // The settings window, on the 插件 page at this plugin's card: a plugin
     // row opening "winshun:settings" (its own card only; performPlugin).
     void pluginSettingsRequested(const QString& pluginId);
@@ -1030,6 +1061,7 @@ private:
     void sortShownPanel(const QString& currentPath = {});
     QString panelKey() const;
     bool showsStartList() const; // nothing typed, and a list for it
+    bool byOpenCount() const; // 打开最多 in force: typed, not the panel nor a command
     QString contentNeedle() const;
     QString shownExtensions() const;
     void startContentSearch();
@@ -1198,6 +1230,9 @@ private:
     QString m_historyKeys = QStringLiteral("ctrl");
     QString m_logoRightClick = QStringLiteral("menu");
     ResultModel m_results;
+    ResultModel m_tiles; // the favorites as tiles (setFavoriteTiles); empty otherwise
+    bool m_favoriteTilesOn = false;
+    int m_tileRows = 0;
     std::unique_ptr<ContentPane> m_contentPane;
     QPointer<QWindow> m_window;
     std::function<bool(const QString& folder)> m_folderOpener; // setFolderOpener
@@ -1218,6 +1253,7 @@ private:
     Scope m_shownScope = All;
     RankBy m_shownRankBy = RankBy::Match;
     SortOrder m_shownOrder;
+    Sort m_shownSort = BestMatch;
     StartList m_shownStartList = RecentlyOpened;
     KindOrder m_shownKindOrder = KindOrder::FilesFirst;
     QStringList m_shownPreferredTypes;
@@ -1398,6 +1434,7 @@ private:
     bool m_showModified = true;
     bool m_showFileSize = false;
     bool m_doubleClickToOpen = false;
+    bool m_clickPreviews = false;
     bool m_tabEntersFavoriteFolder = false;
     // GitHub #361. The path of the row the user chose (chooseRow), for Tab;
     // empty while the keyboard is where the list put it.
@@ -1416,6 +1453,8 @@ private:
     QString m_numberKeys = QStringLiteral("ctrl");
     QString m_numberHints = QStringLiteral("always");
     bool m_letterJump = false;
+    QString m_letterJumpKey = QStringLiteral("auto");
+    QString m_letterJumpKeys = QStringLiteral("ASDFGHJKLQWERTYUIOPZXCVBNM");
     bool m_rowDeleteButton = true;
     bool m_shortcutHelp = true;
     bool m_footerHints = true;
@@ -1475,6 +1514,8 @@ private:
     WebShortcuts m_web;
     bool m_webSuggestions = true;
     bool m_webFallback = true;
+    QString m_webBrowser;
+    void openWebAddress(const QString& url) const; // in m_webBrowser, or the default one
     std::optional<SearchResult> webFallbackRow() const;
     std::optional<SearchResult> webAddressRow() const;
     WebSuggester m_suggester;
@@ -1486,6 +1527,12 @@ private:
     bool m_previewWanted = false; // the preview was left open by the user: it comes back with the launcher
     bool m_previewFollowsPointer = true; // previewHover: the row the mouse rests on; off: the current row only
     bool m_previewRestore = true; // off: a preview left open closes for good with the launcher (GitHub #258)
+    // Settings::reopenWhereLeft: opened again on the same words, on the row
+    // it was left on, with as many pages listed (feedback 2026-11-17).
+    bool m_reopenWhereLeft = false;
+    QString m_leftQuery;
+    QString m_leftPath;
+    int m_leftPages = 1;
     bool m_previewResume = false; // shown now, and the preview not yet back
     bool m_previewHandedOver = false; // the window gave way to the details' 预览 tab: back when they go
     int m_tabBeforePreview = 1; // the details' tab Alt+P left for 预览 (匹配 at first): Alt+P again goes back

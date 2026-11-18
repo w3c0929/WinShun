@@ -977,9 +977,10 @@ target_compile_definitions(tst_keylistener PRIVATE WINSHUN_SERVICE_EXE="$<TARGET
 add_dependencies(tst_keylistener WinShunService)
 
 qt_add_executable(tst_keyrouter tst_keyrouter.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/KeyRouter.cpp
-    ${PROJECT_SOURCE_DIR}/src/app/platform/HoldWatch.cpp ${PROJECT_SOURCE_DIR}/src/app/Diagnostics.cpp)
+    ${PROJECT_SOURCE_DIR}/src/app/platform/HoldWatch.cpp ${PROJECT_SOURCE_DIR}/src/app/Diagnostics.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/platform/FolderViewHit.cpp)
 target_include_directories(tst_keyrouter PRIVATE ${PROJECT_SOURCE_DIR}/src/app ${PROJECT_SOURCE_DIR}/src/core)
-target_link_libraries(tst_keyrouter PRIVATE wscore miniz Qt6::Test user32 imm32)
+target_link_libraries(tst_keyrouter PRIVATE wscore miniz Qt6::Test user32 imm32 oleacc oleaut32 ole32)
 set_target_properties(tst_keyrouter PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
 add_test(NAME tst_keyrouter COMMAND tst_keyrouter -o -,txt)
 set_tests_properties(tst_keyrouter PROPERTIES RUN_SERIAL TRUE
@@ -1410,11 +1411,22 @@ add_test(NAME tst_explorertabs COMMAND tst_explorertabs)
 set_tests_properties(tst_explorertabs PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
+# winshun.gestures's rules (src/gestures-plugin/Gesture), built in again:
+# the directions a drag draws, the actions as written, the gestures of the
+# "more" setting and the programs left alone.
+qt_add_executable(tst_gestures tst_gestures.cpp ${PROJECT_SOURCE_DIR}/src/gestures-plugin/Gesture.cpp)
+target_include_directories(tst_gestures PRIVATE ${PROJECT_SOURCE_DIR}/src/gestures-plugin)
+target_link_libraries(tst_gestures PRIVATE winshun_options Qt6::Test)
+set_target_properties(tst_gestures PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_gestures COMMAND tst_gestures)
+set_tests_properties(tst_gestures PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
 # winshun.bookmarks (src/bookmarks-plugin/Bookmarks), built in again: reading
 # Bookmarks files, the folder text, percent-decoding, matching, scoring,
 # the 50-row cap and the "nothing found" rows.
 qt_add_executable(tst_bookmarks tst_bookmarks.cpp ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin/Bookmarks.cpp
-    ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin/History.cpp
+    ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin/History.cpp ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin/Firefox.cpp
     ${PROJECT_SOURCE_DIR}/src/core/Pinyin.cpp ${PROJECT_SOURCE_DIR}/src/core/PinyinTable.cpp)
 target_include_directories(tst_bookmarks PRIVATE ${PROJECT_SOURCE_DIR}/src/bookmarks-plugin ${PROJECT_SOURCE_DIR}/src/plugins-sdk
     ${PROJECT_SOURCE_DIR}/src/core)
@@ -1608,6 +1620,18 @@ set_target_properties(tst_updater PROPERTIES WIN32_EXECUTABLE FALSE)
 add_dependencies(tst_updater WinShunUpdate tst_updater_fakeapp)
 add_test(NAME tst_updater COMMAND tst_updater)
 set_tests_properties(tst_updater PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# Delta updates (app/UpdateDelta): made with the release tool's code, applied
+# with Win顺's, and refused cleanly when anything does not fit.
+qt_add_executable(tst_updatedelta tst_updatedelta.cpp ${PROJECT_SOURCE_DIR}/src/app/UpdateDelta.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/UpdateDeltaMake.cpp ${PROJECT_SOURCE_DIR}/src/app/UpdatePackage.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/platform/Http.cpp)
+target_include_directories(tst_updatedelta PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
+target_link_libraries(tst_updatedelta PRIVATE wscore miniz zstd_full Qt6::Test version winhttp ws2_32)
+set_target_properties(tst_updatedelta PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_updatedelta COMMAND tst_updatedelta)
+set_tests_properties(tst_updatedelta PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 # A Scoop install (core/ScoopInstall): detection, the stable "current" path

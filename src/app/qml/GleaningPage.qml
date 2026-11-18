@@ -10,6 +10,7 @@ Flickable {
     id: page
 
     required property SettingsEditor editor
+    required property Updater updater
 
     readonly property var works: Gleaning.works.slice().sort((a, b) => Number(b.openSource) - Number(a.openSource))
     readonly property int openSourceCount: Gleaning.works.filter(w => w.openSource).length
@@ -22,7 +23,12 @@ Flickable {
     clip: true
 
     // Each time the page opens, the avatar pops up to say hello.
-    onVisibleChanged: if (visible) AuthorClock.play()
+    onVisibleChanged: {
+        if (!visible)
+            return;
+        AuthorClock.play();
+        updater.fetchUserCounts();
+    }
 
     component Tag: Rectangle {
         property alias text: tagLabel.text
@@ -126,6 +132,11 @@ Flickable {
 
                 Tag { text: work.modelData.openSource ? qsTr("开源") : qsTr("付费") }
                 Tag { visible: work.current; text: qsTr("正在使用") }
+                Tag {
+                    readonly property int users: page.updater.userCounts[work.modelData.id] ?? 0
+                    visible: users > 0
+                    text: qsTr("%1 位用户").arg(users.toLocaleString(Qt.locale(), "f", 0))
+                }
             }
         }
     }
@@ -426,6 +437,49 @@ Flickable {
                     }
                 }
 
+                Rectangle { // the users' QQ group: its card with the QR code
+                    id: qqButton
+
+                    visible: !!Gleaning.qqGroup
+                    width: qqLabel.implicitWidth + 36
+                    height: writeButton.height
+                    radius: Theme.pillRadius(height)
+                    color: qqArea.containsMouse || qqCard.opened ? Qt.lighter(WarmPalette.chip, 1.25) : WarmPalette.chip
+                    border.width: 1
+                    border.color: WarmPalette.iconStroke
+
+                    Row {
+                        id: qqLabel
+                        anchors.centerIn: parent
+                        spacing: 7
+                        Glyph {
+                            anchors.verticalCenter: parent.verticalCenter
+                            iconName: "chats-circle"
+                            size: 14
+                            color: WarmPalette.ink
+                        }
+                        Text {
+                            text: qsTr("加入 QQ 群")
+                            color: WarmPalette.ink
+                            font.pixelSize: Theme.fontCaption
+                            font.weight: Theme.fontStrong
+                        }
+                    }
+                    MouseArea {
+                        id: qqArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: qqCard.opened ? qqCard.close() : qqCard.open()
+                    }
+
+                    QqGroupCard {
+                        id: qqCard
+                        editor: page.editor
+                        x: Math.round((qqButton.width - width) / 2)
+                        y: -height - 10
+                    }
+                }
             }
         }
 
