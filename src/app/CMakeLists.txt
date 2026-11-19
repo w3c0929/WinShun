@@ -358,6 +358,7 @@ qt_add_qml_module(WinShun
         FilePreview.cpp FilePreview.h
         VideoView.cpp VideoView.h # a video in the preview, by Windows' media engine
         LineHighlighter.cpp LineHighlighter.h
+        TextLineSpacing.cpp TextLineSpacing.h # a TextEdit's lines spaced as a Text's lineHeight
         ContentPane.cpp ContentPane.h
         PictureFile.cpp PictureFile.h
         FolderMenu.cpp FolderMenu.h
@@ -448,6 +449,11 @@ qt_add_resources(WinShun "phosphor"
           "${PROJECT_SOURCE_DIR}/third_party/phosphor/Phosphor-Fill.ttf")
 
 target_include_directories(WinShun PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# The QML compiler makes SettingsWindow.qml one C++ file with more sections
+# than an object file holds by default (C1128).
+if(MSVC)
+    target_compile_options(WinShun PRIVATE /bigobj)
+endif()
 target_link_libraries(WinShun PRIVATE
     wscore wsmcp wsplugin
     wscapture # the screen capture (src/capture)

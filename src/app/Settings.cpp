@@ -115,6 +115,7 @@ const QStringList kDefaultPreferredTypes {u"exe"_s, u"bat"_s, u"cmd"_s, u"ps1"_s
 // some defaults are the machine's at the first start (clipboard history,
 // renderer, low memory), which must stay as they were.
 const QString kPreferredTypesKey = u"Results/PreferredTypes"_s;
+const QStringList kTerminals {u"cmd"_s, u"powershell"_s, u"pwsh"_s, u"wt"_s, u"gitbash"_s, u"wsl"_s, u"custom"_s}; // Settings::terminal
 
 // Plain-text formats: the scanner reads their raw bytes. Documents (docx,
 // xlsx, pdf...) are read by WinShunExtract.exe instead, under their own
@@ -329,6 +330,8 @@ void writeQuickFilters(QSettings& s, const QuickFilters& filters)
         s.setValue(u"Query"_s, filters[i].query);
         if (!filters[i].keyword.isEmpty())
             s.setValue(u"Keyword"_s, filters[i].keyword);
+        if (!filters[i].sort.isEmpty())
+            s.setValue(u"Sort"_s, filters[i].sort);
     }
     s.endArray();
 }
@@ -337,7 +340,7 @@ void writeQuickFilters(QSettings& s, const QuickFilters& filters)
 // a second time (any case). A query that cannot be read stays, to be put
 // right in the settings; the search passes it over. A keyword that cannot
 // be one, or is taken (`keywords`: the kinds of file's and the folders',
-// and each filter's as it is read), is none.
+// and each filter's as it is read), is none; so is a sort not known.
 QuickFilters readQuickFilters(QSettings& s, QSet<QString> keywords)
 {
     QuickFilters filters;
@@ -345,9 +348,12 @@ QuickFilters readQuickFilters(QSettings& s, QSet<QString> keywords)
     for (int i = 0; i < size; ++i) {
         s.setArrayIndex(i);
         QuickFilter filter {s.value(u"Name"_s).toString().simplified(), s.value(u"Query"_s).toString().trimmed(),
-            normalizedTypeKeyword(s.value(u"Keyword"_s).toString()).value_or(QString())};
+            normalizedTypeKeyword(s.value(u"Keyword"_s).toString()).value_or(QString()),
+            s.value(u"Sort"_s).toString().trimmed().toLower()};
         if (keywords.contains(filter.keyword))
             filter.keyword.clear();
+        if (!isSortName(filter.sort))
+            filter.sort.clear();
         const bool named = std::ranges::any_of(filters, [&](const QuickFilter& f) { return f.name.compare(filter.name, Qt::CaseInsensitive) == 0; });
         if (!filter.name.isEmpty() && !filter.query.isEmpty() && !named) {
             filters.append(filter);
@@ -956,6 +962,7 @@ void Settings::load()
     folderMenuItemPowerShell = readOrDefault(s, u"Launcher/FolderMenuItemPowerShell"_s, d.folderMenuItemPowerShell);
     folderMenuItemFavorite = readOrDefault(s, u"Launcher/FolderMenuItemFavorite"_s, d.folderMenuItemFavorite);
     folderMenuItemSettings = readOrDefault(s, u"Launcher/FolderMenuItemSettings"_s, d.folderMenuItemSettings);
+    folderMenuFiles = readOrDefault(s, u"Launcher/FolderMenuFiles"_s, d.folderMenuFiles);
     folderMenuHotkey = readOrDefault(s, u"Launcher/FolderMenuHotkey"_s, d.folderMenuHotkey).trimmed();
     folderMenuOpusBefore = readOrDefault(s, u"Launcher/FolderMenuOpusBefore"_s, d.folderMenuOpusBefore);
     dropPie = readOrDefault(s, u"Favorites/DropPie"_s, d.dropPie);
@@ -1032,6 +1039,10 @@ void Settings::load()
     openHotkey = previewkeys::normalizedOpen(readOrDefault(s, u"Results/OpenHotkey"_s, d.openHotkey).trimmed());
     if (openHotkey == previewHotkey)
         openHotkey.clear();
+    terminal = readOrDefault(s, u"Results/Terminal"_s, d.terminal).trimmed().toLower();
+    if (!kTerminals.contains(terminal))
+        terminal = d.terminal;
+    terminalCommand = readOrDefault(s, u"Results/TerminalCommand"_s, d.terminalCommand).trimmed();
 
     theme = readOrDefault(s, u"Appearance/Theme"_s, d.theme).trimmed().toLower();
     if (theme != u"light" && theme != u"dark")
@@ -1181,7 +1192,12 @@ void Settings::load()
     if (clipboardPictureSize != u"small" && clipboardPictureSize != u"standard" && clipboardPictureSize != u"large")
         clipboardPictureSize = d.clipboardPictureSize;
     clipboardKeepPlace = readOrDefault(s, u"Clipboard/KeepPlace"_s, d.clipboardKeepPlace);
-    clipboardAtPointer = readOrDefault(s, u"Clipboard/AtPointer"_s, d.clipboardAtPointer);
+    // Clipboard/AtPointer was a switch until 0.37: on is "pointer".
+    clipboardOpenAt = readOrDefault(s, u"Clipboard/OpenAt"_s,
+        s.value(u"Clipboard/AtPointer"_s, false).toBool() ? u"pointer"_s : d.clipboardOpenAt).trimmed().toLower();
+    if (clipboardOpenAt != u"caret" && clipboardOpenAt != u"pointer" && clipboardOpenAt != u"last")
+        clipboardOpenAt = d.clipboardOpenAt;
+    clipboardPreviewRestore = readOrDefault(s, u"Clipboard/PreviewRestore"_s, d.clipboardPreviewRestore);
     clipboardPauseInFullScreen = readOrDefault(s, u"Clipboard/PauseInFullScreen"_s, d.clipboardPauseInFullScreen);
     clipboardFlipAbove = readOrDefault(s, u"Clipboard/FlipAbove"_s, d.clipboardFlipAbove);
     clipboardHoldToStep = readOrDefault(s, u"Clipboard/HoldToStep"_s, d.clipboardHoldToStep);
@@ -1377,6 +1393,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/FolderMenuItemPowerShell"_s, folderMenuItemPowerShell);
     s.setValue(u"Launcher/FolderMenuItemFavorite"_s, folderMenuItemFavorite);
     s.setValue(u"Launcher/FolderMenuItemSettings"_s, folderMenuItemSettings);
+    s.setValue(u"Launcher/FolderMenuFiles"_s, folderMenuFiles);
     s.setValue(u"Launcher/FolderMenuHotkey"_s, folderMenuHotkey);
     s.setValue(u"Launcher/FolderMenuOpusBefore"_s, folderMenuOpusBefore);
     s.setValue(u"Favorites/DropPie"_s, dropPie);
@@ -1428,6 +1445,8 @@ bool Settings::saveChecked() const
     s.setValue(u"Results/PreviewWith"_s, previewWith);
     s.setValue(u"Results/PreviewHotkey"_s, previewHotkey);
     s.setValue(u"Results/OpenHotkey"_s, openHotkey);
+    s.setValue(u"Results/Terminal"_s, terminal);
+    s.setValue(u"Results/TerminalCommand"_s, terminalCommand);
     s.setValue(u"Results/PreviewFollowsPointer"_s, previewFollowsPointer);
     s.setValue(u"Results/PreviewRestore"_s, previewRestore);
     s.setValue(u"Appearance/Theme"_s, theme);
@@ -1484,7 +1503,9 @@ bool Settings::saveChecked() const
     s.setValue(u"Clipboard/PictureSize"_s, clipboardPictureSize);
     s.remove(u"Clipboard/LargePictures"_s); // said by PictureSize now
     s.setValue(u"Clipboard/KeepPlace"_s, clipboardKeepPlace);
-    s.setValue(u"Clipboard/AtPointer"_s, clipboardAtPointer);
+    s.setValue(u"Clipboard/OpenAt"_s, clipboardOpenAt);
+    s.remove(u"Clipboard/AtPointer"_s); // said by OpenAt now
+    s.setValue(u"Clipboard/PreviewRestore"_s, clipboardPreviewRestore);
     s.setValue(u"Clipboard/PauseInFullScreen"_s, clipboardPauseInFullScreen);
     s.setValue(u"Clipboard/FlipAbove"_s, clipboardFlipAbove);
     s.setValue(u"Clipboard/HoldToStep"_s, clipboardHoldToStep);

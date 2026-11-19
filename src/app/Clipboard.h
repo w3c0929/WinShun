@@ -68,8 +68,10 @@ class Clipboard : public QObject {
     // the hotkey is pressed again or the search field clicked (keysWanted),
     // up to the next paste or Esc. Not while it pastes into a field of Win顺's own.
     Q_PROPERTY(bool pinned READ pinned WRITE setPinned NOTIFY pinnedChanged FINAL)
-    // The preview beside the list (Alt+P, →): as it was left, next time too.
+    // The preview beside the list (Alt+P, →): as it was left, next time too
+    // when previewRestore is on (Settings::clipboardPreviewRestore).
     Q_PROPERTY(bool previewOpen READ previewOpen WRITE setPreviewOpen NOTIFY previewOpenChanged FINAL)
+    Q_PROPERTY(bool previewRestore READ previewRestore NOTIFY previewOpenChanged FINAL)
     // Its width as the user dragged it (logical pixels); 0: the default.
     Q_PROPERTY(int previewWidth READ previewWidth WRITE setPreviewWidth NOTIFY previewWidthChanged FINAL)
     Q_PROPERTY(int listWidth READ listWidth WRITE setListWidth NOTIFY listWidthChanged FINAL)
@@ -149,7 +151,7 @@ public:
         OpenLink,
         Reveal,
         OpenImage,
-        PinImage, // a picture on the screen (贴到屏幕): pinRequested
+        PinImage, // a picture on the screen (贴到屏幕): pinRequested; words: pinTextRequested
         EditImage, // the editing window (编辑): editRequested
         Remove,
         MoveUp, // in its group's own order (ClipModel::movable)
@@ -231,6 +233,8 @@ public:
     void setPinned(bool pinned);
     bool previewOpen() const { return m_previewOpen; }
     void setPreviewOpen(bool open);
+    bool previewRestore() const { return m_previewRestore; }
+    void setPreviewRestore(bool on);
     int previewWidth() const { return m_previewWidth; }
     void setPreviewWidth(int width);
     int listWidth() const { return m_listWidth; }
@@ -271,6 +275,9 @@ public:
     // On a row; on all of them, when it is one of several picked.
     Q_INVOKABLE void paste(int row, bool plainText);
     Q_INVOKABLE void quickPaste(int row, bool plainText); // Alt+1 ... Alt+9: that row alone, as shown numbered (ShownRows.qml)
+    // Part of an entry, selected in the preview (GitHub #375): pasted where
+    // the entry would be, as plain text; the history keeps the entry whole.
+    Q_INVOKABLE void pasteText(const QString& text);
     Q_INVOKABLE void copy(int row);
     // Dragged out as files (clipfiles::plan): pictures as they were copied,
     // words made files, files and folders as they are. The entries stay.
@@ -405,6 +412,7 @@ signals:
     // 贴到屏幕 and 编辑 on a picture: the entry's id, for the plugin that
     // does them (App::pictureAction; the screenshot plugin).
     void pinRequested(qint64 id);
+    void pinTextRequested(const QString& text); // 贴到屏幕 on words (GitHub #388)
     void editRequested(qint64 id);
 
 private:
@@ -431,6 +439,7 @@ private:
     void failPaste(const QString& message);
     static QString elevatedHint(); // the paste left to the user, into a program run as administrator
     void pasteThroughService(HWND target); // the index service presses the keys there (GitHub #277)
+    void aimAtFrontProgram(); // pinned, clicked: the paste goes to the program in front now
     std::vector<const Clip*> targets(int row) const; // the row, or the picked ones it is one of
     ClipWrite writeFor(
         const std::vector<const Clip*>& clips, bool plainText, QString* problem, HWND target = nullptr) const;
@@ -492,6 +501,7 @@ private:
     bool m_keysRouted = false;
     bool m_pinned = false;
     bool m_previewOpen = false;
+    bool m_previewRestore = false;
     int m_previewWidth = 0;
     int m_listWidth = 480;
     int m_windowHeight = 0;

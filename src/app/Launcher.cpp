@@ -84,6 +84,33 @@ static_assert(Launcher::BestMatch == static_cast<int>(RankBy::Match)
     && Launcher::OldestFirst == static_cast<int>(RankBy::Oldest));
 static_assert(Launcher::RecentlyOpened == static_cast<int>(ws::StartList::Opened)
     && Launcher::RecentlyModified == static_cast<int>(ws::StartList::Modified));
+static_assert(std::size(kSortNames) == Launcher::MostOpened + 1); // a quick filter's sort is one by name
+
+// A sort of the compact list as the panel's columns order it (setPanel, a
+// quick filter's own order); by best match or most opened: as ranked.
+static SortOrder columnOrder(Launcher::Sort sort)
+{
+    switch (sort) {
+    case Launcher::NewestFirst:
+        return {SortKey::Modified, true};
+    case Launcher::OldestFirst:
+        return {SortKey::Modified, false};
+    case Launcher::ByName:
+        return {SortKey::Name, false};
+    case Launcher::ByFolder:
+        return {SortKey::Path, false};
+    case Launcher::ByType:
+        return {SortKey::Type, false};
+    case Launcher::LargestFirst:
+        return {SortKey::Size, true};
+    case Launcher::SmallestFirst:
+        return {SortKey::Size, false};
+    case Launcher::BestMatch:
+    case Launcher::MostOpened:
+        break;
+    }
+    return {};
+}
 
 namespace {
 
@@ -801,6 +828,7 @@ void Launcher::setQuery(const QString& query)
         m_folderSteps.removeLast();
     updateQueryPrefix();
     emit queryChanged();
+    followFilterSort(); // a quick filter typed by its keyword, or taken away
     m_results.setSelection({});
     m_held.reset(); // typed on: a key held for the rows before is not for these
     search();
@@ -1874,11 +1902,17 @@ void Launcher::setNumberKeysLeft(unsigned digits)
 
 void Launcher::setSort(Sort sort)
 {
-    if (sort == m_sort)
-        return;
+    // Chosen: in force from now on, a quick filter's own set aside (GitHub #392).
+    const Sort before = this->sort();
+    const bool chosen = sort != m_sort;
+    m_filterSort.reset();
     m_sort = sort;
-    emit sortChanged();
-    if (!m_window || !m_window->isVisible() || searchText().isEmpty() || m_keyword)
+    if (chosen || sort != before)
+        emit sortChanged();
+    if (sort == before)
+        return;
+    // A quick filter named alone (":nobin") lists what it lets through, in this order too.
+    if (!m_window || !m_window->isVisible() || (searchText().isEmpty() && typedQuick().filters.isEmpty()) || m_keyword)
         return; // hidden: handleShown() searches
     // 内容, every match on screen: put in the other order, not searched again
     // (that would read the files once more).
@@ -1948,36 +1982,21 @@ RankBy Launcher::rankBy() const
     if (m_panel && m_panelSort.key == SortKey::Rank && searchText().isEmpty())
         return RankBy::Newest;
     // The sorts by a column are the names' (nameOrder); content matches stay as ranked.
-    return m_sort <= OldestFirst ? static_cast<RankBy>(m_sort) : RankBy::Match;
+    return sort() <= OldestFirst ? static_cast<RankBy>(sort()) : RankBy::Match;
 }
 
 SortOrder Launcher::nameOrder() const
 {
     if (m_panel)
         return m_panelSort; // its columns; the sorts below are the compact list's
-    switch (m_sort) {
-    case ByName:
-        return {SortKey::Name, false};
-    case ByFolder:
-        return {SortKey::Path, false};
-    case ByType:
-        return {SortKey::Type, false};
-    case LargestFirst:
-        return {SortKey::Size, true};
-    case SmallestFirst:
-        return {SortKey::Size, false};
-    case BestMatch:
-    case NewestFirst:
-    case OldestFirst:
-    case MostOpened:
-        break;
-    }
-    return {};
+    // By time: ranked so (rankBy), the names in no other order.
+    return sort() == NewestFirst || sort() == OldestFirst ? SortOrder {} : columnOrder(sort());
 }
 
 bool Launcher::showsStartList() const
 {
-    return m_scope != Content && m_scope != Apps && searchText().isEmpty() && !m_panel && !m_filePrefix;
+    return m_scope != Content && m_scope != Apps && searchText().isEmpty() && !m_panel && !m_filePrefix
+        && typedQuick().filters.isEmpty(); // a quick filter named alone lists its own (GitHub #392)
 }
 
 void Launcher::switchOrder()
@@ -2000,7 +2019,7 @@ void Launcher::switchOrder()
     else if (!m_keyword) // a command's list is in the plugin's order
         // Ctrl+S goes round the first three; the other sorts (#44) are chosen
         // from the menu, and from one of them it goes back to the best match.
-        setSort(m_sort <= OldestFirst ? static_cast<Sort>((m_sort + 1) % 3) : BestMatch);
+        setSort(sort() <= OldestFirst ? static_cast<Sort>((sort() + 1) % 3) : BestMatch);
 }
 
 void Launcher::setInTaskbarBox(bool on)
@@ -3040,7 +3059,7 @@ void Launcher::search(bool more)
     // The folder typed in, first or alone (typingKey), is a list of its own too.
     m_refresh = m_haveResults && !m_replacePending && text == m_shownText && m_scope == m_shownScope
         && fileExtensions() == m_shownExtensions && fileTypeFolders() == m_shownTypeFolders
-        && rankBy() == m_shownRankBy && nameOrder() == m_shownOrder && (m_panel || m_sort == m_shownSort)
+        && rankBy() == m_shownRankBy && nameOrder() == m_shownOrder && (m_panel || sort() == m_shownSort)
         && m_kindOrder == m_shownKindOrder
         && m_preferredTypes == m_shownPreferredTypes && keywordKey == m_shownKeyword
         && (m_scope != Content || (m_contentFolder == m_shownContentFolder && pickKey(m_contentPick) == m_shownPick))
@@ -3197,7 +3216,7 @@ void Launcher::search(bool more)
             request.folders = {m_folderFilter};
         request.browse = true;
     }
-    if (m_panel || m_filePrefix || !text.isEmpty())
+    if (m_panel || m_filePrefix || !text.isEmpty() || !typedQuick().filters.isEmpty())
         request.order = nameOrder();
     // With no start list, nothing opened shows before something is typed.
     if (m_recordHistory && !(text.isEmpty() && m_startList == NoStartList)) {
@@ -3223,7 +3242,7 @@ void Launcher::search(bool more)
         };
     }
     request.places = m_searchPlaces;
-    request.settingsName = tr("Win顺 设置");
+    request.ownPlaces = true; // carried out here (performPlace)
     request.regex = regexTerms();
     if (m_favorites)
         request.favorites = m_favorites->items();
@@ -3247,7 +3266,7 @@ void Launcher::search(bool more)
 // moves the selection back to the first one; a refresh keeps it.
 bool Launcher::byOpenCount() const
 {
-    return m_sort == MostOpened && !m_panel && !m_keyword && !searchText().isEmpty();
+    return sort() == MostOpened && !m_panel && !m_keyword && !searchText().isEmpty();
 }
 
 void Launcher::showRows(SearchResults rows, QStringList highlights)
@@ -3333,7 +3352,7 @@ void Launcher::showRows(SearchResults rows, QStringList highlights)
     m_shownTypeFolders = fileTypeFolders();
     m_shownRankBy = rankBy();
     m_shownOrder = nameOrder();
-    m_shownSort = m_sort;
+    m_shownSort = sort();
     m_shownStartList = m_startList;
     m_shownKindOrder = m_kindOrder;
     m_shownPreferredTypes = m_preferredTypes;
@@ -4055,11 +4074,11 @@ void Launcher::setPanel(bool on)
     if (on == m_panel)
         return;
     if (on) {
-        m_panelSort = m_sort == NewestFirst ? SortOrder{SortKey::Modified, true}
-            : m_sort == OldestFirst ? SortOrder{SortKey::Modified, false} : nameOrder();
+        m_panelSort = columnOrder(sort());
         emit panelSortChanged();
     }
     m_panel = on;
+    followFilterSort(); // the chips count in the panel only
     m_results.setFolderSizesEnabled(on);
     emit panelChanged();
     if (m_appsTabWanted)
@@ -4113,7 +4132,7 @@ QVariantList Launcher::quickFilters() const
 {
     QVariantList filters;
     for (const QuickFilter& f : m_quickFilters)
-        filters.append(QVariantMap {{u"name"_s, f.name}, {u"query"_s, f.query}, {u"keyword"_s, f.keyword}});
+        filters.append(QVariantMap {{u"name"_s, f.name}, {u"query"_s, f.query}, {u"keyword"_s, f.keyword}, {u"sort"_s, f.sort}});
     return filters;
 }
 
@@ -4138,12 +4157,54 @@ const QuickFilterQuery& Launcher::typedQuick() const
     return m_typedQuick;
 }
 
+// GitHub #392: a quick filter with an order of its own ("大文件", largest
+// first) puts the list in that order while it is on: named in the box, or
+// its chip in the panel. The first one on that has an order decides. The
+// order chosen is kept as it was (chosenSort, the one remembered): with the
+// filter gone, it is in force again. Choosing another meanwhile (setSort, a
+// column of the panel) sets the filter's aside until another one comes.
+void Launcher::followFilterSort()
+{
+    QString from;
+    std::optional<Sort> wanted;
+    const QList<int>& typed = typedQuick().filters;
+    for (qsizetype i = 0; i < m_quickFilters.size() && !wanted; ++i) {
+        const QuickFilter& f = m_quickFilters[i];
+        if (isSortName(f.sort) && ((m_panel && m_quickFiltersOn.contains(f.name)) || typed.contains(int(i)))) {
+            from = f.sort + u'|' + f.name; // no '|' in a sort's name
+            wanted = static_cast<Sort>(sortIndex(f.sort));
+        }
+    }
+    if (from == m_filterSortFrom)
+        return; // the same: in force, or set aside
+    const std::optional<Sort> was = m_filterSort;
+    const Sort before = sort();
+    const SortOrder panelBefore = m_panelSort;
+    m_filterSortFrom = from;
+    m_filterSort = wanted;
+    // The panel's columns too: the filter's order, the one before given back
+    // after, unless a column was clicked meanwhile.
+    if (wanted) {
+        if (!was) // the panel's own, or the one it would open with
+            m_panelSortBeforeFilter = m_panel ? m_panelSort : columnOrder(m_sort);
+        m_panelSort = columnOrder(*wanted);
+    } else if (was && m_panelSort == columnOrder(*was)) {
+        m_panelSort = m_panelSortBeforeFilter;
+    }
+    if (sort() != before)
+        emit sortChanged();
+    if (m_panelSort != panelBefore)
+        emit panelSortChanged();
+}
+
 void Launcher::setQuickFilters(const QuickFilters& filters)
 {
     if (filters == m_quickFilters)
         return;
     const QStringList before = quickConditions();
     const QString words = searchText();
+    const SortOrder order = nameOrder();
+    const RankBy ranked = rankBy();
     m_quickFilters = filters;
     m_typedQuickRead = false; // a keyword given or taken away: what is typed reads otherwise
     updateQueryPrefix();
@@ -4153,7 +4214,9 @@ void Launcher::setQuickFilters(const QuickFilters& filters)
     });
     emit quickFiltersChanged();
     emit filtersChanged();
-    if ((quickConditions() != before || searchText() != words) && m_window && m_window->isVisible())
+    followFilterSort(); // its order changed, or it is no more
+    const bool reordered = nameOrder() != order || rankBy() != ranked;
+    if ((quickConditions() != before || searchText() != words || reordered) && m_window && m_window->isVisible())
         search(); // one that is on was edited: its rows, in place
 }
 
@@ -4165,6 +4228,7 @@ void Launcher::toggleQuickFilter(int index)
     if (!m_quickFiltersOn.removeOne(name))
         m_quickFiltersOn.append(name);
     emit filtersChanged();
+    followFilterSort();
     if (m_panel)
         search();
 }
@@ -4191,27 +4255,29 @@ QVariantList Launcher::favoriteFolders() const
 
 namespace {
 
-QDate dateOf(const QString& text)
-{
-    return QDate::fromString(text.trimmed(), Qt::ISODate);
-}
-
 FileTime fileTimeOf(const QDateTime& when)
 {
     const qint64 secs = when.toSecsSinceEpoch();
     return secs <= 0 ? 0 : secs >= 0xFFFF'FFFFll ? 0xFFFF'FFFFu : static_cast<FileTime>(secs);
 }
 
-std::optional<std::uint64_t> megabytesOf(const QString& text)
+// The panel's own size boxes: "40 KB", "1.5 GB", or a bare number of MB (GitHub #394).
+std::optional<std::uint64_t> sizeBoundOf(const QString& text)
 {
-    bool ok = false;
-    const double mb = text.trimmed().toDouble(&ok);
-    if (!ok || mb < 0 || mb > 1e9)
-        return std::nullopt;
-    return static_cast<std::uint64_t>(mb * 1048576.0 + 0.5);
+    return ws::parseSizeValue(text, std::uint64_t {1} << 20);
 }
 
 } // namespace
+
+bool Launcher::readsAsSize(const QString& text) const
+{
+    return text.trimmed().isEmpty() || sizeBoundOf(text).has_value();
+}
+
+bool Launcher::readsAsDate(const QString& text) const
+{
+    return text.trimmed().isEmpty() || ws::parseDateValue(text).has_value();
+}
 
 EntryFilter Launcher::panelFilter() const
 {
@@ -4232,13 +4298,14 @@ EntryFilter Launcher::panelFilter() const
         f.after = fileTimeOf(QDate(today.year(), 1, 1).startOfDay());
         break;
     case 5: {
-        const QDate from = dateOf(m_dateFrom);
-        const QDate to = dateOf(m_dateTo);
-        if (from.isValid())
-            f.after = fileTimeOf(from.startOfDay());
-        if (to.isValid())
-            f.before = fileTimeOf(to.addDays(1).startOfDay());
-        if (!from.isValid() && !to.isValid())
+        // "2026" or "2026-3" as well: from its first day, to its last.
+        const auto from = ws::parseDateValue(m_dateFrom);
+        const auto to = ws::parseDateValue(m_dateTo);
+        if (from)
+            f.after = fileTimeOf(from->first);
+        if (to)
+            f.before = fileTimeOf(to->second);
+        if (!from && !to)
             f.after = 1; // a bound all the same: times not known stay out, as the choice says
         break;
     }
@@ -4262,8 +4329,8 @@ EntryFilter Launcher::panelFilter() const
         f.minSize = packSize(1024 * mb + 1);
         break;
     case 5: {
-        const auto min = megabytesOf(m_sizeMin);
-        const auto max = megabytesOf(m_sizeMax);
+        const auto min = sizeBoundOf(m_sizeMin);
+        const auto max = sizeBoundOf(m_sizeMax);
         if (min)
             f.minSize = packSize(*min);
         if (max)
@@ -4613,7 +4680,7 @@ void Launcher::refreshKeyHints()
     } else if (r->isWeb()) {
         enter = r->words.isEmpty() ? tr("打开网站") : tr("搜索");
     } else if (r->isPlace()) {
-        enter = tr("打开");
+        enter = ws::isOwnCommand(r->target) ? tr("打开设置") : tr("打开");
         if (!r->switchId.isEmpty())
             switchKeyHints(*r, enter, secondKeys, second);
         if (steppable(*r)) {
@@ -5895,11 +5962,6 @@ void Launcher::perform(const SearchResult& result, Action action, bool fileCheck
         }
         return;
     }
-    if (r.isSettings()) {
-        if (action == Open || action == Alternate || action == Reveal || action == RunAsAdmin)
-            openSettings();
-        return;
-    }
     if (action == EditWebShortcuts) {
         emit webSettingsRequested();
         return;
@@ -6092,7 +6154,7 @@ void Launcher::perform(const SearchResult& result, Action action, bool fileCheck
     case RemoveFavorite:
     case OpenTerminal:
         remember(r.path, m_shownText);
-        shell::openTerminal(r.isDir ? r.path : folderOf(r.path), reportFailure(r.name));
+        shell::openTerminalIn(m_terminal, m_terminalCommand, r.isDir ? r.path : folderOf(r.path), reportFailure(r.name));
         emit dismissRequested();
         break;
     case FavoriteFolder:
@@ -6166,6 +6228,9 @@ void Launcher::performPlace(const SearchResult& place, Action action)
 {
     if (!place.switchId.isEmpty() && performSwitch(place, action))
         return;
+    const bool own = ws::isOwnCommand(place.target); // Win顺's settings, or a plugin's (GitHub #389, #390)
+    if (own && (action == Alternate || action == Reveal))
+        action = Open; // where else would it go
     switch (action) {
     case Open:
     case RunAsAdmin:
@@ -6174,7 +6239,15 @@ void Launcher::performPlace(const SearchResult& place, Action action)
             emit elevatedRestartRequested();
             return;
         }
-        remember(place.path, m_shownText);
+        remember(place.path, m_shownText); // the next time the same words put it first
+        if (own) {
+            if (place.target == ws::kSettingsCommand)
+                openSettings();
+            else
+                emit pluginSettingsRequested(place.target.mid(ws::kPluginSettingsCommand.size()));
+            emit dismissRequested();
+            return;
+        }
         if (place.isCommand())
             shell::runCustom(place.target, place.workingDirectory, place.words, reportFailure(place.name),
                 {place.silent, place.runAsAdmin || action == RunAsAdmin});
@@ -6187,6 +6260,11 @@ void Launcher::performPlace(const SearchResult& place, Action action)
         break;
     case CopyItem:
     case CopyPath:
+        if (own) { // as a winshun:// link opens it (WinShunUri)
+            shell::copyText(u"winshun://"_s + place.target.mid(place.target.indexOf(u':') + 1));
+            flash(tr("已复制链接"));
+            break;
+        }
         shell::copyText(place.target);
         flash(tr("已复制打开它的命令"));
         break;
@@ -6508,7 +6586,12 @@ void Launcher::performMany(const SearchResults& items, Action action, const Serv
             if (r.isPlace()) {
                 if (admin || drawsSwitch(r)) // a switch is not "opened" with the others
                     continue;
-                shell::run(r.target, reportFailure(r.name));
+                if (r.target == ws::kSettingsCommand) // Win顺's own (GitHub #389, #390): never the shell
+                    openSettings();
+                else if (r.target.startsWith(ws::kPluginSettingsCommand))
+                    emit pluginSettingsRequested(r.target.mid(ws::kPluginSettingsCommand.size()));
+                else
+                    shell::run(r.target, reportFailure(r.name));
             } else if (r.isApp()) {
                 if (admin && !r.elevatable)
                     continue;
@@ -7079,6 +7162,19 @@ QVariantList Launcher::menuItems(int row) const
         }
         items.append(separator);
         items.append(entry(CopyName, tr("复制名称"), QString(), u"\uE8AC"_s));
+        if (r->recent) {
+            items.append(separator);
+            items.append(entry(ForgetRecent, tr("从最近使用中移除"), QString(), u"\uE711"_s));
+        }
+        return items;
+    }
+    if (r->isPlace() && ws::isOwnCommand(r->target)) { // Win顺's settings, a plugin's: kept like any place (GitHub #389)
+        items.append(entry(Open, tr("打开设置"), u"Enter"_s, u"\uE713"_s)); // Settings
+        items.append(separator);
+        // winshun://settings/plugin/<id>: for a desktop shortcut or a script (GitHub #390)
+        items.append(entry(CopyPath, tr("复制链接"), u"Ctrl+Shift+C"_s, u"copyPath"_s));
+        items.append(entry(CopyName, tr("复制名称"), QString(), u"\uE8AC"_s));
+        favoriteItems();
         if (r->recent) {
             items.append(separator);
             items.append(entry(ForgetRecent, tr("从最近使用中移除"), QString(), u"\uE711"_s));

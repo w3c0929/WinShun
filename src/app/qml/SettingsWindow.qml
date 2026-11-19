@@ -4360,6 +4360,61 @@ Window {
                 }
 
                 SettingRow {
+                    // What a folder's or file's 在终端中打开 starts (GitHub #386):
+                    // only what is found here, then a command of the user's own.
+                    id: terminalRow
+                    readonly property bool custom: window.editor.terminal === "custom"
+                    title: qsTr("在终端中打开")
+                    keywords: qsTr("终端;命令行;命令提示符;PowerShell;pwsh;Windows Terminal;Git Bash;WSL;MSYS2;bash;shell;terminal").split(";")
+                    description: qsTr("结果上的“在终端中打开”用哪个。选“Windows 终端”就用它里面设的默认配置")
+                    bodyShown: custom
+
+                    ChoiceBox {
+                        id: terminalPicker
+                        objectName: "terminalPicker"
+                        implicitWidth: 240
+                        implicitHeight: 36
+                        model: window.editor.terminals
+                        textRole: "text"
+                        valueRole: "value"
+                        currentIndex: window.editor.terminals.findIndex(t => t.value === window.editor.terminal)
+                        onActivated: window.editor.terminal = currentValue
+                        Accessible.name: qsTr("在终端中打开")
+                        dpr: window.dpr
+                        leftPadding: 12
+                        contentItem: Text {
+                            text: terminalPicker.displayText
+                            font: terminalPicker.font
+                            color: terminalPicker.palette.buttonText
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                        Connections {
+                            target: terminalPicker.popup
+                            function onOpened() { window.frame.addPopup(terminalPicker.popup.background) }
+                        }
+                    }
+
+                    body: [
+                        InputBox {
+                            dpr: window.dpr
+                            objectName: "terminalCommandBox"
+                            width: Math.min(parent.width, 420)
+                            text: window.editor.terminalCommand
+                            placeholder: qsTr("例如 %1").arg("C:\\msys64\\msys2_shell.cmd -ucrt64 -here")
+                            onEditingFinished: window.editor.terminalCommand = text
+                        },
+                        Text {
+                            width: parent.width
+                            text: qsTr("在那个文件夹里运行；要把文件夹路径当参数时写 {query}。没填命令时开命令提示符")
+                            color: Theme.subtext
+                            font.pixelSize: Theme.fontCaption
+                            wrapMode: Text.Wrap
+                        }
+                    ]
+                }
+
+                SettingRow {
                     title: qsTr("用数字键直接打开")
                     unlocks: [resultNumberHintsRow]
                     keywords: qsTr("快捷键;数字键;序号;Ctrl+1;Alt+1;冲突;hotkey").split(";")
@@ -4399,7 +4454,7 @@ Window {
 
                 SettingRow {
                     title: qsTr("字母直达")
-                    description: qsTr("轻按一下下面选的键再松开，每一行前面出现一个字母，按字母直接打开这一行（剪贴板里是粘贴），第九行以后也有。搜索框里按 Shift+字母是选中这一行，它的按钮（打开所在位置、在终端中打开、复制、复制路径、删除）上再出现字母，按字母就是点那个按钮，删除要按两次；剪贴板里 Shift+字母是粘贴为纯文本。再按一下那个键或按 Esc 退出。启动器和剪贴板共用")
+                    description: qsTr("轻按一下下面选的键再松开，每一行前面出现一个字母，按字母直接打开这一行（剪贴板里是粘贴），第九行以后也有。搜索框里按 Shift+字母是选中这一行，它的按钮（打开所在位置、在终端中打开、复制、复制路径、删除）上再出现字母，按字母就是点那个按钮，删除要按两次；剪贴板和对话框旁的搜索栏里 Shift+字母是选中那一条，剪贴板里可以选几条一起粘贴。再按一下那个键或按 Esc 退出。启动器和剪贴板共用")
                     keywords: qsTr("快捷键;字母;单手;vim;vi;提示;跳转;直达;hint").split(";")
 
                     ToggleSwitch {
@@ -5181,6 +5236,21 @@ Window {
                     }
                 }
 
+                SettingRow { // GitHub #384
+                    sub: true
+                    title: qsTr("文件夹的子列也列出文件")
+                    description: qsTr("文件夹在前、文件在后，点一下文件就打开；打开、保存对话框里仍只列文件夹")
+                    keywords: qsTr("文件夹菜单;文件;子列;子菜单;列出文件;打开文件;Listary;files").split(";")
+
+                    ToggleSwitch {
+                        objectName: "folderMenuFilesSwitch"
+                        dpr: window.dpr
+                        enabled: window.editor.folderMenu
+                        checked: window.editor.folderMenuFiles
+                        onToggled: (on) => window.editor.folderMenuFiles = on
+                    }
+                }
+
                 SettingRow { // GitHub #200
                     id: folderMenuActionsRow
                     sub: true
@@ -5693,6 +5763,21 @@ Window {
                     }
                 }
 
+                SettingRow { // a side preview left open comes back with the window (GitHub #9; off since #174)
+                    title: qsTr("再次打开时恢复预览")
+                    keywords: qsTr("预览;恢复;记住;保留;保持;下次;再次;侧边;restore;preview").split(";")
+                    description: window.editor.clipboardPreviewRestore
+                                 ? qsTr("预览开着时关闭剪贴板，下次打开预览也跟着回来")
+                                 : qsTr("关闭剪贴板时预览一起收起，下次打开从列表开始")
+
+                    ToggleSwitch {
+                        objectName: "clipboardPreviewRestoreSwitch"
+                        dpr: window.dpr
+                        checked: window.editor.clipboardPreviewRestore
+                        onToggled: (on) => window.editor.clipboardPreviewRestore = on
+                    }
+                }
+
                 SettingRow {
                     title: qsTr("剪贴板大小")
                     keywords: qsTr("字体;字号;文字大小;行高;密集;紧凑;宽松;ditto;font size;dense").split(";")
@@ -5729,20 +5814,26 @@ Window {
 
                 SettingRow {
                     title: qsTr("剪贴板打开位置")
-                    keywords: qsTr("位置;鼠标;指针;光标;跟随;弹出;输入框").split(";")
-                    description: qsTr("每次打开时放在所选位置旁边，空间不足时自动调整到屏幕内")
+                    id: clipboardOpenAtRow
+                    readonly property var places: ["caret", "pointer", "last"]
+                    keywords: qsTr("位置;鼠标;指针;光标;跟随;弹出;输入框;固定;上次;记住").split(";")
+                    description: window.editor.clipboardOpenAt === "last"
+                                 ? qsTr("开在上次拖到的地方，大小也不变；有鼠标的那块屏幕上")
+                                 : qsTr("每次打开时放在所选位置旁边，空间不足时自动调整到屏幕内")
 
                     ScopeTabs {
-                        labels: [qsTr("输入光标旁"), qsTr("鼠标指针旁")]
-                        current: window.editor.clipboardAtPointer ? 1 : 0
-                        onActivated: (index) => window.editor.clipboardAtPointer = index === 1
+                        labels: [qsTr("输入光标旁"), qsTr("鼠标指针旁"), qsTr("上次的位置")]
+                        current: Math.max(0, clipboardOpenAtRow.places.indexOf(window.editor.clipboardOpenAt))
+                        onActivated: (index) => window.editor.clipboardOpenAt = clipboardOpenAtRow.places[index]
                     }
                 }
 
                 SettingRow {
                     // By the caret it opens under it, or over it where more
-                    // rows fit there (GitHub #38, Placement.above).
+                    // rows fit there (GitHub #38, Placement.above). Never
+                    // where it was last put.
                     sub: true
+                    shown: window.editor.clipboardOpenAt !== "last"
                     title: qsTr("开在光标上方时翻转")
                     keywords: qsTr("布局;上方;下方;翻转;颠倒;倒序;顺序").split(";")
                     description: window.editor.clipboardSearchBoxSide === "far"

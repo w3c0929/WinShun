@@ -860,7 +860,7 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
             m_settingsEditor->setSettings(m_settings);
     };
     connect(m_launcher.get(), &Launcher::sortChanged, this, [this, remember] {
-        remember(&Settings::sort, kSortNames[m_launcher->sort()].toString());
+        remember(&Settings::sort, kSortNames[m_launcher->chosenSort()].toString()); // not a quick filter's own (#392)
     });
     connect(m_launcher.get(), &Launcher::startListChanged, this, [this, remember] {
         static constexpr QStringView kLists[] {u"opened", u"modified", u"none"};
@@ -920,6 +920,7 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
         showShortcutSettings();
     });
     connect(m_clipboard.get(), &Clipboard::pinRequested, this, [this](qint64 id) { pictureAction(u"pin"_s, id, {}, false); });
+    connect(m_clipboard.get(), &Clipboard::pinTextRequested, this, &App::pinText);
     connect(m_clipboard.get(), &Clipboard::editRequested, this, [this](qint64 id) { pictureAction(u"edit"_s, id, {}, false); });
     connect(m_clipboard.get(), &Clipboard::lanSendSetupRequested, this, [this](bool update) {
         hideClipboard(false);
@@ -1766,6 +1767,7 @@ void App::applyAppearance()
 
     if (m_pluginHost)
         m_pluginHost->setAppearance(language, isDarkMode() ? u"dark"_s : u"light"_s, pluginLook());
+    applyOwnPlaces(); // their names
 
     if (!m_qml)
         return; // starting up: nothing shown yet
@@ -1992,7 +1994,9 @@ void App::applySettings(bool initial)
     m_launcher->setPreferredTypes(m_settings.preferredTypes);
     m_launcher->setFolderKeyword(m_settings.folderKeyword);
     m_launcher->setExcludedFiles(m_settings.excludedTypes, m_settings.excludedFileNames);
-    m_launcher->setSort(static_cast<Launcher::Sort>(sortIndex(m_settings.sort)));
+    // Changed in the settings only: a quick filter's own order in force is not set aside by any other change.
+    if (const auto sort = static_cast<Launcher::Sort>(sortIndex(m_settings.sort)); sort != m_launcher->chosenSort())
+        m_launcher->setSort(sort);
     m_launcher->setStartList(m_settings.startList == u"modified" ? Launcher::RecentlyModified
             : m_settings.startList == u"none"                     ? Launcher::NoStartList
                                                                  : Launcher::RecentlyOpened);
@@ -2001,6 +2005,7 @@ void App::applySettings(bool initial)
     m_preview->setBuiltInOnly(m_settings.previewWith == u"builtin");
     m_launcher->setPreviewHotkey(m_settings.previewHotkey);
     m_launcher->setOpenHotkey(m_settings.openHotkey);
+    m_launcher->setTerminal(m_settings.terminal, m_settings.terminalCommand);
     m_launcher->setPreviewFollowsPointer(m_settings.previewFollowsPointer);
     m_launcher->setPreviewRestore(m_settings.previewRestore);
     m_launcher->setReopenWhereLeft(m_settings.reopenWhereLeft);
@@ -2032,6 +2037,7 @@ void App::applySettings(bool initial)
     m_clipboard->setLayoutOptions(m_settings.clipboardFlipAbove, m_settings.clipboardSearchBoxSide == u"far");
     m_clipboard->setHoldToStep(m_settings.clipboardHoldToStep);
     m_clipboard->setPasteElevated(m_settings.clipboardPasteElevated);
+    m_clipboard->setPreviewRestore(m_settings.clipboardPreviewRestore);
     if (!m_settings.clipboardHoldToStep && (m_hold || m_browseHotkey))
         endClipboardHold("setting-off");
     updateNumberKeys();
@@ -2379,6 +2385,23 @@ void App::pictureAction(const QString& verb, qint64 clipId, const QString& path,
         params.insert(u"file"_s, QDir::toNativeSeparators(path));
     }
     if (!m_pluginHost->request(plugin, u"picture"_s, params, {}, true))
+        m_messages->showNotification(tr("截图插件还没准备好"), tr("请稍后再试。"));
+}
+
+// Copied words as a card on the screen (GitHub #388), by the plugin that
+// pins pictures. One from before 0.38.0 does not know words: it answers
+// without "pinned", and is to be updated.
+void App::pinText(const QString& text)
+{
+    const QString plugin = picturePlugin(u"pin"_s);
+    if (plugin.isEmpty() || text.trimmed().isEmpty())
+        return;
+    const QJsonObject params {{u"action"_s, u"pinText"_s}, {u"text"_s, text}};
+    const auto answered = [this](bool ok, const QJsonValue& result) {
+        if (ok && !result.toObject().value(u"pinned"_s).toBool())
+            m_messages->showNotification(tr("贴到屏幕"), tr("请把截图插件更新到最新版本，就能把文字贴到屏幕。"));
+    };
+    if (!m_pluginHost->request(plugin, u"picture"_s, params, answered, true))
         m_messages->showNotification(tr("截图插件还没准备好"), tr("请稍后再试。"));
 }
 
@@ -2938,7 +2961,9 @@ void App::applyTypeToSearch()
         }, Qt::QueuedConnection);
     };
     m_typing = std::make_unique<TypeToSearch>(wanted, std::move(callbacks));
-    m_typing->setLauncherRouted(launcherRouted());
+    m_typing->setRouted(TypeToSearch::Router::Launcher, launcherRouted());
+    m_typing->setRouted(TypeToSearch::Router::Clipboard, m_keyRouter != nullptr);
+    m_typing->setRouted(TypeToSearch::Router::FolderMenu, m_folderMenu && m_folderMenu->isOpen());
 }
 
 void App::pasteAsFile(HWND view)
@@ -4547,8 +4572,11 @@ void App::openLink(const QString& link)
         showLauncher(request.text);
         break;
     case winshunuri::Kind::Settings:
-        // A page by the id open_settings knows (AiSettings' sections); another, or none: the window as it is.
-        if (!request.page.isEmpty() && aisettings::sectionOf(request.page))
+        // A plugin's card (GitHub #390); a page by the id open_settings knows (AiSettings' sections);
+        // another, or none: the window as it is.
+        if (!request.plugin.isEmpty())
+            showPluginSettings(request.plugin);
+        else if (!request.page.isEmpty() && aisettings::sectionOf(request.page))
             openAiSettings({}, request.page);
         else
             showSettings();
@@ -4689,11 +4717,14 @@ void App::applyFolderMenu()
         connect(menu.get(), &FolderMenu::openChanged, this, [this](bool open) {
             if (m_keyListener)
                 m_keyListener->setMenuOpen(open);
+            if (m_typing) // a letter typed in it is its own, not a search of the folder under it
+                m_typing->setRouted(TypeToSearch::Router::FolderMenu, open);
         });
         connect(menu.get(), &FolderMenu::searchRequested, this, [this](const QString& folder) {
             showLauncher(folder.endsWith(u'\\') ? folder + u' ' : folder + u"\\ "_s);
         });
         connect(menu.get(), &FolderMenu::settingsRequested, this, [this] { showSettings(); });
+        connect(menu.get(), &FolderMenu::pluginSettingsRequested, this, &App::showPluginSettings);
         connect(menu.get(), &FolderMenu::notice, this, [this](const QString& text) {
             m_messages->showNotification(tr("文件夹菜单"), text);
         });
@@ -4706,6 +4737,7 @@ void App::applyFolderMenu()
         m_folderMenu->setInlineCounts(m_settings.folderMenuFavoritesInline, m_settings.folderMenuRecentInline, m_settings.folderMenuWindowsInline);
         m_folderMenu->setItems(m_settings.folderMenuItemSearch, m_settings.folderMenuItemCopyPath, m_settings.folderMenuItemCmd, m_settings.folderMenuItemPowerShell,
             m_settings.folderMenuItemFavorite, m_settings.folderMenuItemSettings);
+        m_folderMenu->setListFiles(m_settings.folderMenuFiles);
         m_folderMenu->setRecordHistory(m_settings.recordHistory);
     }
 }
@@ -4849,6 +4881,8 @@ void App::applyDialogs()
         m_dialogBar->setPlace(m_settings.dialogBarPlace);
         m_dialogBar->setFolderOnly(m_settings.dialogBarFolderOnly);
         m_dialogBar->setResultOptions(m_settings.showModified, m_settings.thumbnails, m_settings.numberKeys);
+        m_dialogBar->setNumberHints(m_settings.numberHints);
+        m_dialogBar->setLetterJump(m_settings.letterJump, m_settings.letterJumpKey, m_settings.letterJumpKeys);
         m_dialogBar->results()->setShowModifiedTime(m_settings.showModifiedTime);
         m_dialogBar->setAskAutoJump(!m_settings.dialogAutoJump && !m_settings.dialogAutoJumpAsked);
         m_dialogBar->setCopyOnlyHint(copyOnlyHint(m_serviceNav ? m_serviceNav->reach() : ServiceDialogNav::Reach::NoService));
@@ -4962,6 +4996,10 @@ bool App::createBarWindow()
         delete object;
         return false;
     }
+    // Its list opens and changes length with the rows: on Windows 10 every
+    // such resize flashed black for a frame, as the box typed open in a
+    // folder did (GitHub #234), until the window had alpha as well.
+    prepareBackdrop(window);
     window->create();
     styleWindow(window);
     win::setDarkFrame(window, isDarkMode());
@@ -5701,7 +5739,8 @@ void App::showClipboard()
         m_clipboard->setPinned(false); // as it opens, whatever closed it last (a close of Qt's own)
         m_clipboard->setActive(true); // under the launcher's search box, it folds its rows away (Main.qml)
         m_clipboard->handleShown(); // the list alone again: its width as it opens
-        if (field && !m_settings.clipboardAtPointer) {
+        const bool byCaret = m_settings.clipboardOpenAt == u"caret";
+        if (field && byCaret) {
             // Dropping down under the field's box (the launcher's search bar,
             // the bar by a file dialog, a box in the settings window).
             const QQuickItem* box = field->parentItem() ? field->parentItem() : field;
@@ -5709,11 +5748,15 @@ void App::showClipboard()
         } else {
             // By the text caret in the program it pastes into, as Windows'
             // own clipboard opens; else by the mouse pointer, its top left
-            // corner at the pointer's tip, as a menu.
+            // corner at the pointer's tip, as a menu. Or where its user last
+            // put it (GitHub #376), on the monitor with the mouse as the
+            // launcher: always the same place, the same size.
             const HWND target = paste::usableTarget(foreground);
-            const std::optional<QRect> caret = target && !m_settings.clipboardAtPointer
-                ? m_textCaret->find(target, kCaretWait) : std::nullopt;
-            if (caret)
+            const std::optional<QRect> caret = target && byCaret ? m_textCaret->find(target, kCaretWait) : std::nullopt;
+            if (m_settings.clipboardOpenAt == u"last") {
+                QScreen* screen = QGuiApplication::screenAt(QCursor::pos());
+                m_clipPlacement->placeOn(screen ? screen : QGuiApplication::primaryScreen());
+            } else if (caret)
                 m_clipPlacement->attachNative(*caret);
             else
                 m_clipPlacement->attach(QRect(QCursor::pos(), QSize(1, 0)));
@@ -5839,6 +5882,8 @@ bool App::startKeyRouting(HWND target)
     }
     m_keyRouter = std::move(router);
     m_keyRouterTarget = target;
+    if (m_typing)
+        m_typing->setRouted(TypeToSearch::Router::Clipboard, true); // its keys, typed over a folder too (GitHub #385)
     m_clipboard->setKeysRouted(true);
     return true;
 }
@@ -5857,6 +5902,8 @@ void App::stopKeyRouting()
             {{u"session"_s, static_cast<qint64>(m_keyRouterRun)}, {u"router"_s, m_keyRouter->diagnosticStatus()}});
         m_drainingRouter = std::move(m_keyRouter);
         m_drainingRun = m_keyRouterRun;
+        if (m_typing)
+            m_typing->setRouted(TypeToSearch::Router::Clipboard, false);
         QTimer::singleShot(2s, this, [this, run = m_drainingRun] {
             if (m_drainingRun == run)
                 m_drainingRouter.reset(); // a key held that long is the program's again
@@ -5996,7 +6043,7 @@ bool App::startLauncherRouting()
     m_launcherRouting.router = std::move(router);
     m_launcherRouting.target = target;
     if (m_typing)
-        m_typing->setLauncherRouted(true);
+        m_typing->setRouted(TypeToSearch::Router::Launcher, true);
     m_launcher->setKeysRouted(true);
     qWarning().noquote() << "Launcher: refused the front, its keys routed to it while" << program << "keeps the focus";
     return true;
@@ -6005,7 +6052,7 @@ bool App::startLauncherRouting()
 void App::stopLauncherRouting()
 {
     if (m_typing)
-        m_typing->setLauncherRouted(false);
+        m_typing->setRouted(TypeToSearch::Router::Launcher, false);
     m_launcherRouting.target = nullptr;
     if (!m_launcherRouting.router)
         return;
@@ -8551,8 +8598,42 @@ void App::applySwitches()
         m_messages->setTrayTooltip(trayTooltip());
 }
 
+// Win顺's own places (SystemCatalog::setOwnPlaces, GitHub #389, #390): its
+// settings, and each plugin's, found in the search box, remembered and kept
+// among the favorites (with a keyword: a word of one's own for them) as any
+// place is; in Win顺's language, so again when that changes or plugins come
+// and go.
+void App::applyOwnPlaces()
+{
+    if (!m_places)
+        return;
+    const QString logo = QCoreApplication::applicationFilePath();
+    PlaceList own {settingsPlace(tr("Win顺 设置"), logo)};
+    static const std::vector<plugin::Entry> kNone;
+    for (const plugin::Entry& e : m_pluginHost ? m_pluginHost->catalog().entries() : kNone) {
+        if (!e.usable())
+            continue;
+        const QString name = e.manifest->name.pick(m_language);
+        PlaceInfo place;
+        place.name = tr("%1 设置").arg(name.isEmpty() ? e.id : name);
+        place.key = u"winshun/settings/plugin/"_s + e.id;
+        place.command = kPluginSettingsCommand.toString() + e.id;
+        place.kind = AppKind::Tool;
+        place.icon = logo;
+        // Found only with a word for settings (SearchEngine), so those may be keywords. The id's
+        // last part only ("capture"): "winshun" begins every official one's, and would list them all.
+        place.ownKeywords = {e.id.section(u'.', -1), e.manifest->name.zh, e.manifest->name.en, u"设置"_s, u"配置"_s,
+            u"settings"_s, u"config"_s};
+        place.ownKeywords.removeAll(QString());
+        place.ownKeywords.removeDuplicates();
+        own.push_back(std::move(place));
+    }
+    m_places->setOwnPlaces(std::move(own));
+}
+
 void App::pluginsChanged()
 {
+    applyOwnPlaces();
     applySwitches();
     applyWebSearch();
     QHash<QString, QString> folders;

@@ -672,17 +672,61 @@ private slots:
         ws::Settings::useProfile(profile.path());
         ws::Settings settings;
         settings.load();
-        QVERIFY(!settings.clipboardAtPointer);
+        QCOMPARE(settings.clipboardOpenAt, u"caret"_s);
         QVERIFY(!settings.clipboardPauseInFullScreen);
-        for (const bool atPointer : {true, false}) {
-            settings.clipboardAtPointer = atPointer;
-            settings.clipboardPauseInFullScreen = atPointer;
+        for (const QString& at : {u"pointer"_s, u"last"_s, u"caret"_s}) {
+            settings.clipboardOpenAt = at;
+            settings.clipboardPauseInFullScreen = at != u"caret";
             settings.save();
             ws::Settings restored;
             restored.load();
-            QCOMPARE(restored.clipboardAtPointer, atPointer);
-            QCOMPARE(restored.clipboardPauseInFullScreen, atPointer);
+            QCOMPARE(restored.clipboardOpenAt, at);
+            QCOMPARE(restored.clipboardPauseInFullScreen, at != u"caret");
         }
+        // Clipboard/AtPointer, the switch until 0.37: on opens by the pointer;
+        // an unknown place is by the caret (GitHub #376).
+        {
+            QSettings ini(ws::Settings::filePath(), QSettings::IniFormat);
+            ini.remove(u"Clipboard/OpenAt"_s);
+            ini.setValue(u"Clipboard/AtPointer"_s, true);
+        }
+        ws::Settings migrated;
+        migrated.load();
+        QCOMPARE(migrated.clipboardOpenAt, u"pointer"_s);
+        migrated.save();
+        QVERIFY(!QSettings(ws::Settings::filePath(), QSettings::IniFormat).contains(u"Clipboard/AtPointer"_s));
+        QSettings(ws::Settings::filePath(), QSettings::IniFormat).setValue(u"Clipboard/OpenAt"_s, u"somewhere"_s);
+        ws::Settings unknown;
+        unknown.load();
+        QCOMPARE(unknown.clipboardOpenAt, u"caret"_s);
+    }
+
+    // 在终端中打开 (GitHub #386): the command prompt unless chosen; a choice
+    // and its own command line kept; an unknown one is the command prompt.
+    void terminalChoice()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        ws::Settings settings;
+        settings.load();
+        QCOMPARE(settings.terminal, u"cmd"_s);
+        QVERIFY(settings.terminalCommand.isEmpty());
+        settings.terminal = u"custom"_s;
+        settings.terminalCommand = uR"(C:\msys64\msys2_shell.cmd -ucrt64 -here)"_s;
+        settings.save();
+        ws::Settings restored;
+        restored.load();
+        QCOMPARE(restored.terminal, u"custom"_s);
+        QCOMPARE(restored.terminalCommand, uR"(C:\msys64\msys2_shell.cmd -ucrt64 -here)"_s);
+        QSettings(ws::Settings::filePath(), QSettings::IniFormat).setValue(u"Results/Terminal"_s, u"PWSH"_s);
+        ws::Settings cased;
+        cased.load();
+        QCOMPARE(cased.terminal, u"pwsh"_s);
+        QSettings(ws::Settings::filePath(), QSettings::IniFormat).setValue(u"Results/Terminal"_s, u"fish"_s);
+        ws::Settings unknown;
+        unknown.load();
+        QCOMPARE(unknown.terminal, u"cmd"_s);
     }
 
     // 界面大小: four steps, kept as written (密集 is the one line per result, GitHub #352);
@@ -1180,7 +1224,7 @@ private slots:
         ws::Settings::useProfile(profile.path());
         ws::Settings settings;
         QVERIFY(settings.quickFilters.isEmpty());
-        settings.quickFilters = {{u"排除回收站"_s, u"!$RECYCLE.BIN\\"_s, u"nobin"_s}, {u"大 PDF"_s, u"ext:pdf size:>10mb"_s}};
+        settings.quickFilters = {{u"排除回收站"_s, u"!$RECYCLE.BIN\\"_s, u"nobin"_s}, {u"大 PDF"_s, u"ext:pdf size:>10mb"_s, {}, u"largest"_s}};
         settings.save();
         ws::Settings loaded;
         loaded.load();
@@ -1213,9 +1257,14 @@ private slots:
             ini.setValue(u"QuickFilters/5/Name"_s, u"第五个"_s);
             ini.setValue(u"QuickFilters/5/Query"_s, u"ext:txt"_s);
             ini.setValue(u"QuickFilters/5/Keyword"_s, loaded.folderKeyword);
+            ini.setValue(u"QuickFilters/2/Sort"_s, u" Newest "_s); // GitHub #392: tidied as the settings' sort
+            ini.setValue(u"QuickFilters/4/Sort"_s, u"biggest"_s); // no such order: none
         }
         loaded.load();
         QCOMPARE(loaded.quickFilters.size(), 5);
+        QCOMPARE(loaded.quickFilters[1].sort, u"newest"_s);
+        QVERIFY(loaded.quickFilters[3].sort.isEmpty());
+        QVERIFY(loaded.quickFilters[0].sort.isEmpty());
         QCOMPARE(loaded.fileTypes.value(0).keyword, u"doc"_s);
         QCOMPARE(loaded.quickFilters[0].keyword, u"nobin"_s);
         for (int i = 1; i < 5; ++i)
@@ -1405,15 +1454,18 @@ private slots:
         fresh.load();
         QVERIFY(fresh.folderMenuItemSearch && fresh.folderMenuItemCopyPath && fresh.folderMenuItemCmd && fresh.folderMenuItemPowerShell
             && fresh.folderMenuItemFavorite && fresh.folderMenuItemSettings);
+        QVERIFY(!fresh.folderMenuFiles); // a folder's column: its folders only, until asked (#384)
 
         fresh.folderMenuItemCopyPath = false;
         fresh.folderMenuItemCmd = false;
         fresh.folderMenuItemSettings = false;
+        fresh.folderMenuFiles = true;
         fresh.save();
         ws::Settings again;
         again.load();
         QVERIFY(again.folderMenuItemSearch && !again.folderMenuItemCopyPath && !again.folderMenuItemCmd && again.folderMenuItemPowerShell
             && again.folderMenuItemFavorite && !again.folderMenuItemSettings);
+        QVERIFY(again.folderMenuFiles);
     }
 
     // What a new install has on, as Listary has it (GitHub #372): the folder
@@ -1513,6 +1565,7 @@ private slots:
         QVERIFY(fresh.pinnedOnTop);
         QVERIFY(fresh.previewFollowsPointer);
         QVERIFY(fresh.previewRestore); // GitHub #258: a preview left open comes back, unless turned off
+        QVERIFY(!fresh.clipboardPreviewRestore); // the clipboard's closes with it (GitHub #174), unless turned on
         QCOMPARE(fresh.pluginMaxResident, 8); // GitHub #252
 
         for (const QStringView name : ws::kSortNames) {
@@ -1525,6 +1578,7 @@ private slots:
             s.pinnedOnTop = false;
             s.previewFollowsPointer = false;
             s.previewRestore = false;
+            s.clipboardPreviewRestore = true;
             s.pluginMaxResident = 0; // no limit
             s.save();
             ws::Settings back;
@@ -1536,6 +1590,7 @@ private slots:
             QVERIFY(!back.pinnedOnTop);
             QVERIFY(!back.previewFollowsPointer);
             QVERIFY(!back.previewRestore);
+            QVERIFY(back.clipboardPreviewRestore);
             QCOMPARE(back.pluginMaxResident, 0);
         }
         { // the cap is kept within reason, whatever the file says

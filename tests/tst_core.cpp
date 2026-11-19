@@ -2568,6 +2568,16 @@ private slots:
         q = ws::parseQuery(u"size:abc"_s); // not a size: a word
         QCOMPARE(q.terms.size(), std::size_t {1});
         QVERIFY(!q.filter.any());
+        // The search panel's own boxes: a bare number is MB there, a unit says itself (GitHub #394).
+        QCOMPARE(ws::parseSizeValue(u"40 kb", mb), std::optional<std::uint64_t> {40 * 1024});
+        QCOMPARE(ws::parseSizeValue(u"1.5", mb), std::optional<std::uint64_t> {mb + mb / 2});
+        QCOMPARE(ws::parseSizeValue(u"2 GB", mb), std::optional<std::uint64_t> {2048 * mb});
+        QCOMPARE(ws::parseSizeValue(u"200"), std::optional<std::uint64_t> {200}); // size:200 is bytes
+        QVERIFY(!ws::parseSizeValue(u"40 kilo", mb));
+        QVERIFY(!ws::parseSizeValue(u"-5", mb));
+        QCOMPARE(ws::parseDateValue(u"2026")->second, QDate(2027, 1, 1).startOfDay());
+        QCOMPARE(ws::parseDateValue(u"2026/3/5")->first, QDate(2026, 3, 5).startOfDay());
+        QVERIFY(!ws::parseDateValue(u"2026-13"));
 
         const QDateTime now(QDate(2026, 10, 15), QTime(14, 30));
         EntryFilter f;
@@ -9136,6 +9146,57 @@ private slots:
     // GitHub #44: the folder typed lists what is in it from disk, and those
     // rows went above everything whatever order was chosen. Now, other than
     // best match, they are sorted with the rest, "folders first" or not.
+    // GitHub #391: a folder the index holds nothing in is marked; not one with
+    // anything in it, nor a hidden one (Windows' links in a profile), and
+    // never a file (a file of 0 bytes is told by its size, ResultModel).
+    void emptyFoldersMarked()
+    {
+        QTemporaryDir dir;
+        IndexService::Options options;
+        options.content.enabled = false;
+        IndexService service(dir.filePath(u"index"_s), options);
+        EntryId inFull = kNoEntry;
+        {
+            const auto index = service.index();
+            const auto lock = index->writeLock();
+            const EntryId root = index->addRoot("T:");
+            index->add(root, "zqempty", EntryFlag::Directory);
+            const EntryId full = index->add(root, "zqfull", EntryFlag::Directory);
+            inFull = index->add(full, "inside.txt", 0);
+            index->add(root, "zqhidden", EntryFlag::Directory | EntryFlag::Hidden);
+            index->setSize(index->add(root, "zqzero.txt", 0), packSize(0));
+        }
+        SearchEngine engine(&service);
+        QSignalSpy spy(&engine, &SearchEngine::resultsReady);
+        const auto marked = [&] {
+            SearchEngine::Request request;
+            request.text = u"zq"_s;
+            request.limit = 100;
+            spy.clear();
+            engine.submit(std::move(request));
+            QMap<QString, bool> rows;
+            if (!spy.wait(5000))
+                return rows;
+            for (const SearchResult& r : spy.at(0).at(1).value<SearchResults>())
+                rows.insert(r.name, r.emptyFolder);
+            return rows;
+        };
+        auto rows = marked();
+        QVERIFY2(rows.contains(u"zqempty"_s) && rows.contains(u"zqfull"_s) && rows.contains(u"zqzero.txt"_s),
+            qPrintable(rows.keys().join(u", ")));
+        QVERIFY(rows[u"zqempty"_s]);
+        QVERIFY(!rows[u"zqfull"_s]);
+        QVERIFY(!rows.value(u"zqhidden"_s)); // listed or not: never marked
+        QVERIFY(!rows[u"zqzero.txt"_s]);
+        {
+            const auto index = service.index();
+            const auto lock = index->writeLock();
+            index->remove(inFull);
+        }
+        rows = marked();
+        QVERIFY(rows[u"zqfull"_s]); // its last file deleted
+    }
+
     void typedFolderRowsFollowTheSort()
     {
         QTemporaryDir dir;
@@ -11556,38 +11617,104 @@ private slots:
         QVERIFY(history.affinities(u"xz"_s, now).isEmpty());
     }
 
+    // Win顺's settings and a plugin's as its own places (GitHub #389, #390),
+    // as App::applyOwnPlaces makes them.
     void launcherSettingsSearch()
     {
         QTemporaryDir dir;
         IndexService service(dir.filePath(u"index"_s), IndexService::Options{});
         AppCatalog apps;
         apps.setApps(std::make_shared<const AppList>());
-        SystemCatalog places;
-        places.setPlaces(std::make_shared<const PlaceList>());
+        SystemCatalog places; // Windows' not read yet: Win顺's own are there all the same
+        PlaceList own;
+        PlaceInfo settings;
+        settings.name = u"Win顺 设置"_s;
+        settings.key = u"winshun/settings"_s;
+        settings.command = ws::kSettingsCommand.toString();
+        settings.kind = AppKind::Tool;
+        settings.ownKeywords = {u"设置"_s, u"配置"_s, u"WinShun"_s, u"WinShun settings"_s, u"WinShun config"_s, u"settings"_s,
+            u"preferences"_s, u"config"_s};
+        own.push_back(settings);
+        for (const auto& [id, zh, en] : {std::tuple {u"winshun.capture"_s, u"截图录屏"_s, u"Capture"_s},
+                 std::tuple {u"winshun.translate"_s, u"翻译"_s, u"Translate"_s}}) {
+            PlaceInfo place;
+            place.name = zh + u" 设置"_s;
+            place.key = u"winshun/settings/plugin/"_s + id;
+            place.command = ws::kPluginSettingsCommand.toString() + id;
+            place.kind = AppKind::Tool;
+            place.ownKeywords = {id.section(u'.', -1), zh, en, u"设置"_s, u"配置"_s, u"settings"_s, u"config"_s};
+            own.push_back(std::move(place));
+        }
+        const PlaceList ownAgain = own;
+        places.setOwnPlaces(std::move(own));
+        QVERIFY(ws::isOwnPlace(places.places()->front()));
+        QVERIFY(!ws::windowsPlacesRead(*places.places())); // only Win顺's own so far
+        // Given again with every change of the settings: as they were, no new list.
+        QSignalSpy changed(&places, &SystemCatalog::changed);
+        places.setOwnPlaces(ownAgain);
+        QCOMPARE(changed.count(), 0);
+        QVERIFY(ws::isOwnCommand(u"winshun:settings/plugin/winshun.capture"));
+        QVERIFY(!ws::isOwnCommand(u"ms-settings:display"));
         SearchEngine engine(&service, &apps, &places);
         QSignalSpy spy(&engine, &SearchEngine::resultsReady);
-        for (const QString& text : {u"设置"_s, u"配置"_s, u"WinShun"_s, u"winshun settings"_s, u"settings"_s, u"sz"_s}) {
+        const auto search = [&](const QString& text, bool own = true, Scope scope = Scope::All) {
             SearchEngine::Request request;
             request.text = text;
-            request.settingsName = u"Win顺 设置"_s;
-            request.apps = false;
-            request.places = false;
-            spy.clear();
-            engine.submit(std::move(request));
-            QTRY_VERIFY_WITH_TIMEOUT(!spy.isEmpty(), 5000);
-            const auto rows = spy.first().at(1).value<SearchResults>();
-            QVERIFY2(!rows.isEmpty() && rows.first().isSettings(), qPrintable(text));
-        }
-        for (const auto scope : {Scope::Files, Scope::Folders, Scope::Content}) {
-            SearchEngine::Request request;
-            request.text = u"settings"_s;
-            request.settingsName = u"Win顺 设置"_s;
+            request.ownPlaces = own;
             request.scope = scope;
+            request.apps = false;
+            request.places = false; // Windows' places: Win顺's own are not among them
             spy.clear();
             engine.submit(std::move(request));
-            QTRY_VERIFY_WITH_TIMEOUT(!spy.isEmpty(), 5000);
-            QVERIFY(spy.first().at(1).value<SearchResults>().isEmpty());
+            [&] { QTRY_VERIFY_WITH_TIMEOUT(!spy.isEmpty(), 5000); }();
+            return spy.isEmpty() ? SearchResults() : spy.first().at(1).value<SearchResults>();
+        };
+        const auto plugins = [](const SearchResults& rows) {
+            QStringList out;
+            for (const SearchResult& r : rows) {
+                if (r.isPluginSettings())
+                    out.append(r.target);
+            }
+            return out;
+        };
+        // 设置 alone is Win顺's, never every plugin's.
+        for (const QString& text : {u"设置"_s, u"配置"_s, u"WinShun"_s, u"winshun settings"_s, u"settings"_s, u"sz"_s}) {
+            const SearchResults rows = search(text);
+            QVERIFY2(!rows.isEmpty() && rows.first().isSettings(), qPrintable(text));
+            QVERIFY2(plugins(rows).isEmpty(), qPrintable(text + u": "_s + plugins(rows).join(u", ")));
         }
+        // A plugin's name and a word for settings, joined or not, in either language.
+        const QString capture = u"winshun:settings/plugin/winshun.capture"_s;
+        const QString translate = u"winshun:settings/plugin/winshun.translate"_s;
+        for (const QString& text : {u"截图设置"_s, u"截图 设置"_s, u"截图录屏设置"_s, u"capture settings"_s, u"设置 截图"_s, u"capture config"_s})
+            QVERIFY2(plugins(search(text)) == QStringList {capture}, qPrintable(text));
+        QCOMPARE(plugins(search(u"翻译配置"_s)), QStringList {translate});
+        QCOMPARE(plugins(search(u"translate settings"_s)), QStringList {translate});
+        // While "settings" is being typed: from "set" on ("conf" for config).
+        for (const QString& text : {u"capture set"_s, u"capture sett"_s, u"capture conf"_s, u"set capture"_s})
+            QVERIFY2(plugins(search(text)) == QStringList {capture}, qPrintable(text));
+        for (const QString& text : {u"capture se"_s, u"capture con"_s, u"capture setup"_s})
+            QVERIFY2(plugins(search(text)).isEmpty(), qPrintable(text));
+        // The name alone, or a name of no plugin: none.
+        for (const QString& text : {u"截图"_s, u"capture"_s, u"天气设置"_s})
+            QVERIFY2(plugins(search(text)).isEmpty(), qPrintable(text));
+        // Not for a caller that cannot carry them out (AI, the command line).
+        QVERIFY(search(u"设置"_s, false).isEmpty());
+        QVERIFY(search(u"截图设置"_s, false).isEmpty());
+        for (const auto scope : {Scope::Files, Scope::Folders, Scope::Content})
+            QVERIFY(search(u"settings"_s, true, scope).isEmpty());
+        // Windows' places come in later, and Win顺's stay.
+        PlaceInfo display;
+        display.name = u"显示设置"_s;
+        display.key = u"display"_s;
+        display.command = u"ms-settings:display"_s;
+        display.kind = AppKind::Setting;
+        display.prepare();
+        places.setPlaces(std::make_shared<const PlaceList>(PlaceList {display}));
+        QCOMPARE(places.places()->size(), std::size_t(4));
+        QCOMPARE(places.places()->front().command, u"ms-settings:display"_s);
+        QVERIFY(ws::windowsPlacesRead(*places.places()));
+        QVERIFY(search(u"WinShun"_s).value(0).isSettings());
     }
 
     void switchRowsInSearch()

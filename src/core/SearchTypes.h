@@ -66,6 +66,9 @@ struct QuickFilter {
     // search, in the box as in the panel; empty: by its chip only. No two
     // filters, kinds of file or the folders' share one (FileType::keyword).
     QString keyword;
+    // The order the list takes while it is on (GitHub #392): a name of
+    // Settings' kSortNames ("largest"); empty: the order as it is.
+    QString sort;
     bool operator==(const QuickFilter&) const = default;
 };
 using QuickFilters = QList<QuickFilter>;
@@ -157,6 +160,10 @@ struct SearchResult {
     // A file's size in bytes (as the index has it: within a hundred-thousandth
     // past 16 MB, FileSize); -1 for a folder, or when not known.
     std::int64_t size = -1;
+    // A folder the index holds nothing in (GitHub #391): marked 空文件夹, so
+    // as not to be gone into for nothing. Never one that is hidden or on a
+    // share (emptyInIndex).
+    bool emptyFolder = false;
     bool offline = false; // on a network share that cannot be reached now (ShareIndexer::offline)
     // Found by how its name reads, not by what was typed (年度报告 for
     // 年度报高; homophoneQueries): listed under a heading that says so.
@@ -241,6 +248,8 @@ struct SearchResult {
     bool isWindow() const noexcept { return app == AppKind::Window; }
     bool isCommand() const noexcept { return path.startsWith(u"winshun-command:"); }
     bool isSettings() const noexcept { return app == AppKind::Tool && path == u"winshun-place:winshun/settings"; }
+    // A plugin's settings (GitHub #390; SystemCatalog's own places).
+    bool isPluginSettings() const noexcept { return app == AppKind::Tool && path.startsWith(u"winshun-place:winshun/settings/plugin/"); }
     bool isWeb() const noexcept { return app == AppKind::Web; }
     bool isPlugin() const noexcept { return app == AppKind::Plugin; }
     bool isPackagedApp() const noexcept

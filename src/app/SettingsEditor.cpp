@@ -1738,6 +1738,14 @@ void SettingsEditor::setFolderMenuItemSettings(bool on)
     commit();
 }
 
+void SettingsEditor::setFolderMenuFiles(bool on)
+{
+    if (m_settings.folderMenuFiles == on)
+        return;
+    m_settings.folderMenuFiles = on;
+    commit();
+}
+
 void SettingsEditor::setFolderMenuHotkey(const QString& hotkey)
 {
     const QString value = hotkey.trimmed();
@@ -2035,6 +2043,14 @@ void SettingsEditor::setClipboardKeepPlace(bool on)
     commit();
 }
 
+void SettingsEditor::setClipboardPreviewRestore(bool on)
+{
+    if (m_settings.clipboardPreviewRestore == on)
+        return;
+    m_settings.clipboardPreviewRestore = on;
+    commit();
+}
+
 void SettingsEditor::setClipboardUiSize(const QString& size)
 {
     if (m_settings.clipboardUiSize == size
@@ -2060,11 +2076,41 @@ void SettingsEditor::setClipboardPasteElevated(bool on)
     commit();
 }
 
-void SettingsEditor::setClipboardAtPointer(bool on)
+void SettingsEditor::setTerminal(const QString& id)
 {
-    if (m_settings.clipboardAtPointer == on)
+    if (m_settings.terminal == id || id.isEmpty())
         return;
-    m_settings.clipboardAtPointer = on;
+    m_settings.terminal = id;
+    commit();
+}
+
+void SettingsEditor::setTerminalCommand(const QString& command)
+{
+    if (m_settings.terminalCommand == command.trimmed())
+        return;
+    m_settings.terminalCommand = command.trimmed();
+    commit();
+}
+
+QVariantList SettingsEditor::terminals() const
+{
+    QVariantList list;
+    bool chosenListed = false;
+    for (const shell::TerminalChoice& t : shell::installedTerminals()) {
+        list.append(QVariantMap {{u"value"_s, t.id}, {u"text"_s, t.name}});
+        chosenListed = chosenListed || t.id == m_settings.terminal;
+    }
+    if (!chosenListed) // uninstalled since: said so, the command prompt opening meanwhile
+        list.insert(list.size() - 1, QVariantMap {{u"value"_s, m_settings.terminal},
+            {u"text"_s, tr("%1（没找到，现在开命令提示符）").arg(m_settings.terminal)}});
+    return list;
+}
+
+void SettingsEditor::setClipboardOpenAt(const QString& at)
+{
+    if (m_settings.clipboardOpenAt == at || (at != u"caret" && at != u"pointer" && at != u"last"))
+        return;
+    m_settings.clipboardOpenAt = at;
     commit();
 }
 
@@ -2371,7 +2417,8 @@ QVariantList SettingsEditor::quickFilters() const
 {
     QVariantList filters;
     for (const QuickFilter& f : m_settings.quickFilters)
-        filters.append(QVariantMap {{u"name"_s, f.name}, {u"query"_s, f.query}, {u"keyword"_s, f.keyword}, {u"problem"_s, Settings::quickFilterProblem(f.query)}});
+        filters.append(QVariantMap {{u"name"_s, f.name}, {u"query"_s, f.query}, {u"keyword"_s, f.keyword}, {u"sort"_s, f.sort},
+            {u"problem"_s, Settings::quickFilterProblem(f.query)}});
     return filters;
 }
 
@@ -2385,7 +2432,7 @@ QString SettingsEditor::addQuickFilter(const QString& name, const QString& query
     const QString text = query.trimmed();
     if (const QString problem = Settings::quickFilterProblem(text); !problem.isEmpty())
         return problem;
-    m_settings.quickFilters.append({named, text, {}});
+    m_settings.quickFilters.append({named, text, {}, {}});
     commit();
     return {};
 }
@@ -2444,6 +2491,22 @@ QString SettingsEditor::setQuickFilterKeyword(int index, const QString& text)
         commit();
     }
     return {};
+}
+
+void SettingsEditor::showPluginPage(const QString& pluginId)
+{
+    if (m_window)
+        QMetaObject::invokeMethod(m_window, "showPluginPage", Q_ARG(QVariant, QVariant(pluginId)));
+}
+
+void SettingsEditor::setQuickFilterSort(int index, const QString& sort)
+{
+    if (index < 0 || index >= m_settings.quickFilters.size() || (!sort.isEmpty() && !isSortName(sort)))
+        return;
+    if (m_settings.quickFilters[index].sort != sort) {
+        m_settings.quickFilters[index].sort = sort;
+        commit();
+    }
 }
 
 void SettingsEditor::removeQuickFilter(int index)
@@ -4161,6 +4224,8 @@ QVariantList SettingsEditor::findWindowsSettings(const QString& query, int max) 
         if (found.size() >= max)
             break;
         const PlaceInfo& place = (*places)[hit.index];
+        if (isOwnPlace(place)) // these very settings
+            continue;
         // As the launcher shows them (ResultModel): the logo of Settings, or the place's own icon.
         const QString icon = place.icon.startsWith(u"app:") ? FileIconProvider::appIconUrl(place.icon.mid(4), true, dark)
                                                             : FileIconProvider::placeIconUrl(place.icon);

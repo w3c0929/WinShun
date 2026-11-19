@@ -136,7 +136,10 @@ set_tests_properties(tst_contentpane PROPERTIES RUN_SERIAL TRUE TIMEOUT 120
 # The file types and the quick filters: the editor's checks, the rows in the real window.
 add_test(NAME tst_settingsfilters COMMAND $<TARGET_FILE:WinShun>
     --preview-settings "${CMAKE_CURRENT_BINARY_DIR}/settings-filters" --file-types)
-set_tests_properties(tst_settingsfilters PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
+# The window at its narrowest: a filter's prefix and sort on a line of their own (#392).
+add_test(NAME tst_settingsfilters_compact COMMAND $<TARGET_FILE:WinShun>
+    --preview-settings "${CMAKE_CURRENT_BINARY_DIR}/settings-filters-compact" --file-types --compact)
+set_tests_properties(tst_settingsfilters tst_settingsfilters_compact PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 # #111: the settings window keeps its Screen attached objects few; each one is
 # work on every move to another monitor (docs/pitfalls.md).
@@ -1677,7 +1680,7 @@ qt_add_executable(tst_pinclipboard tst_pinclipboard.cpp
     ${PROJECT_SOURCE_DIR}/src/app/ClipImage.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/ClipboardWatcher.cpp)
 target_include_directories(tst_pinclipboard PRIVATE ${PROJECT_SOURCE_DIR}/src/capture-plugin ${PROJECT_SOURCE_DIR}/src/app)
-target_link_libraries(tst_pinclipboard PRIVATE wscore Qt6::Gui Qt6::Test user32 gdi32 shell32 ole32 windowscodecs version)
+target_link_libraries(tst_pinclipboard PRIVATE wscore Qt6::Gui Qt6::Test user32 gdi32 shell32 shcore ole32 windowscodecs version)
 set_target_properties(tst_pinclipboard PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
 add_test(NAME tst_pinclipboard COMMAND tst_pinclipboard -o -,txt)
 set_tests_properties(tst_pinclipboard PROPERTIES

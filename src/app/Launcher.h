@@ -305,7 +305,7 @@ public:
     // Alternate: Shift+Enter, a plugin row's third action (Open elsewhere).
     // FavoriteFolder: the folder a file is in into the favorites.
     // EditFavorite: the settings' 收藏夹 page, at the row's favorite.
-    // OpenTerminal: a command prompt in a folder, or in the folder a file is in.
+    // OpenTerminal: the terminal chosen (setTerminal) in a folder, or in the folder a file is in.
     // PluginAction + n: the nth of a plugin row's actions (its context menu).
     // PluginFileAction + n: the nth of the plugins' `files` commands for a
     // file's or folder's row, or the selection (Catalog::fileCommands; #113).
@@ -554,7 +554,10 @@ public:
     // Files with these extensions, or so named (wildcards), are left out of
     // every list and search.
     void setExcludedFiles(const QStringList& types, const QStringList& names);
-    Sort sort() const { return m_sort; }
+    // The order in force: a quick filter's own while one is on (GitHub #392),
+    // else the one chosen. Choosing one sets the filter's aside.
+    Sort sort() const { return m_filterSort.value_or(m_sort); }
+    Sort chosenSort() const { return m_sort; } // remembered as the settings' (App)
     void setSort(Sort sort);
     StartList startList() const { return m_startList; }
     void setStartList(StartList list);
@@ -579,6 +582,12 @@ public:
     Q_INVOKABLE bool isPreviewKey(int key, int modifiers) const;
     QString openHotkey() const { return m_openHotkey; }
     void setOpenHotkey(const QString& shortcut);
+    // What OpenTerminal starts (Settings::terminal, terminalCommand; GitHub #386).
+    void setTerminal(const QString& id, const QString& command)
+    {
+        m_terminal = id;
+        m_terminalCommand = command;
+    }
     Q_INVOKABLE bool isOpenKey(int key, int modifiers) const;
     void setNumberHints(const QString& hints);
     bool letterJump() const { return m_letterJump; }
@@ -867,6 +876,9 @@ public:
     Q_INVOKABLE void setDateRange(const QString& from, const QString& to); // 自定义
     Q_INVOKABLE void setSizeChoice(int choice);
     Q_INVOKABLE void setSizeRange(const QString& minMb, const QString& maxMb); // 自定义
+    // What a 自定义 box holds is taken as a bound (empty: none); else the box is marked.
+    Q_INVOKABLE bool readsAsSize(const QString& text) const; // "40 KB", "1.5 GB", MB when bare
+    Q_INVOKABLE bool readsAsDate(const QString& text) const; // "2026", "2026-3", "2026/3/15"
     Q_INVOKABLE void setFolderFilter(const QString& path);
     Q_INVOKABLE void pickFolderFilter(); // the folder dialog
     Q_INVOKABLE void clearFilters();
@@ -1421,6 +1433,12 @@ private:
     QuickFilters m_quickFilters;
     QStringList m_quickFiltersOn; // their names
     SortOrder m_panelSort;
+    // A quick filter's own order (followFilterSort): in force, or set aside by
+    // a choice; which filter and order it is; the panel's before it.
+    void followFilterSort();
+    std::optional<Sort> m_filterSort;
+    QString m_filterSortFrom;
+    SortOrder m_panelSortBeforeFilter;
 
     bool m_recordHistory = true;
     bool m_rememberAdmin = false;
@@ -1517,6 +1535,8 @@ private:
     bool m_webSuggestions = true;
     bool m_webFallback = true;
     QString m_webBrowser;
+    QString m_terminal = QStringLiteral("cmd");
+    QString m_terminalCommand;
     void openWebAddress(const QString& url) const; // in m_webBrowser, or the default one
     std::optional<SearchResult> webFallbackRow() const;
     std::optional<SearchResult> webAddressRow() const;

@@ -20,7 +20,9 @@ Item {
     readonly property int itemHeight: Theme.menuItemHeight
     readonly property int sectionHeight: Theme.menuCaptionSize + 12
     readonly property real listHeight: entries.reduce((height, entry) => height + rowHeight(entry), 0)
-
+    // What its widest row wants (GitHub #384); the menu keeps the column
+    // between its narrowest and widest, a longer name cut short.
+    readonly property real naturalWidth: Math.ceil(entries.reduce((widest, entry) => Math.max(widest, rowWidth(entry)), 0) + 2 * padding)
     signal pointed(int index, Item row) // the pointer came onto a row, or moved on it
     signal unpointed(int index, Item row) // the pointer went off it
     signal gone(int index, Item row) // a row scrolled away (pooled)
@@ -30,6 +32,27 @@ Item {
 
     function rowHeight(entry: var): real {
         return entry.separator === true ? 9 : entry.heading === true ? sectionHeight : itemHeight
+    }
+    // As a row lays them out: the icon, its name, 26 around the detail
+    // (at most 96), 20 more for the arrow.
+    function rowWidth(entry: var): real {
+        if (entry.separator === true)
+            return 0
+        const detail = entry.detail ?? ""
+        const branch = entry.children !== undefined || entry.folder !== undefined
+        const trailing = (detail.length > 0 ? Math.min(Math.ceil(captionMetrics.advanceWidth(detail)), 96) : 0) + (branch ? 20 : 0)
+        const name = entry.heading === true ? 12 + captionMetrics.advanceWidth(entry.text ?? "")
+                                            : 42 + textMetrics.advanceWidth(entry.text ?? "")
+        return Math.ceil(name) + 26 + trailing
+    }
+
+    FontMetrics {
+        id: textMetrics
+        font.pixelSize: Theme.menuTextSize
+    }
+    FontMetrics {
+        id: captionMetrics
+        font.pixelSize: Theme.menuCaptionSize
     }
     // Where row i's top is on the screen, in Qt's pixels; inside the list
     // when it is scrolled out of sight.
@@ -60,6 +83,7 @@ Item {
 
     onHighlightedChanged: Qt.callLater(column.sync)
     onEntriesChanged: {
+        wheelScroll.cancel() // a glide over the rows that were there before
         flick.currentIndex = -1
         flick.contentY = 0
         Qt.callLater(column.sync)
@@ -97,6 +121,16 @@ Item {
         reuseItems: true
         model: column.entries
         onContentYChanged: column.scrolled()
+        // A notch moves as many rows as the system's wheel lines (3 unless set
+        // otherwise), edge to edge: two rows of 24-pixel lines were too few
+        // for a long column (GitHub #384).
+        ListWheelScroll {
+            id: wheelScroll
+            view: flick
+            animate: SystemTheme.animations
+            snapRows: true
+            lineHeight: column.itemHeight
+        }
         // One highlight for the list, under the item chosen or pointed at:
         // it jumps, or slides as the style says (Theme.rowSlide). Not
         // managed by the view's own current item: column.highlighted is.

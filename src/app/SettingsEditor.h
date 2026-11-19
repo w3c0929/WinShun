@@ -103,6 +103,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool folderMenuItemPowerShell READ folderMenuItemPowerShell WRITE setFolderMenuItemPowerShell NOTIFY changed FINAL)
     Q_PROPERTY(bool folderMenuItemFavorite READ folderMenuItemFavorite WRITE setFolderMenuItemFavorite NOTIFY changed FINAL)
     Q_PROPERTY(bool folderMenuItemSettings READ folderMenuItemSettings WRITE setFolderMenuItemSettings NOTIFY changed FINAL)
+    Q_PROPERTY(bool folderMenuFiles READ folderMenuFiles WRITE setFolderMenuFiles NOTIFY changed FINAL)
     // The folder menu in Directory Opus, which runs a command of its settings
     // on a double click on blank space (refreshOpusFolderMenu): on | stale
     // (another copy's WinShunSearch.exe) | off | taken (a command of the
@@ -240,6 +241,11 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(QString previewHotkeyError READ previewHotkeyError NOTIFY changed FINAL)
     Q_PROPERTY(QString openHotkey READ openHotkey WRITE setOpenHotkey NOTIFY changed FINAL)
     Q_PROPERTY(QString openHotkeyError READ openHotkeyError NOTIFY changed FINAL)
+    Q_PROPERTY(QString terminal READ terminal WRITE setTerminal NOTIFY changed FINAL) // Settings::terminal
+    Q_PROPERTY(QString terminalCommand READ terminalCommand WRITE setTerminalCommand NOTIFY changed FINAL)
+    // {id, name}: the terminals found on this computer (shell::installedTerminals), and the one
+    // chosen if it is not among them any more. Read as the settings open.
+    Q_PROPERTY(QVariantList terminals READ terminals CONSTANT FINAL)
     Q_PROPERTY(bool previewFollowsPointer READ previewFollowsPointer WRITE setPreviewFollowsPointer NOTIFY changed FINAL)
     Q_PROPERTY(bool previewRestore READ previewRestore WRITE setPreviewRestore NOTIFY changed FINAL)
     // Which of the chosen number keys are other programs' hotkeys, or Win顺's
@@ -263,7 +269,8 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(QString clipboardUiSize READ clipboardUiSize WRITE setClipboardUiSize NOTIFY changed FINAL) // follow | dense | compact | standard | roomy
     Q_PROPERTY(QString clipboardPictureSize READ clipboardPictureSize WRITE setClipboardPictureSize NOTIFY changed FINAL)
     Q_PROPERTY(bool clipboardKeepPlace READ clipboardKeepPlace WRITE setClipboardKeepPlace NOTIFY changed FINAL)
-    Q_PROPERTY(bool clipboardAtPointer READ clipboardAtPointer WRITE setClipboardAtPointer NOTIFY changed FINAL)
+    Q_PROPERTY(QString clipboardOpenAt READ clipboardOpenAt WRITE setClipboardOpenAt NOTIFY changed FINAL) // caret | pointer | last
+    Q_PROPERTY(bool clipboardPreviewRestore READ clipboardPreviewRestore WRITE setClipboardPreviewRestore NOTIFY changed FINAL)
     Q_PROPERTY(bool clipboardPauseInFullScreen READ clipboardPauseInFullScreen WRITE setClipboardPauseInFullScreen NOTIFY changed FINAL)
     Q_PROPERTY(bool clipboardFlipAbove READ clipboardFlipAbove WRITE setClipboardFlipAbove NOTIFY changed FINAL)
     Q_PROPERTY(bool clipboardHoldToStep READ clipboardHoldToStep WRITE setClipboardHoldToStep NOTIFY changed FINAL)
@@ -494,7 +501,9 @@ public:
     bool folderMenuItemFavorite() const { return m_settings.folderMenuItemFavorite; }
     void setFolderMenuItemFavorite(bool on);
     bool folderMenuItemSettings() const { return m_settings.folderMenuItemSettings; }
+    bool folderMenuFiles() const { return m_settings.folderMenuFiles; }
     void setFolderMenuItemSettings(bool on);
+    void setFolderMenuFiles(bool on);
     QString folderMenuHotkey() const { return m_settings.folderMenuHotkey; }
     bool dropPie() const { return m_settings.dropPie; }
     void setDropPie(bool on);
@@ -725,10 +734,12 @@ public:
     void setClipboardPictureSize(const QString& size);
     bool clipboardKeepPlace() const { return m_settings.clipboardKeepPlace; }
     void setClipboardKeepPlace(bool on);
-    bool clipboardAtPointer() const { return m_settings.clipboardAtPointer; }
+    QString clipboardOpenAt() const { return m_settings.clipboardOpenAt; }
+    bool clipboardPreviewRestore() const { return m_settings.clipboardPreviewRestore; }
+    void setClipboardPreviewRestore(bool on);
     bool clipboardPauseInFullScreen() const { return m_settings.clipboardPauseInFullScreen; }
     void setClipboardPauseInFullScreen(bool on);
-    void setClipboardAtPointer(bool on);
+    void setClipboardOpenAt(const QString& at);
     bool clipboardFlipAbove() const { return m_settings.clipboardFlipAbove; }
     void setClipboardFlipAbove(bool on);
     bool clipboardHoldToStep() const { return m_settings.clipboardHoldToStep; }
@@ -846,6 +857,11 @@ public:
     QString openHotkey() const { return m_settings.openHotkey; }
     void setOpenHotkey(const QString& shortcut);
     QString openHotkeyError() const { return m_openHotkeyError; }
+    QString terminal() const { return m_settings.terminal; }
+    void setTerminal(const QString& id);
+    QString terminalCommand() const { return m_settings.terminalCommand; }
+    void setTerminalCommand(const QString& command);
+    QVariantList terminals() const;
     bool previewFollowsPointer() const { return m_settings.previewFollowsPointer; }
     void setPreviewFollowsPointer(bool on);
     bool previewRestore() const { return m_settings.previewRestore; }
@@ -906,6 +922,7 @@ public:
     Q_INVOKABLE QString renameQuickFilter(int index, const QString& name);
     Q_INVOKABLE QString setQuickFilterQuery(int index, const QString& query);
     Q_INVOKABLE QString setQuickFilterKeyword(int index, const QString& text); // ":NoBin" is nobin; empty: none
+    Q_INVOKABLE void setQuickFilterSort(int index, const QString& sort); // a kSortNames name; empty: the order as it is (GitHub #392)
     Q_INVOKABLE void removeQuickFilter(int index);
     Q_INVOKABLE void moveQuickFilter(int index, int delta); // up (-1) or down (1) the chips
 
@@ -937,6 +954,7 @@ public:
 
     void setSettings(const Settings& settings); // the file was changed outside this editor
     void setWindow(QWindow* window) { m_window = window; }
+    void showPluginPage(const QString& pluginId); // the window's 插件 page at that plugin's card
     void setPlaces(SystemCatalog* places) { m_places = places; }
 
     // For a search of the settings that found nothing: the settings and

@@ -55,6 +55,7 @@
 #include "platform/SiteIcons.h"
 #include "platform/FileDialog.h"
 #include "platform/FileManagers.h"
+#include "platform/Shell.h"
 #include "platform/FolderViewHit.h"
 #include "platform/TypeToSearch.h"
 #include "platform/WindowEffects.h"
@@ -2765,6 +2766,11 @@ int runSettings(const QStringList& args)
         check(!editor->setFileTypeKeyword(0, u"nobin"_s).isEmpty(), "quick filters: a kind took a filter's prefix");
         editor->moveQuickFilter(1, -1);
         check(editor->quickFilters().value(0).toMap().value(u"name"_s).toString() == u"大 PDF", "quick filters: moving one up did nothing");
+        // A sort of its own (GitHub #392): kept by name, an unknown one not at all.
+        editor->setQuickFilterSort(0, u"largest"_s);
+        check(editor->quickFilters().value(0).toMap().value(u"sort"_s).toString() == u"largest", "quick filters: its sort was not kept");
+        editor->setQuickFilterSort(1, u"sideways"_s);
+        check(editor->quickFilters().value(1).toMap().value(u"sort"_s).toString().isEmpty(), "quick filters: an unknown sort was kept");
         QMetaObject::invokeMethod(window, "showQuickFiltersPage", Q_ARG(QVariant, QVariant(u"!node_modules\\"_s)));
         settle(window, 3);
         auto* draft = visualNamed(window->contentItem(), u"quickFilterNewQuery"_s);
@@ -2778,6 +2784,14 @@ int runSettings(const QStringList& args)
                 check(row->x() + row->width() <= row->parentItem()->width() + 0.5, "quick filters: a row is wider than its card");
             }
         }
+        if (auto* sort = visualNamed(window->contentItem(), u"quickFilterSort_0"_s))
+            check(sort->isVisible() && sort->property("currentIndex").toInt() == 7, "quick filters: the sort box does not show 大的在前");
+        else
+            check(false, "quick filters: the sort box is missing");
+        // The card whole, its rows and the drafted new one: the page scrolled to its end
+        // (an inactive preview never scrolls to the focused box by itself).
+        flick->setProperty("contentY", std::max(0.0, flick->property("contentHeight").toDouble() - flick->property("height").toDouble()));
+        settle(window, 3);
         saved = saveGrab(window, out.filePath(u"quick-filters.png"_s)) && saved;
         editor->removeQuickFilter(0);
         editor->removeQuickFilter(0);
@@ -3173,6 +3187,7 @@ int runSettings(const QStringList& args)
         // Shown as 内置功能 cards too, the rows of their own page first (open_settings searches them by title).
         {QCoreApplication::translate("SettingsWindow", "在资源管理器或桌面弹出文件夹快捷菜单"), integrationPage, 1}, // 文件管理器
         {QCoreApplication::translate("SettingsWindow", "菜单里列出的内容"), integrationPage, 1},
+        {QCoreApplication::translate("SettingsWindow", "文件夹的子列也列出文件"), integrationPage, 1}, // GitHub #384
         {QCoreApplication::translate("SettingsWindow", "对话框旁的搜索框"), integrationPage, 2}, // 对话框
         {QCoreApplication::translate("SettingsWindow", "在 Directory Opus 里直接打字搜索"), integrationPage, 1},
         {u"AI"_s, aiPage, 0},
@@ -3291,7 +3306,7 @@ void checkPreviewPlacement(Launcher& launcher, QQuickWindow* window, FilePreview
     settle(window);
 }
 
-void checkSearchMenuKeys(Launcher& launcher, QQuickWindow* window, FilePreview& preview, const QDir& output)
+void checkSearchMenuKeys(Launcher& launcher, SystemCatalog& places, QQuickWindow* window, FilePreview& preview, const QDir& output)
 {
     QJsonArray checks;
     bool passed = true;
@@ -3484,6 +3499,7 @@ void checkSearchMenuKeys(Launcher& launcher, QQuickWindow* window, FilePreview& 
     const auto previousScope = launcher.scope();
     launcher.setScope(Launcher::All);
     launcher.setSearchKinds(false, false);
+    places.setOwnPlaces({settingsPlace(u"Win顺 设置"_s, {})}); // as App gives them (GitHub #389)
     launcher.setQuery(u"设置"_s);
     QElapsedTimer settingsWait;
     settingsWait.start();
@@ -3520,7 +3536,14 @@ void checkSearchMenuKeys(Launcher& launcher, QQuickWindow* window, FilePreview& 
     launcher.setOpenHotkey({});
     key(Qt::Key_Q, Qt::AltModifier);
     check(settingsOpened == 4, u"clearing the open key disables it"_s);
-    check(launcher.menuItems(0).size() == 1, u"settings expose only their applicable Open action"_s);
+    // Its menu (GitHub #389, #390): open them, copy their link, keep them among the favorites; nothing of a file's.
+    const QVariantList settingsMenu = launcher.menuItems(0);
+    const auto said = [&](const QString& text) {
+        return std::ranges::any_of(settingsMenu, [&](const QVariant& item) { return item.toMap().value(u"text"_s).toString() == text; });
+    };
+    check(!settingsMenu.isEmpty() && settingsMenu.first().toMap().value(u"text"_s).toString() == u"打开设置"_s && said(u"复制链接"_s)
+            && !said(u"打开所在位置"_s) && !said(u"复制打开命令"_s),
+        u"settings' menu opens them and copies their link, nothing of a file's"_s);
     settle(window, 3);
     check(saveGrab(window, output.filePath(u"search-settings-entry.png"_s)), u"render the settings entry"_s);
     QObject::disconnect(settingsConnection);
@@ -3879,6 +3902,37 @@ void checkDialogSearchKeys(IndexService& index, QQmlEngine* engine, const QDir& 
             check(list->property("currentIndex").toInt() == expected && bar.query() == query && field->hasActiveFocus(),
                 u"dialog Ctrl+%1 matches the existing navigation key"_s.arg(int(alias)));
         }
+        // 字母直达 as in the launcher and the clipboard (GitHub #357): the
+        // numbers keep their column on the rows' left, the letters take it,
+        // Shift+letter only selects, Esc only puts the numbers back.
+        auto* hints = visualNamed(window->contentItem(), u"dialogNumberHints"_s);
+        bar.setLetterJump(true, u"auto"_s, u"ASDFGHJKLQWERTYUIOPZXCVBNM"_s);
+        settle(window);
+        const auto letterOf = [&](int row) {
+            QVariant letter;
+            QMetaObject::invokeMethod(window, "letterOf", Q_RETURN_ARG(QVariant, letter), Q_ARG(QVariant, row));
+            return letter.toString();
+        };
+        auto* number = visualNamed(list, u"dialogResultNumber"_s);
+        check(hints && number && number->isVisible() && number->x() < 30, u"dialog rows keep their number on the left"_s);
+        if (hints) {
+            hints->setProperty("jumping", true);
+            settle(window);
+            check(letterOf(0) == u"A" && letterOf(1) == u"S" && field->property("readOnly").toBool(),
+                u"dialog letters on the rows shown, the box read-only meanwhile"_s);
+            list->setProperty("currentIndex", 0);
+            key(Qt::Key_D, Qt::ShiftModifier);
+            check(list->property("currentIndex").toInt() == 2 && bar.query() == query && !hints->property("jumping").toBool()
+                    && !field->property("readOnly").toBool(),
+                u"dialog Shift+letter selects its row and leaves the letters"_s);
+            hints->setProperty("jumping", true);
+            key(Qt::Key_Escape);
+            check(!hints->property("jumping").toBool() && bar.query() == query, u"dialog Esc only puts the numbers back"_s);
+            hints->setProperty("jumping", true);
+            key(Qt::Key_X);
+            check(!hints->property("jumping").toBool() && bar.query() == query, u"dialog letter past the rows shown does nothing"_s);
+        }
+        bar.setLetterJump(false, u"auto"_s, u"ASDFGHJKLQWERTYUIOPZXCVBNM"_s);
         list->setProperty("currentIndex", 2);
         key(Qt::Key_Right);
         auto* menu = qobject_cast<QQuickWindow*>(window->property("contextMenu").value<QObject*>());
@@ -4728,7 +4782,7 @@ bool checkSearchLogo(QQmlEngine* engine, const QDir& output)
 
 // The production window, real temporary images, and local Qt input events;
 // no global shortcuts, external file opening, or user's profile involved.
-void checkFileGallery(Launcher& launcher, IndexService& index, QQmlEngine* engine, const QDir& output)
+void checkFileGallery(Launcher& launcher, IndexService& index, SystemCatalog& places, QQmlEngine* engine, const QDir& output)
 {
     QTemporaryDir temporary;
     const auto check = [](bool okay, const char* reason) {
@@ -4808,7 +4862,7 @@ void checkFileGallery(Launcher& launcher, IndexService& index, QQmlEngine* engin
     if (auto* field = visualNamed(window->contentItem(), u"panelSearchField"_s))
         field->setProperty("text", u"测试照片"_s);
     checkPreviewPlacement(launcher, window, filePreview);
-    checkSearchMenuKeys(launcher, window, filePreview, output);
+    checkSearchMenuKeys(launcher, places, window, filePreview, output);
     checkFolderSteps(launcher, index, window, output);
     checkDialogSearchKeys(index, engine, output);
     launcher.setGallery(true);
@@ -5944,7 +5998,7 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
     launcher.setFileTypes(settings.namedFileTypes());
     launcher.setContentOptions(false, {u"txt"_s}, ContentSizeLimits{}, false, false);
     if (previewOnly) {
-        checkFileGallery(launcher, index, qmlEngine, output);
+        checkFileGallery(launcher, index, places, qmlEngine, output);
         return;
     }
     {
@@ -6050,6 +6104,53 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
     launcher.chooseFileType(-1);
     settings.fileTypes = Settings::defaultFileTypes();
     launcher.setFileTypes(settings.namedFileTypes());
+    // GitHub #392: a quick filter named alone (":pngq") is put in the order
+    // chosen; one with an order of its own is in it while it is on, the one
+    // chosen given back after and never taken for it (chosenSort).
+    {
+        const auto settle = [&] {
+            QElapsedTimer timeout;
+            timeout.start();
+            while (launcher.searching() && timeout.elapsed() < 2000)
+                pump(10);
+        };
+        const auto first = [&] {
+            const SearchResult* row = launcher.results()->at(0);
+            return row ? row->path : QString();
+        };
+        const QString big = u"T:\\报告图片.png"_s; // 1234567 bytes
+        const QString tiny = u"T:\\照片.png"_s; // none
+        launcher.setScope(Launcher::All);
+        query({});
+        launcher.setSort(Launcher::BestMatch);
+        launcher.setQuickFilters({{u"大图"_s, u"ext:png"_s, u"bigq"_s, u"largest"_s}, {u"图片"_s, u"ext:png"_s, u"pngq"_s, {}}});
+        query(u":pngq"_s);
+        check(launcher.results()->count() == 2 && launcher.sort() == Launcher::BestMatch, "a quick filter named alone did not list its own");
+        launcher.setSort(Launcher::LargestFirst);
+        settle();
+        check(first() == big, "#392: a sort chosen did not order a quick filter named alone (largest)");
+        launcher.setSort(Launcher::SmallestFirst);
+        settle();
+        check(first() == tiny, "#392: a sort chosen did not order a quick filter named alone (smallest)");
+        launcher.setSort(Launcher::BestMatch);
+        query(u":bigq"_s);
+        check(launcher.sort() == Launcher::LargestFirst && launcher.chosenSort() == Launcher::BestMatch && first() == big,
+            "#392: a quick filter's own order was not in force");
+        query(u":bigq 照片"_s); // typed on: still its order
+        check(launcher.sort() == Launcher::LargestFirst, "#392: a quick filter's own order went with a word typed");
+        query({});
+        check(launcher.sort() == Launcher::BestMatch, "#392: the order chosen was not given back after the quick filter");
+        query(u":bigq"_s);
+        launcher.setSort(Launcher::SmallestFirst); // chosen over it: kept, and remembered as chosen
+        settle();
+        check(launcher.chosenSort() == Launcher::SmallestFirst && first() == tiny, "#392: a sort chosen did not set the filter's aside");
+        query(u":bigq 图"_s);
+        check(launcher.sort() == Launcher::SmallestFirst, "#392: a filter's order set aside came back while it stayed on");
+        query({});
+        check(launcher.sort() == Launcher::SmallestFirst, "#392: the sort chosen over a filter's own was not kept");
+        launcher.setSort(Launcher::BestMatch);
+        launcher.setQuickFilters({});
+    }
     if (folderScopePassed)
         return; // 独立范围探针到此结束，不跑后面的网络、剪贴板等验证。
     query(u"regex:["_s);
@@ -6471,6 +6572,17 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
     launcher.setDateRange(u"2026-01-01"_s, u"2026-12-31"_s);
     pump(50);
     check(launcher.results()->count() == 3, "plugin date filtering or legacy compatibility failed");
+    // The boxes take a unit as well as a bare number of MB, and mark what they cannot read (GitHub #394).
+    check(launcher.readsAsSize(u"40 kb"_s) && launcher.readsAsSize(u"1.5"_s) && launcher.readsAsSize(u" "_s)
+            && !launcher.readsAsSize(u"40 kilo"_s) && launcher.readsAsDate(u"2026"_s) && launcher.readsAsDate(u"2026/3/5"_s)
+            && !launcher.readsAsDate(u"2026-13"_s),
+        "the panel's size or date boxes misread what was typed");
+    launcher.setSizeRange({}, u"1 KB"_s);
+    pump(50);
+    bool bigKept = false;
+    for (int i = 0; i < launcher.results()->count(); ++i)
+        bigKept = bigKept || (launcher.results()->at(i) && launcher.results()->at(i)->name == u"New.pdf");
+    check(!bigKept, "a size typed with its unit (1 KB) was not taken as the bound");
     launcher.setSizeRange(u"1"_s, {});
     pump(50);
     check(launcher.results()->count() == 2, "plugin size filtering or unknown sizes failed");
@@ -6526,6 +6638,13 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
     pump(250);
     settle(panelWindow);
     check(saveGrab(panelWindow, output.filePath(u"panel-default.png"_s)), "could not render default panel");
+    // The 自定义 size boxes (GitHub #394): "40 kb" taken, what cannot be read marked.
+    launcher.setSizeRange(u"40 kb"_s, u"abc"_s);
+    settle(panelWindow);
+    check(saveGrab(panelWindow, output.filePath(u"panel-size-bounds.png"_s)), "could not render the size boxes");
+    launcher.setSizeRange({}, {});
+    launcher.setSizeChoice(0);
+    settle(panelWindow);
     bool sawFolderSize = false;
     for (int row = 0; row < launcher.results()->count(); ++row) {
         if (!launcher.results()->at(row)->isDir) continue;
@@ -6730,7 +6849,7 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
     query({});
     if (gallery) {
         launcher.setWindow(panelWindow);
-        checkFileGallery(launcher, index, qmlEngine, output);
+        checkFileGallery(launcher, index, places, qmlEngine, output);
         launcher.setWindow(window);
         query({});
     }
@@ -6878,7 +6997,7 @@ bool checkClipboardSizing(QQuickWindow* window, Clipboard& clipboard, Placement&
         && clipboard.listWidth() == beforeList + 30);
     check("preview_scrollbar_does_not_resize", scrollbarWorks(u"clipboardPreviewScrollBar"_s));
     check("preview_screenshot", saveGrab(window, output.filePath(u"clipboard-sizing-preview.png"_s)));
-    QMetaObject::invokeMethod(page, "closePreview");
+    QMetaObject::invokeMethod(page, "closePreview", Q_ARG(QVariant, QVariant(false))); // closePreview(keepWanted)
     settle(window);
     check("preview_close_keeps_list_size", window->width() == clipboard.listWidth() && window->height() == clipboard.windowHeight());
     clipboard.setWindowHeight(qRound(area.height() * 0.75));
@@ -7327,6 +7446,125 @@ bool checkClipboardFilePreview(QQmlEngine* engine, const QDir& output)
     check(!watcher.running(), "fixture must never start the native clipboard writer");
     window->hide();
     say(u"clipboard file preview: a copied text file shows its lines beside the list, follows rows, closes with the window"_s);
+    return ok;
+}
+
+// --clipboard-select (GitHub #375): part of a text entry, selected with the
+// mouse in the preview beside the list, without taking the keys from the
+// search field: the hint says Ctrl+C copies it and Enter pastes it, the lines
+// keep the 1.15 spacing they had as a Text, another entry drops the
+// selection. Nothing is copied or pasted here (that writes the real
+// clipboard): those keys are tried live. A temporary history.
+bool checkClipboardTextSelection(QQmlEngine* engine, const QDir& output)
+{
+    QTemporaryDir temporary;
+    ClipStore store(temporary.filePath(u"history"_s));
+    bool ok = true;
+    const auto check = [&](bool condition, const char* reason) {
+        ok = condition && ok;
+        if (!condition) qWarning("clipboard text selection regression: %s", reason);
+    };
+    if (!store.open(QDateTime::currentMSecsSinceEpoch())) { check(false, "temporary history could not open"); return false; }
+    const QString text = u"账号：lingcore\n密码：在密码管理器里\n备注：周五前把年度报告发给财务，顺便确认销售图表的口径"_s;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    store.add(ClipCapture {.kind = ClipKind::Text, .text = u"另一段文字"_s, .source = u"记事本"_s}, now - 1000);
+    store.add(ClipCapture {.kind = ClipKind::Text, .text = text, .source = u"记事本"_s}, now);
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    clipboard.setRowOptions(false, u"standard"_s, SystemTheme::uiSize());
+    clipboard.setActive(true);
+    clipboard.handleShown();
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Clipboard"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(engine, u"WinShun"_s, u"ClipboardWindow"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({{u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"placement"_s, QVariant::fromValue(&placement)}, {u"frame"_s, QVariant::fromValue(&frame)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { qWarning().noquote() << "clipboard text selection regression:" << component.errorString(); return false; }
+    window->create();
+    frame.setWindow(window);
+    placement.setWindow(window);
+    placement.enableWindowSizing();
+    showOffScreen(window);
+    clipboard.handlePlaced();
+    clipboard.setSeen(true);
+    settle(window);
+    auto* page = visualNamed(window->contentItem(), u"clipboardPage"_s);
+    auto* entries = visualNamed(window->contentItem(), u"clipboardEntries"_s);
+    if (!page || !entries) { check(false, "production clipboard page missing"); return false; }
+    QMetaObject::invokeMethod(page, "togglePreview", Q_ARG(QVariant, QVariant(0)));
+    settle(window);
+    auto* body = visualNamed(window->contentItem(), u"clipboardPreviewText"_s);
+    auto* hint = visualNamed(window->contentItem(), u"clipboardPreviewHint"_s);
+    if (!body || !hint || !body->isVisible()) { check(false, "the entry's text is not in the preview"); return false; }
+    check(body->property("text").toString() == text, "the preview does not show the whole entry");
+    const auto selected = [&] { return body->property("selectedText").toString(); };
+    // The lines as far apart as the Text's lineHeight 1.15 put them.
+    const int lines = body->property("lineCount").toInt();
+    const QFontMetricsF metrics(body->property("font").value<QFont>());
+    const double perLine = lines > 0 ? body->property("contentHeight").toDouble() / lines : 0;
+    check(lines >= 3 && perLine >= metrics.height() * 1.1 && perLine <= metrics.height() * 1.25,
+        "the selectable text lost its line spacing");
+    // Dragged across the second line: that part selected, the field keeping the keys.
+    const auto mouse = [&](QEvent::Type type, const QPointF& at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+        QMouseEvent event(type, at, window->mapToGlobal(at), button, buttons, {});
+        QCoreApplication::sendEvent(window, &event);
+        settle(window);
+    };
+    QQuickItem* field = visualNamed(window->contentItem(), u"clipboardSearchField"_s);
+    const double lineY = perLine * 1.5;
+    const QPointF from = body->mapToScene({1, lineY});
+    const QPointF to = body->mapToScene({metrics.horizontalAdvance(u"密码：在密码"_s), lineY});
+    mouse(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+    mouse(QEvent::MouseMove, (from + to) / 2, Qt::NoButton, Qt::LeftButton);
+    mouse(QEvent::MouseMove, to, Qt::NoButton, Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease, to, Qt::LeftButton, {});
+    const QString part = selected();
+    check(part.startsWith(u"密码"_s) && part.size() >= 4 && part.size() < 12 && !part.contains(u'\n'),
+        "a drag across a line did not select that part of it");
+    check(!body->hasFocus() && (!field || field->hasFocus()), "selecting took the keys from the search field");
+    const QString told = hint->property("text").toString();
+    check(hint->isVisible() && told.contains(u"Ctrl+C"_s) && told.contains(u"Enter"_s)
+            && told.contains(QString::number(part.size())),
+        "the hint does not say how to copy or paste the selected part");
+    check(saveGrab(window, output.filePath(u"clipboard-text-selected.png"_s)), "the selection did not render");
+    // Another entry: the selection gone, the hint back to the entry's own.
+    entries->setProperty("currentIndex", 1);
+    settle(window);
+    check(selected().isEmpty() && !hint->property("text").toString().contains(u"Ctrl+C"_s),
+        "another entry kept the selection");
+    // GitHub #379: the menu's keys, shown beside its entries, do them with
+    // the menu closed. Ctrl+E changes the words where the preview is;
+    // Ctrl+T pins the window as its button does.
+    const auto shortcutOf = [&](int row, int action) {
+        for (const QVariant& item : clipboard.menuItems(row))
+            if (item.toMap().value(u"action"_s).toInt() == action)
+                return item.toMap().value(u"shortcut"_s).toString();
+        return QString();
+    };
+    check(shortcutOf(1, Clipboard::EditText) == u"Ctrl+E"_s && shortcutOf(1, Clipboard::SaveFiles) == u"Ctrl+S"_s,
+        "the menu does not show Ctrl+E and Ctrl+S beside their entries");
+    const auto key = [&](int code, Qt::KeyboardModifiers modifiers) {
+        QKeyEvent press(QEvent::KeyPress, code, modifiers), release(QEvent::KeyRelease, code, modifiers);
+        QCoreApplication::sendEvent(window, &press);
+        QCoreApplication::sendEvent(window, &release);
+        settle(window);
+    };
+    if (field)
+        field->forceActiveFocus(Qt::OtherFocusReason);
+    key(Qt::Key_E, Qt::ControlModifier);
+    check(page->property("editingId").toLongLong() > 0, "Ctrl+E did not open the entry's words to change");
+    key(Qt::Key_Escape, Qt::NoModifier);
+    check(page->property("editingId").toLongLong() == 0, "Esc did not close the words being changed");
+    if (field)
+        field->forceActiveFocus(Qt::OtherFocusReason);
+    const bool pinned = clipboard.pinned();
+    key(Qt::Key_T, Qt::ControlModifier);
+    check(clipboard.pinned() != pinned, "Ctrl+T did not pin the window");
+    key(Qt::Key_T, Qt::ControlModifier);
+    check(clipboard.pinned() == pinned, "Ctrl+T again did not unpin it");
+    window->hide();
+    say(u"clipboard text selection and menu keys: real QML, temporary history; native clipboard untouched"_s);
     return ok;
 }
 
@@ -8320,6 +8558,22 @@ int runResults(const QStringList& args)
         return checkClipboardInteractions(&engine, out, {}, true) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--clipboard-file"_s))
         return checkClipboardFilePreview(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--clipboard-select"_s))
+        return checkClipboardTextSelection(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (const qsizetype at = args.indexOf(u"--terminal-launch"_s); at >= 0 && at + 2 < args.size()) {
+        // 在终端中打开 for real (GitHub #386): <id> <folder> [command]. Only
+        // started here; the script that runs it finds the new shell, checks
+        // its folder and closes it.
+        const QString id = args[at + 1], folder = args[at + 2], command = args.value(at + 3);
+        auto result = std::make_shared<std::atomic<int>>(-1);
+        shell::openTerminalIn(id, command, folder, [result](bool ok) { *result = ok ? 1 : 0; });
+        QElapsedTimer waited;
+        waited.start();
+        while (*result < 0 && waited.elapsed() < 10000)
+            pump(50);
+        say(u"terminal %1 in %2: %3"_s.arg(id, folder, *result == 1 ? u"started"_s : *result == 0 ? u"failed"_s : u"no answer"_s));
+        return *result == 1 ? 0 : 4;
+    }
     if (args.contains(u"--navigation-workflows"_s))
         return checkNavigationWorkflows(&engine, out, args.contains(u"--flipped"_s)) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--search-experience"_s))

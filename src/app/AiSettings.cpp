@@ -348,6 +348,9 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Launcher/FolderMenuItemSettings", QT_TRANSLATE_NOOP("AiSettings", "文件夹菜单里有“在菜单末尾显示 Win顺 设置”"), "files_and_dialogs", 1,
                     "The folder menu offers this action under its lists. On by default."},
         &Settings::folderMenuItemSettings));
+    add(boolean({"Launcher/FolderMenuFiles", QT_TRANSLATE_NOOP("AiSettings", "文件夹菜单的子列也列出文件"), "files_and_dialogs", 1,
+                    "A folder's column in the folder menu lists the files in it after its folders; a click or Enter opens one. Not in Open or Save dialogs. Off by default."},
+        &Settings::folderMenuFiles));
     add(boolean({"Favorites/DropPie", QT_TRANSLATE_NOOP("AiSettings", "拖文件时按 ` 键，弹出收藏圆盘"), "favorites", -1,
                     "While dragging files or folders (File Explorer, the desktop, file managers), pressing the key left of 1 (` and ~ on most keyboards, · in a Chinese input method; it is the key's place that counts, not what is printed on it) with them held (no need to move) brings up the first eight favorite folders round the pointer. Moving toward one and letting go drops the files there: moved within a drive, copied to another, Ctrl copies and Shift moves. Does nothing while Win顺 runs as administrator."},
         &Settings::dropPie));
@@ -641,6 +644,22 @@ std::vector<Entry> buildCatalog()
         e.after = [](State& s) { s.settings.openHotkey = previewkeys::normalizedOpen(s.settings.openHotkey); };
         add(std::move(e));
     }
+    add(choice({"Results/Terminal", QT_TRANSLATE_NOOP("AiSettings", "在终端中打开"), "results", 2,
+                   "Which terminal a result's 在终端中打开 starts in its folder. One not installed opens the command prompt."},
+        &Settings::terminal,
+        {{u"cmd"_s, u"Command Prompt"_s, QT_TRANSLATE_NOOP("AiSettings", "命令提示符")},
+            {u"powershell"_s, u"Windows PowerShell"_s, QT_TRANSLATE_NOOP("AiSettings", "Windows PowerShell")},
+            {u"pwsh"_s, u"PowerShell 7"_s, QT_TRANSLATE_NOOP("AiSettings", "PowerShell 7")},
+            {u"wt"_s, u"Windows Terminal with its default profile"_s, QT_TRANSLATE_NOOP("AiSettings", "Windows 终端（默认配置）")},
+            {u"gitbash"_s, u"Git Bash"_s, QT_TRANSLATE_NOOP("AiSettings", "Git Bash")},
+            {u"wsl"_s, u"WSL, the default Linux distribution"_s, QT_TRANSLATE_NOOP("AiSettings", "WSL")},
+            {u"custom"_s, u"Results/TerminalCommand, run in the folder; {query} is the folder"_s, QT_TRANSLATE_NOOP("AiSettings", "自定义命令")}}));
+    {
+        Entry e = base({"Results/TerminalCommand", QT_TRANSLATE_NOOP("AiSettings", "自定义终端命令"), "results", 2,
+            "The command line Results/Terminal custom runs in the folder, {query} for the folder (quoted as one argument), e.g. C:\\msys64\\msys2_shell.cmd -ucrt64 -here."}, Type::Text);
+        e.field = &Settings::terminalCommand;
+        add(std::move(e));
+    }
     add(boolean({"Launcher/ClearOnOpen", QT_TRANSLATE_NOOP("AiSettings", "每次打开时清空搜索"), "results", 2,
                     "Each time the search box opens nothing is typed and the scope is 全部, instead of keeping the last words selected."},
         &Settings::clearOnOpen));
@@ -740,6 +759,9 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Clipboard/KeepPlace", QT_TRANSLATE_NOOP("AiSettings", "粘贴后保持位置"), "clipboard", 0,
                     "Pasting an entry from the history leaves it where it is in the list; off: it moves to the top."},
         &Settings::clipboardKeepPlace));
+    add(boolean({"Clipboard/PreviewRestore", QT_TRANSLATE_NOOP("AiSettings", "剪贴板再次打开时恢复预览"), "clipboard", 0,
+                    "A side preview left open when the clipboard window closes opens again with it next time; off: it closes with the window."},
+        &Settings::clipboardPreviewRestore));
     add(integer({"Appearance/MaxRows", QT_TRANSLATE_NOOP("AiSettings", "搜索框显示行数"), "appearance", -1,
                     "The most result rows the search box shows before its list scrolls; fewer where the screen has no room below it."},
         &Settings::maxRows, 4, 20, QT_TRANSLATE_NOOP("AiSettings", "行"), "rows"));
@@ -757,9 +779,12 @@ std::vector<Entry> buildCatalog()
         {{u"small"_s, u"on a row as high as any other entry's"_s, QT_TRANSLATE_NOOP("AiSettings", "小")},
             {u"standard"_s, u"on a taller row"_s, QT_TRANSLATE_NOOP("AiSettings", "标准")},
             {u"large"_s, u"large enough to make out the details"_s, QT_TRANSLATE_NOOP("AiSettings", "大")}}));
-    add(boolean({"Clipboard/AtPointer", QT_TRANSLATE_NOOP("AiSettings", "剪贴板打开位置"), "clipboard", 0,
-                    "Always open the clipboard beside the mouse pointer. Off: by the text caret or focused field."},
-        &Settings::clipboardAtPointer));
+    add(choice({"Clipboard/OpenAt", QT_TRANSLATE_NOOP("AiSettings", "剪贴板打开位置"), "clipboard", 0,
+                   "Where the clipboard window opens."},
+        &Settings::clipboardOpenAt,
+        {{u"caret"_s, u"by the text caret, or under the focused field of Win顺's"_s, QT_TRANSLATE_NOOP("AiSettings", "输入光标旁")},
+            {u"pointer"_s, u"beside the mouse pointer"_s, QT_TRANSLATE_NOOP("AiSettings", "鼠标指针旁")},
+            {u"last"_s, u"where it was last moved to, on the monitor with the mouse"_s, QT_TRANSLATE_NOOP("AiSettings", "上次的位置")}}));
     add(boolean({"Clipboard/PauseInFullScreen", QT_TRANSLATE_NOOP("AiSettings", "全屏时不响应剪贴板快捷键"), "clipboard", 0,
                     "Pause global clipboard opening hotkeys over a full-screen application. Recording and menu actions stay available."},
         &Settings::clipboardPauseInFullScreen));
@@ -895,6 +920,12 @@ std::vector<Entry> buildCatalog()
             e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "菜单里列出的内容");
         else if (e.key == u"Results/ShowModifiedTime")
             e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "较早的日期也显示具体时间");
+        else if (e.key == u"Clipboard/PreviewRestore") // titled as the search box's row of that name
+            e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "再次打开时恢复预览");
+        else if (e.key == u"Launcher/FolderMenuFiles") // on the folder menu's page
+            e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "文件夹的子列也列出文件");
+        else if (e.key == u"Results/TerminalCommand") // the box under the terminal's choice
+            e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "在终端中打开");
     }
 
     // ---- never seen: paths and shares (what leaves the PC), AI's own switches, plugins, bookkeeping ----

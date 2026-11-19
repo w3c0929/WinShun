@@ -479,6 +479,7 @@ private:
     // and one of its commands run with the path chosen.
     void applyMenuCommands();
     void runMenuCommand(const QString& id, const QString& path);
+    void pinText(const QString& text); // copied words on the screen, by the screenshot plugin (GitHub #388)
     void showPluginSettings(const QString& pluginId); // ... on that plugin's card ("winshun:settings")
     void applyHotkey();
     void applyDialogs(); // Ctrl+G, the bar and going by themselves in file dialogs
@@ -578,6 +579,7 @@ private:
     void moveCapture();
     void installMovedPlugins(); // the ones that came with 0.16.0, from the library (GitHub #138)
     void setPluginRecoveryState(const QString& message, bool busy = false);
+    void applyOwnPlaces(); // Win顺's settings and each plugin's as places (GitHub #389, #390)
     void pluginsChanged(); // the catalog's entries: the icon provider's folders
     // ws plugin (PluginCommands): what it has the app do. The switch of a
     // plugin that needs no answer from the user; the 插件 page in front of

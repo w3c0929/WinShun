@@ -123,6 +123,8 @@ QString appOrigin(const SearchResult& r)
             ? ResultModel::tr("正在运行") : QFileInfo(r.target).completeBaseName());
     if (r.isSettings())
         return ResultModel::tr("外观、快捷键与插件");
+    if (r.isPluginSettings())
+        return ResultModel::tr("Win顺 设置 › 插件");
     if (r.isCommand())
         return ResultModel::tr("自定义命令 · %1").arg(r.words.isEmpty() ? r.target : r.words);
     switch (r.app) {
@@ -507,6 +509,8 @@ QVariant ResultModel::data(const QModelIndex& index, int role) const
         return r->favoriteKeyword;
     case MissingRole:
         return r->missing;
+    case EmptyRole: // an app's, a place's, a plugin's row has no size: never
+        return r->isDir ? r->emptyFolder : r->size == 0 && !r->isApp();
     case FolderMatchesRole: {
         QVariantList out;
         if (r->isApp() || r->line > 0) // a content match has every term in the file
@@ -604,6 +608,7 @@ QHash<int, QByteArray> ResultModel::roleNames() const
         {FavoriteRole, "favorite"},
         {FavoriteKeywordRole, "favoriteKeyword"},
         {MissingRole, "missing"},
+        {EmptyRole, "empty"},
         {FolderMatchesRole, "folderMatches"},
         {NameMatchesRole, "nameMatches"},
         {SwitchIdRole, "switchId"},

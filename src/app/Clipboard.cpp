@@ -284,6 +284,14 @@ void Clipboard::setPreviewOpen(bool open)
     emit previewOpenChanged();
 }
 
+void Clipboard::setPreviewRestore(bool on)
+{
+    if (m_previewRestore == on)
+        return;
+    m_previewRestore = on;
+    emit previewOpenChanged();
+}
+
 void Clipboard::setPreviewWidth(int width)
 {
     width = std::max(0, width);
@@ -1098,19 +1106,24 @@ void Clipboard::fillField()
     textfield::type(item, text);
 }
 
+void Clipboard::aimAtFrontProgram()
+{
+    // Pinned, clicked without the keys: into the program in front now, which
+    // kept the focus. (Its own window in front: where it was before.)
+    if (!m_pinned || m_keysRouted)
+        return;
+    DWORD process = 0;
+    const HWND foreground = ::GetForegroundWindow();
+    ::GetWindowThreadProcessId(foreground, &process);
+    if (foreground && process != ::GetCurrentProcessId())
+        m_target = foreground;
+}
+
 void Clipboard::paste(int row, bool plainText)
 {
     if (m_pasting)
         return;
-    // Pinned, clicked without the keys: into the program in front now, which
-    // kept the focus. (Its own window in front: where it was before.)
-    if (m_pinned && !m_keysRouted) {
-        DWORD process = 0;
-        const HWND foreground = ::GetForegroundWindow();
-        ::GetWindowThreadProcessId(foreground, &process);
-        if (foreground && process != ::GetCurrentProcessId())
-            m_target = foreground;
-    }
+    aimAtFrontProgram();
     const std::vector<const Clip*> clips = targets(row);
     if (clips.empty())
         return;
@@ -1142,6 +1155,23 @@ void Clipboard::paste(int row, bool plainText)
         return;
     }
     startPaste(std::move(write), Into::Program, std::move(touched), {});
+}
+
+void Clipboard::pasteText(const QString& text)
+{
+    if (m_pasting || text.isEmpty())
+        return;
+    aimAtFrontProgram();
+    ClipWrite write;
+    write.text = text;
+    if (m_field.item) {
+        m_fieldText = m_field.oneLine ? textfield::oneLine(text) : text;
+        if (m_fieldText.isEmpty())
+            return;
+        startPaste(std::move(write), Into::Field, {}, {});
+        return;
+    }
+    startPaste(std::move(write), Into::Program, {}, {});
 }
 
 void Clipboard::quickPaste(int row, bool plainText)
@@ -1715,6 +1745,7 @@ QVariantMap Clipboard::preview(int row) const
         {u"swatch"_s, ClipModel::colorOf(*c)},
     };
     if (c->masked) { // dots in place of whatever it is, where it came from and when below them
+        map.insert(u"masked"_s, true); // nothing to select of them
         map.insert(u"kind"_s, static_cast<int>(ClipKind::Text));
         map.insert(u"formatted"_s, false);
         map.insert(u"swatch"_s, QString());
@@ -1827,6 +1858,9 @@ QVariantList Clipboard::menuItems(int row) const
             {u"glyph"_s, glyph},
         };
     };
+    // A key shown here also does what its entry does with the menu closed
+    // (ClipboardPage.menuShortcut, GitHub #379): F3 as the screenshot plugin
+    // pins, Ctrl+E, Ctrl+S.
     const QVariantMap separator {{u"separator"_s, true}};
     const auto n = static_cast<int>(clips.size());
     const bool many = n > 1;
@@ -1847,9 +1881,12 @@ QVariantList Clipboard::menuItems(int row) const
         else if (c.kind == ClipKind::Files || c.kind == ClipKind::Path)
             items.append(entry(Reveal, tr("打开所在位置"), QString(), u""_s));
         else if (c.kind == ClipKind::Image && m_pictureVerbs.pin) // the screenshot plugin's
-            items.append(entry(PinImage, c.animated ? tr("贴首帧到屏幕") : tr("贴到屏幕"), QString(), u"\uE718"_s));
+            items.append(entry(PinImage, c.animated ? tr("贴首帧到屏幕") : tr("贴到屏幕"), u"F3"_s, u"\uE718"_s));
+        // Words as a card on the screen (GitHub #388), by the same plugin; not what is kept from view.
+        if (c.kind != ClipKind::Image && c.kind != ClipKind::Files && m_pictureVerbs.pin && !c.masked)
+            items.append(entry(PinImage, tr("贴到屏幕"), u"F3"_s, u"\uE718"_s));
         if (c.kind == ClipKind::Image && m_pictureVerbs.edit)
-            items.append(entry(EditImage, c.animated ? tr("编辑首帧") : tr("编辑"), QString(), u"\uE70F"_s));
+            items.append(entry(EditImage, c.animated ? tr("编辑首帧") : tr("编辑"), u"Ctrl+E"_s, u"\uE70F"_s));
         if (c.kind == ClipKind::Image)
             items.append(entry(OpenImage, tr("打开图片"), QString(), u""_s));
     }
@@ -1863,8 +1900,8 @@ QVariantList Clipboard::menuItems(int row) const
     // Its own words changed where the preview is: text all of which is listed, not kept from view.
     if (!many && clips.front()->kind != ClipKind::Files && clips.front()->kind != ClipKind::Image
         && !clips.front()->truncated() && !clips.front()->masked)
-        items.append(entry(EditText, tr("修改文字…"), QString(), u"\uE70F"_s)); // Edit
-    items.append(entry(SaveFiles, many ? tr("保存 %Ln 条为文件…", nullptr, n) : tr("保存为文件…"), QString(),
+        items.append(entry(EditText, tr("修改文字…"), u"Ctrl+E"_s, u"\uE70F"_s)); // Edit
+    items.append(entry(SaveFiles, many ? tr("保存 %Ln 条为文件…", nullptr, n) : tr("保存为文件…"), u"Ctrl+S"_s,
         u"\uE74E"_s));
     items.append(entry(SendLan, m_lanSendAvailable ? tr("用局域网发送…")
         : m_lanSendUpdate ? tr("更新局域网传输…") : tr("启用局域网传输…"), QString(), u"\uE724"_s));
@@ -1929,6 +1966,12 @@ void Clipboard::trigger(int row, int action)
         moveToGroup(row, action - MoveToGroup);
         return;
     }
+    // What an action on one entry acts on: the row, or the one picked (row -1:
+    // the page's keys act on the picked rows when there are any).
+    const auto one = [&]() -> const Clip* {
+        const std::vector<const Clip*> clips = targets(row);
+        return clips.size() == 1 ? clips.front() : nullptr;
+    };
     switch (static_cast<Action>(action)) {
     case Paste:
         paste(row, false);
@@ -1985,7 +2028,12 @@ void Clipboard::trigger(int row, int action)
         sendLan(row);
         break;
     case PinImage: {
-        const Clip* c = m_model.at(row);
+        const Clip* c = one();
+        if (c && c->kind != ClipKind::Image && c->kind != ClipKind::Files && !c->masked) { // words (GitHub #388)
+            // All of it (a long text is kept whole on disk only); the plugin takes up to kPinTextChars.
+            emit pinTextRequested(c->textLength > c->text.size() ? m_store->payload(c->id).text : c->text);
+            break;
+        }
         if (!c || c->kind != ClipKind::Image)
             break;
         if (m_store->imagePending(c->id)) { // just copied, its file not written yet
@@ -1996,7 +2044,7 @@ void Clipboard::trigger(int row, int action)
         break;
     }
     case EditImage: {
-        const Clip* c = m_model.at(row);
+        const Clip* c = one();
         if (!c || c->kind != ClipKind::Image)
             break;
         if (m_store->imagePending(c->id)) { // just copied, its file not written yet
@@ -2012,7 +2060,7 @@ void Clipboard::trigger(int row, int action)
     case OpenLink:
     case Reveal:
     case OpenImage: {
-        const Clip* c = m_model.at(row);
+        const Clip* c = one();
         if (!c)
             break;
         // What opens may come to the front only from the program in front.

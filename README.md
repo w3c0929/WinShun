@@ -196,6 +196,14 @@ winget install LingCore.WinShun
 
 ### 最近更新
 
+**0.38.0**
+
+- 📌 **剪贴板里的文字也能贴到屏幕**（`F3`），⚙️ 搜“截图设置”这样的词**直达插件设置**，Win顺 设置排在“设置”第一行。
+- ✂️ 剪贴板可以**只复制、粘贴预览里选中的一部分**，打开位置多了“上次的位置”，菜单的键不开菜单也能按；💻 “在终端中打开”**能选 PowerShell、Windows 终端、Git Bash 等**。
+- 🫙 **空文件夹、空文件在结果里标出来**；🔀 快捷筛选可以带自己的排序；📂 文件夹菜单列宽跟着名字收紧，还能列出文件。
+
+详见 [0.38.0 发布说明](docs/release-notes/v0.38.0.md)。
+
 **0.37.0**
 
 - 🧰 **开发工具**（新插件）：`json` 格式化、压缩、转义 JSON，树形查看、搜索键名和值。
@@ -327,6 +335,8 @@ Listary、PowerToys 的“查找鼠标”默认也用双击 Ctrl，关掉其中�
 <summary>需要 Visual Studio 2022、Qt 6.8 或更新版本、CMake 和 Ninja</summary>
 
 需要 Visual Studio 2022（“使用 C++ 的桌面开发”）、Qt 6.8 或更新版本（推荐 6.12，MSVC 2022 64 位套件）、CMake 3.25+ 和 Ninja。
+
+只想编译、不需要完整历史时，用 `git clone --filter=blob:none https://github.com/LingCore/WinShun.git`，历史里的截图等旧文件用到时才下载，克隆小很多。
 
 ```powershell
 ./scripts/build.ps1                                # 编译（不跑测试）
@@ -504,6 +514,14 @@ Standard and portable packages install enhanced text recognition on demand. Open
 
 ### What's new
 
+**0.38.0**
+
+- 📌 **Pin text from the clipboard on the screen** (`F3`); ⚙️ words like “capture settings” **open a plugin's settings**, and WinShun's settings come first for “settings”.
+- ✂️ **Copy or paste just the part selected in the clipboard preview**, open the clipboard where it was last, use its menu's keys without the menu; 💻 **choose PowerShell, Windows Terminal, Git Bash and more** for Open in Terminal.
+- 🫙 **Empty folders and files are marked in the results**; 🔀 quick filters can have their own sort; 📂 folder menu columns as wide as their names, with files on request.
+
+See the [0.38.0 release notes](docs/release-notes/v0.38.0.md).
+
 **0.37.0**
 
 - 🧰 **Developer tools** (new plugin): `json` formats, minifies and escapes JSON, with a tree to browse and search names and values.
@@ -633,6 +651,8 @@ Free and MIT-licensed. Your files and index are never uploaded; the index and hi
 <summary>Needs Visual Studio 2022, Qt 6.8 or later, CMake and Ninja</summary>
 
 Needs Visual Studio 2022 (Desktop development with C++), Qt 6.8 or later (6.12 recommended, MSVC 2022 64-bit kit), CMake 3.25+ and Ninja.
+
+To build without the full history, clone with `git clone --filter=blob:none https://github.com/LingCore/WinShun.git`: old files such as past screenshots are fetched only when needed, so the clone is much smaller.
 
 ```powershell
 ./scripts/build.ps1                                # build (no tests)

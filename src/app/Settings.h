@@ -189,6 +189,9 @@ struct Settings {
     bool folderMenuItemPowerShell = true;
     bool folderMenuItemFavorite = true;
     bool folderMenuItemSettings = true;
+    // A folder's column also lists the files in it, after its folders
+    // (GitHub #384); not in an Open or Save dialog, whose menu only moves it.
+    bool folderMenuFiles = false;
     // A hotkey that brings the menu up in whatever window is in front, for
     // when another program has the double click (GitHub #25); e.g.
     // "Ctrl+Alt+D", empty = none. Works with folderMenu off too.
@@ -316,6 +319,11 @@ struct Settings {
     // A second key that opens the result as Enter does (GitHub #293); local,
     // empty: none. Never Space, nor the preview's (previewkeys::normalizedOpen).
     QString openHotkey;
+    // What 在终端中打开 starts (GitHub #386; shell::installedTerminals): cmd,
+    // powershell, pwsh, wt, gitbash, wsl, or custom: terminalCommand, run in
+    // the folder with {query} for it.
+    QString terminal = QStringLiteral("cmd");
+    QString terminalCommand;
     // An open preview shows the row the mouse rests on; off: only the current
     // row (big files are not opened one after another by a passing pointer,
     // GitHub #224).
@@ -477,7 +485,14 @@ struct Settings {
     // "standard" on a taller one, "large" enough to make out its details (forum #137).
     QString clipboardPictureSize = QStringLiteral("standard");
     bool clipboardKeepPlace = false; // pasting from the history leaves the entry where it is (GitHub #122); off: it moves to the top
-    bool clipboardAtPointer = false; // always open beside the mouse, including over our own fields (GitHub #105)
+    // Where the window opens: "caret" by the text caret or under a field of
+    // ours, "pointer" always beside the mouse, over our fields too (GitHub
+    // #105), "last" where its user last moved it (GitHub #376; Placement's
+    // spot, kept per work area).
+    QString clipboardOpenAt = QStringLiteral("caret");
+    // A side preview left open comes back with the window next time (as before
+    // GitHub #174); off: it closes with the window, as the hover preview does.
+    bool clipboardPreviewRestore = false;
     bool clipboardPauseInFullScreen = false; // only global opening hotkeys, not recording or menu actions (#121)
     // Opened over the caret (or a search box; Placement::above), the window
     // turned upside down: the newest entry by the caret, older ones upwards.

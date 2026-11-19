@@ -425,6 +425,29 @@ SearchResult fromApp(const AppInfo& app, bool recent, int otherName = -1)
     return r;
 }
 
+// What asks for a plugin's settings (GitHub #390): the text with its word
+// for settings set apart ("截图设置" is "截图 设置"); empty without such a
+// word, or with nothing but such words. While it is being typed, "set" and
+// "conf" count already.
+QString pluginSettingsQuery(const QString& text)
+{
+    using namespace Qt::StringLiterals;
+    static const QStringList kJoined {u"设置"_s, u"配置"_s}; // written right after the name
+    static const QStringList kWords {u"设置"_s, u"配置"_s, u"sz"_s};
+    QString spaced = text;
+    for (const QString& word : kJoined)
+        spaced.replace(word, u' ' + word + u' ');
+    const QStringList words = spaced.split(u' ', Qt::SkipEmptyParts);
+    const auto forSettings = [](const QString& word) {
+        return kWords.contains(word, Qt::CaseInsensitive)
+            || (word.size() >= 3 && u"settings"_s.startsWith(word, Qt::CaseInsensitive))
+            || (word.size() >= 4 && u"config"_s.startsWith(word, Qt::CaseInsensitive));
+    };
+    if (!std::ranges::any_of(words, forSettings) || std::ranges::all_of(words, forSettings))
+        return {};
+    return words.join(u' ');
+}
+
 SearchResult fromPlace(const PlaceInfo& place, bool recent)
 {
     SearchResult r;
@@ -465,6 +488,18 @@ bool duplicatesApp(const SearchResult& file, const SearchResult& app)
         && file.path.contains(u"\\Start Menu\\Programs\\", Qt::CaseInsensitive);
 }
 
+// GitHub #391: a folder with nothing in it, as far as the index knows. Not
+// a hidden one: Windows' links in a profile (My Documents, Application
+// Data) and System Volume Information are hidden, and what is in them is
+// never read. Nor one on a share (read now and then, and maybe not that
+// deep), a drive, or a cloud placeholder. Caller holds index.readLock().
+bool emptyInIndex(const FileIndex& index, EntryId id)
+{
+    const Entry e = index.entry(id);
+    constexpr auto unsure = EntryFlag::Hidden | EntryFlag::Remote | EntryFlag::Root | EntryFlag::Offline | EntryFlag::Deleted;
+    return e.isDir() && !(e.flags & unsure) && e.firstChild() == kNoEntry;
+}
+
 SearchResult fromIndex(const FileIndex& index, EntryId id)
 {
     const EntryScan& e = index.scan(id);
@@ -475,6 +510,7 @@ SearchResult fromIndex(const FileIndex& index, EntryId id)
     r.isDir = e.isDir();
     if (const FileSize size = e.isDir() ? kUnknownSize : index.size(id); size != kUnknownSize)
         r.size = static_cast<std::int64_t>(unpackSize(size));
+    r.emptyFolder = e.isDir() && emptyInIndex(index, id);
     return r;
 }
 
@@ -1101,7 +1137,7 @@ SearchResults favoriteRows(const QList<const Favorite*>& favorites, const AppLis
         } else if (f.kind == Favorite::Kind::Place) {
             if (const PlaceInfo* place = findPlace(places, f.path))
                 r = fromPlace(*place, false);
-            else if (places.empty())
+            else if (!windowsPlacesRead(places)) // not read yet (Win顺's own are there at once)
                 continue;
             else
                 r = {.path = f.path, .missing = true, .app = AppKind::Tool};
@@ -1469,7 +1505,7 @@ void SearchEngine::runNameSearch(const Job& job)
     const bool foldersOnly = request.scope == Scope::Folders;
     // 文件 with a type chosen: only its files, whatever is typed or listed.
     const std::vector<std::string> types = foldersOnly ? std::vector<std::string>() : foldedExtensions(request.extensions);
-    const Hidden hidden = hiddenOf(request, query, types, m_index->hiddenFolders()); // skipped, and not asked for
+    const Hidden hidden = hiddenOf(request, query, types, m_index ? m_index->hiddenFolders() : nullptr); // skipped, and not asked for
     // Narrowed by when, how large or where (the panel's filters, size: and
     // dm: typed): files and folders alone, in the index's own terms. Nothing
     // typed in the panel lists them all the same (browse).
@@ -1684,9 +1720,11 @@ void SearchEngine::runNameSearch(const Job& job)
             listed.reserve(rows.size());
             {
                 const auto lock = index->readLock();
-                for (const SearchResult& row : rows) {
+                for (SearchResult& row : rows) {
                     listed.insert(pathtext::pathKey(row.path));
                     const EntryId id = index->findPath(row.path.toStdWString());
+                    // Listed from the disk: empty as the index knows it (GitHub #391).
+                    row.emptyFolder = id != kNoEntry && row.isDir && emptyInIndex(*index, id);
                     // The count includes every index match, even those past
                     // this page. Only disk rows not counted there are new.
                     // Subtracting duplicates just from the visible page made
@@ -1744,20 +1782,30 @@ void SearchEngine::runNameSearch(const Job& job)
                 bool guessedSwitch = false; // a switch found by a guess (PlaceHit::weak)
             };
             std::vector<Ranked> ranked;
-            if (!request.settingsName.isEmpty()) {
-                using namespace Qt::StringLiterals;
-                PlaceInfo settings;
-                settings.name = request.settingsName;
-                settings.key = u"winshun/settings"_s;
-                settings.command = u"winshun:settings"_s;
-                settings.kind = AppKind::Tool;
-                settings.icon = QCoreApplication::applicationFilePath();
-                settings.ownKeywords = {u"设置"_s, u"配置"_s, u"WinShun"_s, u"WinShun settings"_s,
-                    u"WinShun config"_s, u"settings"_s, u"preferences"_s, u"config"_s};
-                settings.prepare();
-                const PlaceList builtins {settings};
-                if (const auto hits = searchPlaces(builtins, query, matcher, {}); !hits.empty())
-                    ranked.push_back({hits.front().score + 50, fromPlace(settings, false)});
+            // Win顺's own places (GitHub #389, #390), whether or not places
+            // are searched, remembered as any place: its settings as a place
+            // is found; a plugin's only for its name with a word for settings
+            // ("截图设置", "translate settings"), so that 设置 alone does not
+            // list every plugin.
+            if (request.ownPlaces) {
+                PlaceList settings;
+                PlaceList plugins;
+                for (const PlaceInfo& place : *places) {
+                    if (isOwnPlace(place))
+                        (place.command == kSettingsCommand ? settings : plugins).push_back(place);
+                }
+                for (const PlaceHit& hit : searchPlaces(settings, query, matcher, request.history, request.historyAffinity))
+                    ranked.push_back({hit.score + 50, fromPlace(settings[hit.index], false)});
+                if (const QString asked = pluginSettingsQuery(request.text); !asked.isEmpty() && !plugins.empty()) {
+                    const ParsedQuery pluginQuery = parseQuery(asked);
+                    const NameMatcher pluginMatcher(pluginQuery);
+                    std::size_t shownPlugins = 0;
+                    for (const PlaceHit& hit : searchPlaces(plugins, pluginQuery, pluginMatcher, request.history, request.historyAffinity)) {
+                        if (shownPlugins++ >= kPlacesShown)
+                            break;
+                        ranked.push_back({hit.score + 50, fromPlace(plugins[hit.index], false)});
+                    }
+                }
             }
             for (const AppHit& hit : request.apps ? searchApps(*apps, query, matcher, request.history, request.historyAffinity) : std::vector<AppHit> {}) {
                 ranked.push_back({hit.score, fromApp((*apps)[hit.index], false, hit.otherName)});
@@ -1767,6 +1815,8 @@ void SearchEngine::runNameSearch(const Job& job)
             std::size_t shown = 0; // places other than switches (those are few, and each one a concept)
             for (const PlaceHit& hit : request.places ? searchPlaces(*places, query, matcher, request.history, request.historyAffinity) : std::vector<PlaceHit> {}) {
                 const PlaceInfo& place = (*places)[hit.index];
+                if (isOwnPlace(place)) // above
+                    continue;
                 const bool isSwitch = !place.switchId.isEmpty();
                 if (!isSwitch && shown >= kPlacesShown)
                     continue;

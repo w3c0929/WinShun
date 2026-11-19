@@ -133,7 +133,7 @@ Item {
     }
     function windowHidden() {
         findingGroup = false
-        closePreview()
+        closePreview(clipboard.previewRestore) // kept for next time, if asked to (Settings::clipboardPreviewRestore)
         list.stopScrolling()
         numberHints.reset()
         closeContextMenu()
@@ -189,20 +189,34 @@ Item {
         tracking: numberHints.hintOpacity > 0 || numberHints.jumping // not per frame of a scroll while nothing shows
         span: numberHints.jumping ? numberHints.letters.length : 9 // a letter each, past the ninth row too
     }
-    // A key while the letters show: a letter pastes its row (with Shift: as
-    // plain text), and is taken; anything else puts the numbers back and is
-    // that key as ever (Esc only puts them back).
+    // A key while the letters show: a letter pastes its row (a picked one:
+    // all the picked ones, as Enter or a click does), and is taken.
+    // Shift+letter picks its row or lets it go, as Ctrl+click, and the
+    // letters stay for the next one: rows put together with the keyboard
+    // alone (GitHub #357), then pasted with Enter. Anything else puts the
+    // numbers back and is that key as ever (Esc only puts them back).
     function letterKey(event) {
         if (!numberHints.jumping || [Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta].includes(event.key))
             return false
         const offset = (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) === 0
             ? numberHints.offsetOf(event) : -1
         const row = offset >= 0 ? shownRows.rowOf(offset + 1) : -1
+        if (offset >= 0 && (event.modifiers & Qt.ShiftModifier)) {
+            if (row >= 0 && !event.isAutoRepeat)
+                toggleRow(row)
+            return true
+        }
         numberHints.leave()
         if (offset >= 0) {
             if (row >= 0 && !event.isAutoRepeat) {
                 list.currentIndex = row
-                clipboard.quickPaste(row, (event.modifiers & Qt.ShiftModifier) !== 0)
+                if (selectedCount > 0 && clipboard.items.isSelected(row)) {
+                    clipboard.paste(row, false)
+                } else {
+                    if (selectedCount > 0)
+                        clipboard.clearSelection()
+                    clipboard.quickPaste(row, false)
+                }
             }
             return true
         }
@@ -222,7 +236,8 @@ Item {
     }
 
     // The preview, of the row asked about; asked about the row it shows (or
-    // with nothing to show), it closes. Explicit previews last this opening.
+    // with nothing to show), it closes. Explicit previews last this opening,
+    // or come back the next time with clipboard.previewRestore.
     function togglePreview(index) {
         previewClickTimer.stop()
         if (previewOpen && (index === list.currentIndex || index < 0 || index >= list.count)) {
@@ -239,7 +254,8 @@ Item {
             previewOpening()
         previewOpen = true
     }
-    function closePreview() {
+    // `keepWanted`: closed with the window, it opens again with it (onPlaced).
+    function closePreview(keepWanted) {
         previewClickTimer.stop()
         clearHover()
         if (editingId > 0) { // closed over the words being changed: they are there the next time
@@ -249,7 +265,8 @@ Item {
             editOpenedPreview = false
         }
         previewOpen = false
-        clipboard.previewOpen = false
+        if (!keepWanted)
+            clipboard.previewOpen = false
     }
 
     function requestRowPreview(index) {
@@ -554,6 +571,8 @@ Item {
         case Qt.Key_Enter:
             if (!clipboard.recording)
                 clipboard.turnOn()
+            else if (previewOpen && selectedCount === 0 && preview.selectedText.length > 0)
+                clipboard.pasteText(preview.selectedText) // part of the entry, selected in the preview (GitHub #375)
             else if (list.count > 0)
                 clipboard.paste(targetRow(), shift)
             break
@@ -579,6 +598,11 @@ Item {
                 return
             clipboard.togglePin(targetRow())
             break
+        case Qt.Key_T: // the window's own pin, top right, as Ctrl+T pins the search box (GitHub #379)
+            if (!ctrl || shift || alt)
+                return
+            clipboard.pinned = !clipboard.pinned
+            break
         case Qt.Key_A:
             // The field's own first: Ctrl+A selects its text. With no text, or
             // all of it selected already, it picks the listed rows (not what
@@ -603,9 +627,28 @@ Item {
             clipboard.undo()
             break
         default:
-            return
+            if (!menuShortcut(event))
+                return
         }
         event.accepted = true
+    }
+
+    // F3, Ctrl+E, Ctrl+S…: what the row's menu shows that key beside, done
+    // without the menu (GitHub #379). The menu decides what applies (a
+    // picture is pinned or edited only with the screenshot plugin).
+    function menuShortcut(event): bool {
+        const modifiers = event.modifiers & ~Qt.KeypadModifier
+        const letter = event.key >= Qt.Key_A && event.key <= Qt.Key_Z
+        const function_ = event.key >= Qt.Key_F1 && event.key <= Qt.Key_F12
+        if (list.count === 0 || !((letter && modifiers === Qt.ControlModifier) || (function_ && modifiers === Qt.NoModifier)))
+            return false
+        const key = letter ? "Ctrl+" + String.fromCharCode(event.key) : "F" + (event.key - Qt.Key_F1 + 1)
+        const row = targetRow()
+        const item = clipboard.menuItems(row).find(i => i.shortcut === key)
+        if (!item)
+            return false
+        clipboard.trigger(row, item.action)
+        return true
     }
 
     // The preview follows the current row and any change to it.
@@ -642,7 +685,7 @@ Item {
         target: page.clipboard
         enabled: page.controllerEventsEnabled
         function onShown() {
-            page.closePreview()
+            page.closePreview(page.clipboard.previewRestore)
             page.findingGroup = false
             input.text = ""
             page.pinyinHint = false
@@ -654,10 +697,12 @@ Item {
             page.selectFirst()
             page.focusSearch()
         }
-        function onPlaced() {
+        function onPlaced() { // ... then the preview, if it was left open and is to come back
             // Placed only now (over the caret, maybe upside down, its rows):
             // at the first row as it ends up.
             page.selectFirst()
+            if (page.clipboard.previewRestore && page.clipboard.previewOpen && list.count > 0)
+                page.showPreview()
         }
         function onListChanged() {
             page.selectionAnchor = -1
@@ -851,7 +896,7 @@ Item {
                 glyph: page.clipboard.pinned ? "" : "" // PinnedFill, Pin
                 glyphOverlay: page.clipboard.pinned ? "" : "" // Pin: the needle (lines up with PinnedFill in Fluent and MDL2)
                 checked: page.clipboard.pinned
-                tip: page.clipboard.pinned ? qsTr("取消钉住") : qsTr("钉住：一直显示在最上面，粘贴后也不收起")
+                tip: page.clipboard.pinned ? qsTr("取消钉住（Ctrl+T）") : qsTr("钉住：一直显示在最上面，粘贴后也不收起（Ctrl+T）")
                 onClicked: page.clipboard.pinned = !page.clipboard.pinned
             }
 
