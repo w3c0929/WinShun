@@ -36,6 +36,10 @@ Item {
     property bool findingGroup: false
     property string groupQuery
     property bool syncingSearch: false
+    // The search box shown (设置 › 剪贴板 › 显示搜索框), or naming a group to
+    // find. Hidden, the field stays the one the keys go to (arrows, Enter,
+    // Ctrl+… and the rest), read-only: typed letters search nothing.
+    readonly property bool fieldShown: clipboard.searchBox || findingGroup
     readonly property var currentCategory: clipboard.categories[clipboard.category] ?? ({})
 
     function syncSearch() {
@@ -412,7 +416,7 @@ Item {
     function commitName(name) {
         tabs.stopNaming()
         if (notingId > 0) { // an empty one takes the note away
-            clipboard.setNote(notingId, name)
+            clipboard.setNote(notingId, name, tabs.noteColor)
             notingId = 0
             focusSearch()
             return
@@ -731,16 +735,19 @@ Item {
         function onContextMenuKeyPressed() { if (!page.findingGroup) page.openContextMenu(list.currentIndex) }
         function onGroupSearchRequested() { page.findingGroup ? page.cancelGroupSearch() : page.beginGroupSearch() }
         function onPinyinHintRequested() {
+            if (!page.fieldShown)
+                return // nothing is typed into a search
             if (input.text.length === 0)
                 page.pinyinHint = true
             else
                 pinyinHintTimer.restart()
         }
-        function onNoteRequested(id, note) {
+        function onNoteRequested(id, note, color) {
             page.notingId = id
             tabs.namePlaceholder = qsTr("备注，搜它也能找到这一条")
             tabs.nameLength = 60
-            tabs.startNaming(note)
+            tabs.noteColor = color // the one it has (GitHub #398)
+            tabs.startNaming(note, true)
         }
         function onTextEditRequested(id, text) { page.beginEdit(id, text) }
         function onGroupNameRequested(row, group) {
@@ -823,10 +830,11 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 focus: true
                 // The letters showing: the keys are letters, not an input method's words.
-                readOnly: numberHints.jumping
+                readOnly: numberHints.jumping || !page.fieldShown
+                opacity: page.fieldShown ? 1 : 0
                 // Typed into without the focus (keysRouted): the caret shows
                 // where, steady (it blinks only with the focus).
-                cursorVisible: activeFocus || page.clipboard.keysRouted
+                cursorVisible: page.fieldShown && (activeFocus || page.clipboard.keysRouted)
                 clip: true
                 color: fieldPart.out("textColor", Theme.text)
                 font.pixelSize: page.metrics.uiSearch
@@ -878,7 +886,7 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     enabled: page.clipboard.pinned && !page.clipboard.keysRouted && !page.Window.active
-                    cursorShape: Qt.IBeamCursor
+                    cursorShape: page.fieldShown ? Qt.IBeamCursor : Qt.ArrowCursor
                     onClicked: page.clipboard.wantKeys()
                 }
             }
@@ -956,6 +964,7 @@ Item {
 
         ClipTabs {
             id: tabs
+            objectName: "clipTabs"
             visible: !page.findingGroup
             metrics: page.metrics
             y: page.placed(page.tabsFrom, height)

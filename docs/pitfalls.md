@@ -1,5 +1,37 @@
 # 踩坑记录
 
+## 窗口记住大小：隐藏时设的最大化被 Qt 当成还原（2026-11-19，#401）
+
+- **现象**：设置窗口上次是最大化关的，重启后打开却是普通大小，state.ini 里的 `Maximized` 也被删掉了。
+- **原因**：窗口还隐藏时调用 `setWindowStates(Qt::WindowMaximized)`，Qt 只记下了状态，原生窗口仍是普通的。显示之前只要有一次 `SetWindowPos` 改到这个窗口（比如重设边框样式），就会收到 `WM_SIZE SIZE_RESTORED`，Qt 的 `handleResized` 据此把状态改回 `NoState`。随后 `show()` 用的是 `SW_SHOWNORMAL`，`windowStateChanged` 也把这次“还原”报了出来。
+- **做法**（`SavedWindowSize`）：放好位置时只记下“要最大化”，到窗口的 `QEvent::Show` 才设状态。Qt 发完这个事件就调用 `show_sys`，中间没有别的消息，于是以 `SW_SHOWMAXIMIZED` 显示。另外，窗口隐藏期间的状态变化一律不写进文件，那不是用户做的。
+- **验证**：`tst_displaygeometry` 的 `maximizedComesBackMaximized` 让窗口隐身后再真实显示，先给隐藏的窗口发一条 `SIZE_RESTORED`，再检查 `IsZoomed`。真实程序上用探针 `--live` 预置 `Maximized=true`，打开就是最大化。
+- **用真实鼠标测探针里的窗口，要带 `--renderer d3d11`**：探针默认用软件渲染，这时有 Mica 的活动窗口透明的像素会被点穿，`WindowFromPoint` 和鼠标都落到下面的窗口，拖边框没有反应。生产环境只在 d3d11 下才开背景材质，所以这只是探针的问题；测试脚本还要先 `SetThreadDpiAwarenessContext(-4)`，否则坐标差一个缩放倍数。
+
+## 软件内更新后没回到管理员身份，也没有任何提示（2026-11-19，#400）
+
+- **现象**：以管理员身份运行（管理员直读）的 0.37、0.38 两次软件内更新后都是普通权限，诊断日志里没有 `elevation-after-update`。日志里新版启动约 10 秒就有 `settings-open`（0.38 那次启动器还被弹了出来），之后用户自己点了“以管理员身份重新启动”。
+- **原因**：
+  - `App::elevateOnceUpdated` 先等升级助手结束（助手看着 Setup，Setup 退出后还要再等 8 秒），然后只要启动器、设置或剪贴板开着就一直等，等的时候不记日志、不提示。用户在助手结束前打开了设置，Win顺 就一直在等；用户看到插件是普通权限，自己重启了，等待随进程结束，那条记录始终没写出来。
+  - 覆盖安装时 `PrepareToInstall`（提权）删掉指向本安装目录的开机任务，[Run] 里普通权限的 `--take-autostart` 再写一个，管理员直读的 `HIGHEST` 任务就这样降成了 `LUA`；要等提权的那份下次启动才改回来，中间重启电脑，开机就是普通权限。
+- **做法**：
+  - 等待有上限（`update::ElevationWait`，纯逻辑、可测）：助手最多等 10 分钟；助手结束后没有窗口开着就直接重启；窗口刚关掉的话先等 2 秒，免得在用户手上关；窗口一直开着，1 分钟后改发通知“Win顺 已更新”，点一下就以管理员身份重启（设置开着就带 `--settings`，重启后接着打开）。开始等窗口时记 `elevation-after-update-waiting`（写明哪些窗口），结束时记 `elevation-after-update`（`restart`、`asked`、`waited_s`）。
+  - 安装程序覆盖安装时，开机任务如果是启动 Setup 的那个用户自己的（他用自己的权限 `schtasks /Query` 读得到），就原样留着；读不到的（别的管理员答 UAC 时注册的，#21）照旧删掉，卸载也照旧删。`--take-autostart` 遇到模式要求提权、任务也已经是提权的情况，就不再改写。
+- **测试**：`tst_updater::elevationAfterUpdateWaitsThenAsks` 覆盖每个分支。实机测试：从 Program Files 复制一份、换上新 exe，用 `--profile` 运行，测试进程拿着 `Local\WinShun.Updating`，并预先写好 `update.ini`。没开窗口时，助手结束 1.1 秒后以管理员身份重启（integrity high）；设置一直开着时，记下 waiting，60 秒后弹通知（`asked`），仍是普通权限；设置在 5 秒后关掉时，关掉后 1.3 秒重启。开机任务、右键菜单项前后一样。`verify-installer.ps1` 6 个情形全部通过；但测试版装在自己的目录里，“保留用户自己的任务”这个分支只编译过、没真正走到，装到 Program Files 上的完整升级要等发布时用 `verify-installed-upgrade.ps1 -Mode InApp` 实测。
+
+## Everything 的 SDK 程序按路径搜，结果跑到文件夹外面（2026-11-19，#399）
+
+- **现象**：用户关掉 Everything，让 Win顺 来回答 EverythingSearchClient（C# 库）发的 `file:"D:\images" ext:jpg;png`，结果里有一大堆不在 `D:\images` 里的 jpg、png。
+- **原因**：路径末尾不带 `\` 的词，Win顺 当作名字里的一个词：`"D:\images"` 只剩下名字要含 `images`，再加上 `ext:`，等于在全盘找 jpg、png。Everything 的规则是：词里有 `\`，就拿来和**完整路径**比。从盘符写起的词，比到的就是路径开头，所以 `D:\images2`、`D:\images.jpg` 也算（Everything 自己也这样）；末尾带 `\` 才是“这个文件夹里面”。
+- **做法**：`EverythingIpc::translate` 把从盘符或 `\\电脑\共享` 写起、不带通配符的词收进 `Search::pathStarts`。`find` 在索引里找它的上一级文件夹，取名字以末段开头的子项（不分大小写），作为 `NameSearchOptions::within` 交给 `NameSearch`（这些条目本身加上它们下面的全部）。几个开头只有互为前缀时才能同时满足，否则结果为空。只有最后一段带通配符的（`D:\images\*.jpg`），拆成“文件夹 + 名字通配”。排除（`!D:\x`）还是按原来的写法。
+- **测试**：`tst_everything` 新增 translate 的各种写法和 `findsByPathStart`（`images`、`images2`、`images.jpg`、别处的 `images` 文件夹）。实机测试：用自己写的 QUERY2W 客户端，发的请求和 EverythingSearchClient 0.9 的 `Search()` 完全一样（search_flags 0、全部结果、NAME|PATH|SIZE|日期|属性、sort 0）。`file:"<目录>\images" ext:jpg;png` 回 5 条（images 里的 3 条，加 `images2\e.jpg`、`images.jpg`），末尾带 `\` 的回 3 条，`<目录>\images\*.jpg` 回 2 条，`folder:<目录>\images` 回 3 个文件夹；别处的 `other\images` 一条都没有。不能直接加载下载来的库 DLL 来测（不运行下载的代码），所以按它的源码自己写了一个客户端。
+
+## 剪贴板备注颜色：两个容易漏的地方（2026-11-19，#398）
+
+- **显示进程**：剪贴板在开始菜单、搜索浮层上时由单独的显示进程画（`ClipboardDisplay` / `DisplayReplica`，JSON 消息）。给剪贴板加信号、加模型属性时，两边都要转：以前 `noteRequested` 就没转过去，在显示进程里点“加备注…”什么都不出来。这次连同颜色一起转了（`noteRequested` 带颜色、`highlight` 消息带 `notes` 调色板）。
+- **Theme.qml 里不放 `qsTr`**：截图录屏、开发者工具、图片文字搜索这些插件也编译了 Theme.qml，它里面的 `qsTr` 会出现在每个插件的翻译文件里。只有剪贴板用的颜色名放在 `ClipTabs.qml`，Theme 只放颜色值。
+- **颜色本身**：七种颜色分浅色、深色两套，都是对每种界面风格的列表底色（包括当前行的高亮）算过对比度，至少 4.5:1。备注是正文里的字，不能用风格自己的强调色。
+
 ## 卡片网格：卡片展开、收起时报绑定循环（2026-11-19，插件页改成网格）
 
 - **现象**：插件页的卡片改成网格（TileFlow）后，「内置功能」的卡片从小卡片展开成整行时，日志报 `Binding loop detected for property "width"`，预览因此退出码非 0。
@@ -554,6 +586,7 @@
 
 - **没有图**：`errorString()` 非空时 Qt 把 Image 置为 Error，并给每一行打一条 `QML Image: Failed to get image from provider` 警告（剪贴板预览里非图片的文件就会这样）。没有缩略图时 `textureFactory()` 返回 `nullptr`、`errorString()` 留空，Image 是 Ready、尺寸为 0，QML 里用 `status === Image.Ready && implicitWidth > 0` 判断有没有图。
 - **取消**：行滚走或复用时 Qt 调 `cancel()`，但不删响应对象；它只在收到 `finished` 后 `deleteLater`。所以取消了也要发一次 `finished`（不带图），否则每次取消漏一个对象。`finished` 可以在 `requestImageResponse` 返回之前就发（缓存命中时），Qt 返回后会查 `finished` 标志补上。
+- **引擎没了，响应先没了**（2026-11-19）：要图的引擎销毁时（窗口的、每个测试函数的、退出时），还没 `finished` 的响应被 Qt 直接删掉，不等线程池里的活干完。活里拿着裸指针就会往已释放的对象里写图，线程池线程上崩在 `QImage::operator=` / `~QImage`；`tst_clipimage` 因此时好时坏，崩在哪个测试函数也不固定。现在两个提供器都用 `PooledImageResponse`：活里只拿 `Handle`，经它在锁里够到响应，响应的析构也拿这把锁、把指针清掉。`tst_clipimage` 的 `clipThumbnailOutlivesItsResponse` 要了图马上删响应：旧代码 10 次崩 10 次。
 - **Qt 自己的图片缓存只留 2 MB 没人用的图**（`cache_limit`，写死，30 秒淘汰四分之一）：48 像素的缩略图约 220 张。滚回去、再打一遍同样的字要立即出来，提供器自己按字节留一份（`QCache`，48 MB），没有缩略图的也记下。
 - **sourceSize**：image:// 提供器按逻辑像素写，Qt 乘设备像素比再请求；返回的图带着这个比，`implicitWidth` 就是“像素数 / 设备像素比”，`width: implicitWidth` 正好一个像素对一个像素（150% 实测与系统给的位图逐像素相同）。
 
@@ -1188,6 +1221,13 @@
 - **原因**：这条是 Qt 自己打的。Qt 启动时就注册了剪贴板监听，剪贴板一变，每个可编辑的 QML 文本框（`TextInput`、`TextEdit`）都在主线程把剪贴板的整段文字读一遍，只为更新 `canPaste`（`qquicktextinput.cpp` 的 `q_canPasteChanged`）。剪贴板这时被别的程序占着，就睡 50 ms 重试，最多 3 次（Qt 6.12 `qwindowsclipboard.cpp`）。复制之后马上打开剪贴板的程序都会撞上：别的剪贴板工具、Windows 自己的剪贴板历史，还有 .NET 的 `Clipboard.SetDataObject(..., true)`（先 `OleSetClipboard` 再 `OleFlushClipboard`，中间一直占着）。和 Win顺 自己的监听无关，那是另一个线程直接用 Win32 读的。
 - **做法**：`main.cpp` 里 `QGuiApplication::clipboard()->blockSignals(true)`。我们没用 `canPaste`，也没有别的地方连 `QClipboard` 的信号；粘贴（`QQuickTextInputPrivate::paste`、`textfield::pasteOneLine`）都是按下时才读剪贴板，不受影响。以后要监听剪贴板变化，用 `ClipboardWatcher`，不要连 `QClipboard::dataChanged`，它收不到。
 - **实测**（2026-10-09）：测试脚本往剪贴板写一段文字，再占住剪贴板 80 ms，模拟别的剪贴板工具。旧版每复制一次重试 2 次（主线程卡约 100 ms），新版 0 次；Ctrl+V 往搜索框里粘贴照常。测试文字带 `ExcludeClipboardContentFromMonitorProcessing` 格式，Windows 和 Win顺 的剪贴板历史都不会记下它。
+
+### 划词翻译借剪贴板，排除了它也挡不住（有道词典）
+
+- **现象**：开着有道词典的划词，在 Directory Opus 里双击 pdf、png、md 文件（jpg 不会），或在微信里双击图片，剪贴板历史就多一条那个文件、那张图；排除了 `youdaodict.exe`、`youdaodicthelper.exe` 也一样。资源管理器、WPS、Notepad++ 里不出现。
+- **原因**（有道 11.3 实测，2026-11-19）：有道读得到文字的控件直接读，读不到就给前台窗口发一个模拟的右 Ctrl+C（钩子里带 `LLKHF_INJECTED`），等文字出现，读完再把原来的剪贴板整份放回（所有格式，包括“不记录”标记），放回时剪贴板的所有者是有道自己的窗口。Ctrl+C 是前台程序处理的，那次复制的所有者是 DOpus、微信，所以排除有道只拦得住放回那一下。复制的是文字时，有道马上读、马上放回（读的时候一直占着剪贴板），比 Win顺 的 40 ms 早，看不到；复制的是文件、图片（没有 CF_UNICODETEXT）时，有道要等约 1.1 秒才超时放回，Win顺 早就读到并记下了。jpg 是 DOpus 用自带看图器打开，焦点先走了，Ctrl+C 没进文件列表。Windows 自己的剪贴板历史（Win+V）没有特别的处理：有道借用后放回的图片它照样记（实测）；用户在 Win+V 里看不到，是因为它根本不记文件。
+- **做法**：`ClipboardWatcher` 照常在 40 ms 后读，但没有文字的复制先不交出去，最多压 1.5 s（`kHoldMs`）。这期间剪贴板被改，写的人（所有者进程）既不是做这次复制的程序、不是前台程序、也不是 Win顺 自己，就当是别人借完放回，压着的那条丢掉；否则（时间到、前台程序又复制、Win顺 自己写剪贴板）照常记下。打开剪贴板面板时立刻交出（`recordHeldNow`），最新一条不会晚到。只压“读完再记”，不压“读”：不然 1.5 s 内连续复制两张图，前一张还没读就被盖掉了。不靠键盘钩子认模拟按键：常驻钩子会拖慢全系统打字，Raw Input 的键盘登记一个进程只有一份，在 `KeyListener` 手里，而且只在开了双击按键时才有。
+- **测试**：`tst_clipimage` 的 `copyPutBackByAnotherProgramIsDropped`、`heldCopyIsKept`，在私有窗口站里用另一个进程模拟有道放回。非管理员跑时私有窗口站建不起来（错误 183），这两个会跳过，要用管理员身份跑。
 
 ### 剪贴板页里 Alt+1、Alt+2 没反应
 

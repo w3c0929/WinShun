@@ -1024,6 +1024,7 @@ void Settings::load()
     panelListsAll = readOrDefault(s, u"Panel/ListAll"_s, d.panelListsAll);
     scopeButton = readOrDefault(s, u"Appearance/ScopeButton"_s, d.scopeButton);
     openAnimation = readOrDefault(s, u"Appearance/OpenAnimation"_s, d.openAnimation);
+    rememberWindowSize = readOrDefault(s, u"Appearance/RememberWindowSize"_s, d.rememberWindowSize);
     hoverTips = readOrDefault(s, u"Appearance/HoverTips"_s, d.hoverTips);
     previewWith = readOrDefault(s, u"Results/PreviewWith"_s, d.previewWith).trimmed().toLower();
     if (previewWith != u"builtin")
@@ -1205,6 +1206,7 @@ void Settings::load()
     clipboardSearchBoxSide = readOrDefault(s, u"Clipboard/SearchBoxSide"_s, d.clipboardSearchBoxSide).trimmed().toLower();
     if (clipboardSearchBoxSide != u"far")
         clipboardSearchBoxSide = d.clipboardSearchBoxSide;
+    clipboardSearchBox = readOrDefault(s, u"Clipboard/SearchBox"_s, d.clipboardSearchBox);
     clipboardExcludedApps = readOrDefault(s, u"Clipboard/ExcludedApps"_s, d.clipboardExcludedApps);
     clipboardNumberKeys = readOrDefault(s, u"Clipboard/NumberKeys"_s, d.clipboardNumberKeys).trimmed().toLower();
     if (clipboardNumberKeys != u"ctrl" && clipboardNumberKeys != u"off")
@@ -1441,6 +1443,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Panel/ListAll"_s, panelListsAll);
     s.setValue(u"Appearance/ScopeButton"_s, scopeButton);
     s.setValue(u"Appearance/OpenAnimation"_s, openAnimation);
+    s.setValue(u"Appearance/RememberWindowSize"_s, rememberWindowSize);
     s.setValue(u"Appearance/HoverTips"_s, hoverTips);
     s.setValue(u"Results/PreviewWith"_s, previewWith);
     s.setValue(u"Results/PreviewHotkey"_s, previewHotkey);
@@ -1511,6 +1514,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Clipboard/HoldToStep"_s, clipboardHoldToStep);
     s.setValue(u"Clipboard/PasteElevated"_s, clipboardPasteElevated);
     s.setValue(u"Clipboard/SearchBoxSide"_s, clipboardSearchBoxSide);
+    s.setValue(u"Clipboard/SearchBox"_s, clipboardSearchBox);
     s.setValue(u"Clipboard/ExcludedApps"_s, clipboardExcludedApps);
     s.setValue(u"Clipboard/NumberKeys"_s, clipboardNumberKeys);
     s.setValue(u"Clipboard/QuickPaste"_s, clipboardQuickPaste);

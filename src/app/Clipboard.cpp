@@ -273,6 +273,8 @@ void Clipboard::setActive(bool active)
     if (m_active == active)
         return;
     m_active = active;
+    if (active && m_watcher)
+        m_watcher->recordHeldNow(); // a picture or files just copied: listed at the top, not a moment late
     emit activeChanged();
 }
 
@@ -391,12 +393,15 @@ void Clipboard::setRowOptions(bool clickToPaste, const QString& pictureSize, con
     refreshStatus(); // pinned, it says how to paste
 }
 
-void Clipboard::setLayoutOptions(bool flipAbove, bool searchFar)
+void Clipboard::setLayoutOptions(bool flipAbove, bool searchFar, bool searchBox)
 {
-    if (flipAbove == m_flipAbove && searchFar == m_searchFar)
+    if (flipAbove == m_flipAbove && searchFar == m_searchFar && searchBox == m_searchBox)
         return;
     m_flipAbove = flipAbove;
     m_searchFar = searchFar;
+    m_searchBox = searchBox;
+    if (!searchBox)
+        setQuery({}); // nothing left searched for with no box to see it in
     emit layoutOptionsChanged();
 }
 
@@ -1620,9 +1625,9 @@ void Clipboard::renameGroup(qint64 group, const QString& name)
     m_model.refreshTimes(); // the rows show the name
 }
 
-void Clipboard::setNote(qint64 id, const QString& note)
+void Clipboard::setNote(qint64 id, const QString& note, int color)
 {
-    m_store->setNote(id, note);
+    m_store->setNote(id, note, color);
     m_model.refreshTimes(); // the row shows it
 }
 
@@ -2042,7 +2047,7 @@ void Clipboard::trigger(int row, int action)
     }
     case EditNote:
         if (const std::vector<const Clip*> clips = targets(row); clips.size() == 1)
-            emit noteRequested(clips.front()->id, clips.front()->note);
+            emit noteRequested(clips.front()->id, clips.front()->note, clips.front()->noteColor);
         break;
     case EditText:
         if (const std::vector<const Clip*> clips = targets(row); clips.size() == 1)

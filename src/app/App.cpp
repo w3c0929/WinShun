@@ -49,6 +49,7 @@
 #include "PluginUpdates.h"
 #include "ProxyAddress.h"
 #include "SavedFile.h"
+#include "SavedWindowSize.h"
 #include "SearchEngine.h"
 #include "Secrets.h"
 #include "ServiceVolumeAccess.h"
@@ -1729,6 +1730,7 @@ void App::applyAppearance()
     SystemTheme::setUiStyle(m_settings.uiStyle);
     SystemTheme::setGlassAppearance(m_settings.glassTransparency, m_settings.glassClarity);
     SystemTheme::setHoverTips(m_settings.hoverTips); // 悬停提示 (GitHub #368)
+    SavedWindowSize::setRemembering(m_settings.rememberWindowSize); // 记住窗口大小 (GitHub #401)
     updateSearchBoxLook(); // the native child redraws on its own thread
     // 界面大小: QML follows SystemTheme; the bar by file dialogs is placed by its heights.
     if (SystemTheme::uiSize() != m_settings.uiSize) {
@@ -2034,7 +2036,7 @@ void App::applySettings(bool initial)
     m_clipboard->setRowOptions(m_settings.clipboardClickToPaste, m_settings.clipboardPictureSize, clipboardSize);
     if (clipboardResized && m_clipPlacement)
         m_clipPlacement->resized(); // the rows have another height
-    m_clipboard->setLayoutOptions(m_settings.clipboardFlipAbove, m_settings.clipboardSearchBoxSide == u"far");
+    m_clipboard->setLayoutOptions(m_settings.clipboardFlipAbove, m_settings.clipboardSearchBoxSide == u"far", m_settings.clipboardSearchBox);
     m_clipboard->setHoldToStep(m_settings.clipboardHoldToStep);
     m_clipboard->setPasteElevated(m_settings.clipboardPasteElevated);
     m_clipboard->setPreviewRestore(m_settings.clipboardPreviewRestore);
@@ -2432,7 +2434,7 @@ QJsonObject App::pluginLook() const
         {u"uiFont"_s, m_settings.uiFont}, {u"resolvedUiFont"_s, QGuiApplication::font().family()},
         {u"transparency"_s, m_settings.transparency}, {u"renderer"_s, m_settings.renderer},
         {u"glassTransparency"_s, m_settings.glassTransparency}, {u"glassClarity"_s, m_settings.glassClarity},
-        {u"hoverTips"_s, m_settings.hoverTips}};
+        {u"hoverTips"_s, m_settings.hoverTips}, {u"rememberWindowSize"_s, m_settings.rememberWindowSize}};
     // The style's colours and radii, for plugins that draw without QML (see
     // docs/plugins.md, "外观"); none until the launcher's Theme is made.
     if (const QJsonObject native = SystemTheme::nativeLookJson(); !native.isEmpty())
@@ -3797,22 +3799,6 @@ void App::showSettings(const std::function<void(QQuickWindow*)>& at)
         m_settingsOpening.reused = !created;
         m_settingsOpening.firstFrameMs = -1;
     }
-    // Centred on the screen under the mouse, as tall as it fits.
-    const auto place = [](QQuickWindow* window) {
-        QScreen* screen = QGuiApplication::screenAt(QCursor::pos());
-        if (!screen)
-            screen = QGuiApplication::primaryScreen();
-        const QRect area = screen->availableGeometry();
-        // Onto that screen first, as a window dragged there arrives: Windows
-        // tells Qt of the other scale and Qt sizes the window for it. Sent
-        // there by setPosition alone, Qt takes the size for one it scaled
-        // itself: made at 200% and opened next at 150%, the window came out
-        // too wide for good, its contents laid out for another width
-        // (docs/pitfalls.md).
-        win::moveToMonitorOf(window, screen->geometry().center());
-        window->resize(window->width(), std::min(window->height(), area.height() - 40));
-        window->setPosition(area.center() - QPoint(window->width() / 2, window->height() / 2));
-    };
     if (!m_settingsWindow) {
         auto* editor = new SettingsEditor(m_settings, m_renderer);
         editor->useOcrPackage(m_ocrPackage.get());
@@ -4067,7 +4053,11 @@ void App::showSettings(const std::function<void(QQuickWindow*)>& at)
         frame->setWindow(window);
         styleWindow(window, SystemTheme::backdropAvailable()); // applyTheme styles it again, hidden or not
         win::setDarkFrame(window, isDarkMode()); // likewise guardDarkFrames, every window of ours
-        place(window);
+        // Centred on the screen under the mouse, at the size its user left it,
+        // the last run too (GitHub #401); a double click on an edge: 920 × 720 again.
+        m_settingsSize = new SavedWindowSize(statePath(), u"Settings"_s, window);
+        m_settingsSize->setWindow(window);
+        m_settingsSize->placeOn();
         connect(window, &QWindow::visibleChanged, this, [this, window](bool visible) {
             if (!visible) {
                 win::setCloaked(window, true); // before the native window goes: no fade out either
@@ -4087,14 +4077,10 @@ void App::showSettings(const std::function<void(QQuickWindow*)>& at)
             applyFolderMenuHotkey();
         if (!m_settingsEditor->clipboardHotkeyError().isEmpty())
             applyClipboardHotkeys();
-        // The size the user gave it this session stays, within the screen it
-        // opens on; maximized it stays maximized, where it was (as Windows'
-        // own windows reopen), never minimized.
-        QQuickWindow* window = m_settingsWindow;
-        if (window->windowStates() & Qt::WindowMinimized)
-            window->setWindowStates(window->windowStates() & ~Qt::WindowMinimized);
-        if (!(window->windowStates() & (Qt::WindowMaximized | Qt::WindowFullScreen)))
-            place(window);
+        // On the screen under the mouse again, at its user's size within it;
+        // maximized it stays maximized, where it was (as Windows' own windows
+        // reopen), never minimized.
+        m_settingsSize->placeOn();
     }
     // Cheap, and on the first page or the next: before the first frame.
     m_settingsEditor->setHistoryCount(static_cast<int>(m_history->items().size()) + m_launcher->queryHistoryCount());
@@ -7477,35 +7463,68 @@ void App::restart(const QStringList& arguments, Elevation elevation)
 // (#363: raised by hand for plugins that need it): restarted as
 // administrator, as a manual start would have been, once the helper is done
 // (it has seen this copy come up and cleared the old files away) and nothing
-// of ours is open under the user's hands. UAC asks; declined, Win顺 comes
-// back with normal rights (startAgain). Once: the mark is cleared.
+// of ours is open under the user's hands; someone still at work in Win顺 a
+// minute later is asked instead (#400: they had waited unaware, and raised
+// it by hand). UAC asks; declined, Win顺 comes back with normal rights
+// (startAgain). Once: the mark is cleared.
 void App::elevateOnceUpdated()
 {
     auto* timer = new QTimer(this);
     timer->setInterval(1s);
-    const auto given = std::chrono::steady_clock::now() + 10min;
-    connect(timer, &QTimer::timeout, this, [this, timer, given] {
+    auto wait = std::make_shared<update::ElevationWait>();
+    wait->started = update::ElevationWait::Clock::now();
+    connect(timer, &QTimer::timeout, this, [this, timer, wait] {
         const bool helper = update::helperRunning();
-        if (helper && std::chrono::steady_clock::now() < given)
-            return;
         // Still wanted: the mode may have been changed meanwhile.
         const bool direct = m_settings.indexAccess == u"direct";
         const bool raised = update::elevatedBeforeUpdate(Settings::dataDir());
-        const bool wanted = !helper && (direct || raised) && userIsAdministrator() && !integrity::processElevated();
-        if (wanted
-            && (launcherShown() || (m_settingsWindow && m_settingsWindow->isVisible())
-                || (m_clipWindow && m_clipWindow->isVisible())))
-            return; // once they are put away
+        const bool wanted = (direct || raised) && userIsAdministrator() && !integrity::processElevated();
+        QStringList open;
+        if (launcherShown())
+            open << u"launcher"_s;
+        if (m_settingsWindow && m_settingsWindow->isVisible())
+            open << u"settings"_s;
+        if (m_clipWindow && m_clipWindow->isVisible())
+            open << u"clipboard"_s;
+        const bool waitedBefore = wait->windowSeen.has_value();
+        const auto now = update::ElevationWait::Clock::now();
+        const update::ElevationStep step = wait->next(now, helper, wanted, !open.isEmpty());
+        if (!waitedBefore && wait->windowSeen) {
+            diagnostics::record(u"elevation-after-update-waiting"_s, {{u"windows"_s, open.join(u',')}});
+            qWarning().noquote() << "Update: back as administrator once these are put away:" << open.join(u", ");
+        }
+        if (step == update::ElevationStep::Wait)
+            return;
         timer->deleteLater();
         update::rememberElevation(Settings::dataDir(), false);
-        diagnostics::record(u"elevation-after-update"_s, {{u"restart"_s, wanted}, {u"helper_still_running"_s, helper},
-            {u"direct_read"_s, direct}, {u"elevated_before_update"_s, raised}});
-        qWarning() << "Update: back as administrator after the update:" << wanted << "(direct read" << direct
-                   << ", elevated before" << raised << ")";
-        if (wanted)
+        const auto waited = wait->helperEnded ? std::chrono::duration_cast<std::chrono::seconds>(now - *wait->helperEnded)
+                                              : std::chrono::seconds(0);
+        diagnostics::record(u"elevation-after-update"_s,
+            {{u"restart"_s, step == update::ElevationStep::Restart}, {u"asked"_s, step == update::ElevationStep::Ask},
+                {u"waited_s"_s, static_cast<qint64>(waited.count())}, {u"helper_still_running"_s, helper},
+                {u"direct_read"_s, direct}, {u"elevated_before_update"_s, raised}});
+        qWarning() << "Update: back as administrator after the update:" << static_cast<int>(step) << "(direct read"
+                   << direct << ", elevated before" << raised << ", waited" << waited.count() << "s )";
+        if (step == update::ElevationStep::Restart)
             restart({u"--background"_s}, Elevation::Elevated);
+        else if (step == update::ElevationStep::Ask)
+            askToElevateAfterUpdate();
     });
     timer->start();
+}
+
+// The windows were still in use a minute after the update: one click from
+// the notification, which also says why the plugins' cards show normal rights.
+void App::askToElevateAfterUpdate()
+{
+    if (!m_messages)
+        return;
+    m_messages->showNotification(tr("Win顺 已更新"),
+        tr("更新前它以管理员身份运行，现在是普通权限。点这里以管理员身份重新启动，Windows 会请你确认一次。"), [this] {
+            const bool settingsOpen = m_settingsWindow && m_settingsWindow->isVisible();
+            // The settings open again where they were (restart).
+            restart({settingsOpen ? u"--settings"_s : u"--background"_s}, Elevation::Elevated);
+        });
 }
 
 // ---- 索引方式: how the volumes are read (GitHub #21) --------------------------

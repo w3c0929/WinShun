@@ -566,6 +566,14 @@ void SettingsEditor::setOpenAnimation(bool on)
     commit();
 }
 
+void SettingsEditor::setRememberWindowSize(bool on)
+{
+    if (m_settings.rememberWindowSize == on)
+        return;
+    m_settings.rememberWindowSize = on;
+    commit();
+}
+
 void SettingsEditor::setHoverTips(bool on)
 {
     if (m_settings.hoverTips == on)
@@ -2143,6 +2151,14 @@ void SettingsEditor::setClipboardSearchBoxSide(const QString& side)
     if (m_settings.clipboardSearchBoxSide == side || (side != u"near" && side != u"far"))
         return;
     m_settings.clipboardSearchBoxSide = side;
+    commit();
+}
+
+void SettingsEditor::setClipboardSearchBox(bool on)
+{
+    if (m_settings.clipboardSearchBox == on)
+        return;
+    m_settings.clipboardSearchBox = on;
     commit();
 }
 

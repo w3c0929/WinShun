@@ -5209,17 +5209,22 @@ void checkFileGallery(Launcher& launcher, IndexService& index, SystemCatalog& pl
                 check(drawings.isValid(), "could not create a folder for the drawings");
                 const auto showDrawn = [&](const QString& path, const char* grab) -> QSize {
                     // The launcher's selected row may take the preview back
-                    // once (the preview follows it): shown again then.
+                    // once (the preview follows it, and a row under the
+                    // pointer after 100 ms): shown again then, until it stays.
                     const QString native = QDir::toNativeSeparators(path);
                     timeout.restart();
                     for (;;) {
                         if (!filePreview.isShowing(native))
                             filePreview.show({.path = native, .name = QFileInfo(path).fileName()});
                         pump(10);
-                        if ((filePreview.isShowing(native) && filePreview.kind() != FilePreview::Loading) || timeout.elapsed() >= 15000)
+                        if (timeout.elapsed() >= 15000)
                             break;
+                        if (filePreview.isShowing(native) && filePreview.kind() != FilePreview::Loading) {
+                            pump(300);
+                            if (filePreview.isShowing(native))
+                                break;
+                        }
                     }
-                    pump(300);
                     if (filePreview.window())
                         check(saveGrab(filePreview.window(), output.filePath(QString::fromLatin1(grab))), "could not render a drawn preview");
                     return filePreview.kind() == FilePreview::Picture ? filePreview.imageSize() : QSize();
@@ -7327,12 +7332,45 @@ bool checkClipboardInteractions(QQmlEngine* engine, const QDir& output, const QS
             QObject::disconnect(heard);
             check(asked == id, "备注 did not ask for the entry's note");
             check(saveGrab(window, output.filePath(u"clipboard-note-box.png"_s)), "the note's box did not render");
-            clipboard.setNote(id, u"学校 收件地址"_s);
+            // The box offers the colours (GitHub #398): Tab picks the next one.
+            QQuickItem* tabs = page->findChild<QQuickItem*>(u"clipTabs"_s);
+            check(tabs && tabs->property("colored").toBool(), "the note's box offers no colours");
+            if (tabs) {
+                const auto press = [&](int code, Qt::KeyboardModifiers modifiers = {}) {
+                    QKeyEvent down(QEvent::KeyPress, code, modifiers), up(QEvent::KeyRelease, code, modifiers);
+                    QCoreApplication::sendEvent(window, &down);
+                    QCoreApplication::sendEvent(window, &up);
+                };
+                press(Qt::Key_Tab);
+                press(Qt::Key_Tab);
+                check(tabs->property("noteColor").toInt() == 2, "Tab does not pick the next colour");
+                for (int i = 0; i < 3; ++i)
+                    press(Qt::Key_Backtab, Qt::ShiftModifier);
+                check(tabs->property("noteColor").toInt() == ClipStore::kNoteColors, "Shift+Tab does not go round to the last colour");
+                check(tabs->property("naming").toBool(), "Tab left the note's box");
+                tabs->setProperty("noteColor", 5);
+                settle(window);
+            }
+            check(saveGrab(window, output.filePath(u"clipboard-note-colors.png"_s)), "the note's colours did not render");
+            clipboard.setNote(id, u"学校 收件地址"_s, 0);
             QMetaObject::invokeMethod(page, "focusSearch");
             settle(window);
             const QString title = clipboard.items()->data(clipboard.items()->index(0), ClipModel::TitleRole).toString();
             check(title.startsWith(u"<b>学校 收件地址</b>"), "the note does not lead the entry's line");
             check(saveGrab(window, output.filePath(u"clipboard-note.png"_s)), "the noted entry did not render");
+            // In a colour of the theme's own (Theme.noteColors), the rest of the line as it was.
+            const QStringList palette = clipboard.items()->notePalette();
+            check(palette.size() == ClipStore::kNoteColors, "the clipboard has no note colours");
+            clipboard.setNote(id, u"学校 收件地址"_s, 5);
+            settle(window);
+            const QString blue = clipboard.items()->data(clipboard.items()->index(0), ClipModel::TitleRole).toString();
+            check(palette.size() == ClipStore::kNoteColors
+                    && blue.startsWith(u"<font color=\"%1\"><b>学校 收件地址</b></font>"_s.arg(QColor::fromString(palette.at(4)).name())),
+                "the note is not in its colour");
+            check(saveGrab(window, output.filePath(u"clipboard-note-blue.png"_s)), "the coloured note did not render");
+            clipboard.setNote(id, QString(), 5); // no note, no colour
+            check(store.clip(id) && store.clip(id)->noteColor == 0, "a colour stayed without its note");
+            clipboard.setNote(id, u"学校 收件地址"_s, 0);
         }
         // An entry's own words changed (GitHub #267): 修改文字 in its menu puts
         // an editor where the preview is; Ctrl+Enter saves, Esc does not, and
@@ -7409,6 +7447,57 @@ bool checkClipboardInteractions(QQmlEngine* engine, const QDir& output, const QS
             key(Qt::Key_Escape, {});
             settle(window);
             std::vector<qint64> gone {id, other};
+            store.remove(gone);
+            clipboard.historyChanged();
+            QMetaObject::invokeMethod(page, "focusSearch");
+            settle(window);
+        }
+        // 显示搜索框 off (feedback 2026-11-08): the row keeps its buttons, the
+        // field is hidden yet still takes the keys; letters search nothing,
+        // arrows move through the list, and naming a group shows it again.
+        {
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
+            const std::vector<qint64> added {store.add(ClipCapture {.kind = ClipKind::Text, .text = u"第一条"_s}, now + 10),
+                store.add(ClipCapture {.kind = ClipKind::Text, .text = u"第二条"_s}, now + 11)};
+            clipboard.historyChanged();
+            clipboard.setLayoutOptions(true, false, false);
+            QMetaObject::invokeMethod(page, "focusSearch");
+            settle(window);
+            auto* list = visualNamed(window->contentItem(), u"clipboardEntries"_s);
+            const auto press = [&](int code, const QString& text = {}) {
+                QKeyEvent down(QEvent::KeyPress, code, {}, text);
+                QCoreApplication::sendEvent(window, &down);
+                QKeyEvent up(QEvent::KeyRelease, code, {}, text);
+                QCoreApplication::sendEvent(window, &up);
+            };
+            check(!page->property("fieldShown").toBool() && searchField->opacity() == 0
+                    && searchField->property("readOnly").toBool() && searchField->hasFocus(),
+                "with the search box off the field must be hidden, read-only and still take the keys");
+            for (const QChar c : u"abc"_s)
+                press(0, QString(c));
+            settle(window);
+            check(clipboard.query().isEmpty() && searchField->property("text").toString().isEmpty(),
+                "with the search box off typed letters must search nothing");
+            // From the middle row ↑ moves one way or the other (flipped or not).
+            if (list) list->setProperty("currentIndex", 1);
+            press(Qt::Key_Up);
+            settle(window);
+            check(list && qAbs(list->property("currentIndex").toInt() - 1) == 1,
+                "with the search box off the arrows must still move through the list");
+            check(saveGrab(window, output.filePath(u"clipboard-no-search.png"_s)), "the window without a search box did not render");
+            QMetaObject::invokeMethod(page, "beginGroupSearch");
+            settle(window);
+            check(page->property("fieldShown").toBool() && searchField->opacity() == 1 && !searchField->property("readOnly").toBool(),
+                "naming a group to find must show the field even with the search box off");
+            check(saveGrab(window, output.filePath(u"clipboard-no-search-group.png"_s)), "naming a group without a search box did not render");
+            QMetaObject::invokeMethod(page, "cancelGroupSearch");
+            settle(window);
+            check(!page->property("fieldShown").toBool(), "the field must hide again once the group is named");
+            clipboard.setLayoutOptions(true, false, true);
+            settle(window);
+            check(page->property("fieldShown").toBool() && searchField->opacity() == 1 && !searchField->property("readOnly").toBool(),
+                "the search box must come back when switched on");
+            std::vector<qint64> gone = added;
             store.remove(gone);
             clipboard.historyChanged();
             QMetaObject::invokeMethod(page, "focusSearch");
@@ -7507,6 +7596,33 @@ bool checkClipboardInteractions(QQmlEngine* engine, const QDir& output, const QS
         clipboard.handleShown();
         settle(window);
         check(saveGrab(window, output.filePath(u"clipboard-gallery.png"_s)), "could not render the clipboard gallery");
+        // Notes in colour (GitHub #398) for the poster: entries noted as the
+        // release notes tell, the newest one's box open on its colours.
+        std::vector<qint64> shown;
+        for (const auto& clip : store.clips()) shown.push_back(clip.id);
+        store.remove(shown);
+        struct Noted { ClipKind kind; QString text, source, note; int color; };
+        const Noted rows[] { // oldest first, as copied; colours 1 red … 7 grey
+            {ClipKind::Text, u"SELECT region, SUM(amount) FROM sales GROUP BY region;"_s, u"记事本"_s, u"常用查询"_s, 6},
+            {ClipKind::Link, u"https://github.com/LingCore/WinShun"_s, u"浏览器"_s, {}, 0},
+            {ClipKind::Text, u"下周一 10:00 前提交董事会汇报讲稿"_s, u"记事本"_s, u"待办"_s, 1},
+            {ClipKind::Files, QDir::toNativeSeparators(imageFile), u"资源管理器"_s, u"汇报用图"_s, 2},
+            {ClipKind::Text, u"demo@example.com"_s, u"浏览器"_s, u"测试账号"_s, 5},
+            {ClipKind::Text, u"上海市浦东新区张江路 88 号 3 号楼 502 室"_s, u"微信"_s, u"收件地址"_s, 4},
+        };
+        std::vector<std::pair<qint64, const Noted*>> added;
+        qint64 at = now - 600000;
+        for (const Noted& row : rows)
+            added.emplace_back(store.add(ClipCapture {.kind = row.kind, .text = row.text, .source = row.source}, at += 60000), &row);
+        clipboard.handleShown();
+        for (const auto& [id, row] : added)
+            if (!row->note.isEmpty()) clipboard.setNote(id, row->note, row->color);
+        settle(window);
+        clipboard.trigger(0, Clipboard::EditNote);
+        settle(window);
+        check(saveGrab(window, output.filePath(u"clipboard-notes.png"_s)), "could not render the notes in colour");
+        QMetaObject::invokeMethod(page, "focusSearch"); // the box done with, as a user leaves it
+        settle(window);
     }
     check(!watcher.running(), "fixture must never start the native clipboard writer");
     window->hide();
@@ -11826,6 +11942,7 @@ bool probeSettingsReopen(App& app, const QStringList& args, const QDir& out, QJs
 //   show [text] | hide | clip | settings [place] | style <fluent|brand|tactile>
 //   | theme <light|dark|system> | set <SettingsEditor property> <value>
 //   | windows (their places into windows.json) | press <objectName> (its clicked())
+//   | profile (the profile folder into profile.txt)
 // Each batch done is counted in <folder>\ack.txt.
 int runLive(App& app, const QDir& out)
 {
@@ -11943,6 +12060,10 @@ int runLive(App& app, const QDir& out)
                 QFile json(out.filePath(u"windows.json"_s));
                 if (json.open(QIODevice::WriteOnly))
                     json.write(QJsonDocument(list).toJson());
+            } else if (verb == u"profile") { // profile.txt: this run's profile folder (its state.ini, between two runs)
+                QFile text(out.filePath(u"profile.txt"_s));
+                if (text.open(QIODevice::WriteOnly))
+                    text.write(QDir::toNativeSeparators(Settings::profile()).toUtf8());
             } else if (verb == u"press") { // press <objectName>: its clicked(), as a click would, to look at what it opens
                 // By the items on show (a list's rows are not QObject children of the list).
                 const std::function<QQuickItem*(QQuickItem*)> find = [&](QQuickItem* item) -> QQuickItem* {
@@ -12279,12 +12400,12 @@ int runRuntime(const QStringList& args)
         return passed && saved ? std::min(warnings, 100) : 4;
     }
     {
-        // --idle-open-check: its profile goes once the App is gone. Removed
-        // while the App lived, the folder came back as it saved its index on
-        // the way out (15 MB a run, left in %TEMP%).
-        const auto idleOpenProfile = qScopeGuard([&args] {
+        // --idle-open-check, --live …: its profile goes once the App is gone.
+        // Removed while the App lived, the folder came back as it saved its
+        // index or its clipboard on the way out (left in %TEMP%, a run each).
+        const auto probeProfile = qScopeGuard([&args] {
             const QFileInfo profile(Settings::profile());
-            if ((args.contains(u"--idle-open-check"_s) || args.contains(u"--foreground-use-check"_s)
+            if ((args.contains(u"--idle-open-check"_s) || args.contains(u"--foreground-use-check"_s) || args.contains(u"--live"_s)
                     || args.contains(u"--clipboard-animation-check"_s) || args.contains(u"--settings-motion-check"_s))
                 && profile.fileName().startsWith(u"WinShun-preview-")
                 && QDir::cleanPath(profile.absolutePath()).compare(QDir::cleanPath(QDir::tempPath()), Qt::CaseInsensitive) == 0)
@@ -12301,11 +12422,8 @@ int runRuntime(const QStringList& args)
         if (!app.start({.background = true, .clipboardDisplayProbe = args.contains(u"--clipboard-display-probe"_s),
                 .settingsProbe = args.contains(u"--settings-reopen-check"_s) || args.contains(u"--settings-motion-check"_s)}))
             return 4;
-        if (args.contains(u"--live"_s)) {
-            const int code = runLive(app, out);
-            QDir(Settings::profile()).removeRecursively();
-            return code;
-        }
+        if (args.contains(u"--live"_s))
+            return runLive(app, out); // its profile: probeProfile
         if (args.contains(u"--capture-hotkey-probe"_s) && !probeCaptureHotkeys(app, args, out, report)) {
             QFile failed(out.filePath(u"capture-hotkey-failed.json"_s));
             if (failed.open(QIODevice::WriteOnly)) failed.write(QJsonDocument(report).toJson());
@@ -12345,7 +12463,7 @@ int runRuntime(const QStringList& args)
         if (args.contains(u"--double-tap-plugin"_s) && !checkDoubleTapPlugin(app, out))
             return 4;
         if (args.contains(u"--idle-open-check"_s))
-            return checkIdleOpen(app, args, out) ? 0 : 4; // its profile goes after the App (idleOpenProfile)
+            return checkIdleOpen(app, args, out) ? 0 : 4; // its profile goes after the App (probeProfile)
         if (args.contains(u"--foreground-use-check"_s))
             return checkForegroundUse(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--clipboard-animation-check"_s))

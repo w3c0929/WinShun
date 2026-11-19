@@ -83,7 +83,7 @@ qt_add_executable(WinShun WIN32
     SwitchPlugin.cpp SwitchPlugin.h
     TextField.cpp TextField.h
     ThumbnailProvider.cpp ThumbnailProvider.h
-    ClipThumbnailProvider.cpp ClipThumbnailProvider.h
+    ClipThumbnailProvider.cpp ClipThumbnailProvider.h PooledImageResponse.h
     TriggerJournal.cpp TriggerJournal.h
     TrayMenu.cpp TrayMenu.h
     WebSuggester.cpp WebSuggester.h
@@ -376,6 +376,7 @@ qt_add_qml_module(WinShun
         IconBadge.cpp IconBadge.h
         Launcher.cpp Launcher.h LauncherNavigation.h
         Placement.cpp Placement.h
+        SavedWindowSize.cpp SavedWindowSize.h # the settings window's size, between runs (GitHub #401)
         PluginCommands.cpp PluginCommands.h
         PluginGallery.cpp PluginGallery.h
         PluginInstalled.h

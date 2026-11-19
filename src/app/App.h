@@ -94,6 +94,7 @@ class MissingFiles;
 class NetworkNotifier;
 class Onboarding;
 class Placement;
+class SavedWindowSize;
 class SearchEngine;
 class SettingsEditor;
 class Switches;
@@ -495,6 +496,7 @@ private:
     void showTrayMenu();
     void restart(const QStringList& arguments, Elevation elevation = Elevation::Same);
     void elevateOnceUpdated(); // StartOptions::elevateAfterUpdate
+    void askToElevateAfterUpdate(); // ... when Win顺 was still in use a minute after it (GitHub #400)
     // 索引方式 (Settings::indexAccess, GitHub #21): where the volumes are
     // read from, the index service looked for again while it is wanted and
     // not there, the autostart task's run level kept with the mode.
@@ -1001,6 +1003,7 @@ private:
     QPointer<QQuickWindow> m_settingsWindow;
     QPointer<QQuickWindow> m_barWindow; // the dialog bar's; created with the first file dialog
     QPointer<SettingsEditor> m_settingsEditor; // owned by m_settingsWindow; there while it is hidden too
+    QPointer<SavedWindowSize> m_settingsSize; // likewise: where it opens, and how large (state.ini [Settings])
     SettingsOpening m_settingsOpening;
     QElapsedTimer m_settingsOpenClock; // since the latest showSettings() that showed it
     bool m_settingsProbe = false; // StartOptions::settingsProbe

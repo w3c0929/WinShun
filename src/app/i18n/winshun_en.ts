@@ -767,6 +767,10 @@
         <translation>Hover tips</translation>
     </message>
     <message>
+        <source>记住窗口大小</source>
+        <translation>Remember window sizes</translation>
+    </message>
+    <message>
         <source>直角</source>
         <translation>Square</translation>
     </message>
@@ -1169,6 +1173,10 @@
     <message>
         <source>远离光标</source>
         <translation>Away from the cursor</translation>
+    </message>
+    <message>
+        <source>显示搜索框</source>
+        <translation>Show the search box</translation>
     </message>
     <message>
         <source>不记录这些程序复制的内容</source>
@@ -1643,6 +1651,38 @@
         <translation>Group name</translation>
     </message>
     <message>
+        <source>红</source>
+        <translation>red</translation>
+    </message>
+    <message>
+        <source>橙</source>
+        <translation>orange</translation>
+    </message>
+    <message>
+        <source>黄</source>
+        <translation>yellow</translation>
+    </message>
+    <message>
+        <source>绿</source>
+        <translation>green</translation>
+    </message>
+    <message>
+        <source>蓝</source>
+        <translation>blue</translation>
+    </message>
+    <message>
+        <source>紫</source>
+        <translation>purple</translation>
+    </message>
+    <message>
+        <source>灰</source>
+        <translation>grey</translation>
+    </message>
+    <message>
+        <source>无颜色</source>
+        <translation>No colour</translation>
+    </message>
+    <message>
         <source>固定的排在最前（可拖动调整顺序）。点一下改为全部按时间</source>
         <translation>Pinned items first (drag to reorder). Click to list everything by time</translation>
     </message>
@@ -1653,6 +1693,18 @@
     <message>
         <source>新建分组：放进分组的内容不会过期</source>
         <translation>New group: what goes in a group is kept for good</translation>
+    </message>
+    <message>
+        <source>不用颜色</source>
+        <translation>No colour</translation>
+    </message>
+    <message>
+        <source>备注用%1色</source>
+        <translation>Note in %1</translation>
+    </message>
+    <message>
+        <source>（Tab 键也能切换）</source>
+        <translation> (Tab switches too)</translation>
     </message>
 </context>
 <context>
@@ -7040,6 +7092,18 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Away from the cursor</translation>
     </message>
     <message>
+        <source>显示搜索框</source>
+        <translation>Show the search box</translation>
+    </message>
+    <message>
+        <source>搜索框;搜索;隐藏;关闭;输入框;打字</source>
+        <translation>search box;search;hide;off;field;typing</translation>
+    </message>
+    <message>
+        <source>关掉后窗口顶上只留按钮，打字不再搜索；方向键、Enter 和快捷键照常</source>
+        <translation>Off: only the buttons stay at the top and typing searches nothing; arrows, Enter and shortcuts work as ever</translation>
+    </message>
+    <message>
         <source>输入程序文件名，例如 KeePass.exe</source>
         <translation>Program file name, e.g. KeePass.exe</translation>
     </message>
@@ -7848,6 +7912,22 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>搜索框、剪贴板和对话框旁搜索框的文字和行高；设置窗口不变。密集是每条结果一行的小字。剪贴板可在“剪贴板”页单独设置</source>
         <translation>Text size and line height of the search bar, the clipboard and the search bar by file dialogs; the Settings window is unchanged. Dense is one small line per result. The clipboard can be set separately on the Clipboard page</translation>
+    </message>
+    <message>
+        <source>记住窗口大小</source>
+        <translation>Remember window sizes</translation>
+    </message>
+    <message>
+        <source>设置、截图设置和图片文字搜索窗口按你上次拖出的大小打开，上次最大化的仍然最大化。关掉后每次启动都用默认大小，已记住的大小会清除</source>
+        <translation>Settings, Screenshot settings and Image text search open at the size you last dragged them to, maximized if you left them so. Off: they open at their default size each time WinShun starts, and the sizes remembered are cleared</translation>
+    </message>
+    <message>
+        <source>双击这些窗口的边框，随时恢复默认大小</source>
+        <translation>Double-click the edge of one of these windows to give it its default size at any time</translation>
+    </message>
+    <message>
+        <source>记住;窗口大小;尺寸;大小;最大化;默认大小;设置窗口;remember;window size;size;maximize</source>
+        <translation>remember;window size;size;maximize;default size;settings window;restore</translation>
     </message>
     <message>
         <source>弹出动画</source>
@@ -9971,6 +10051,14 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>正在加载索引…</source>
         <translation>Loading the index…</translation>
+    </message>
+    <message>
+        <source>Win顺 已更新</source>
+        <translation>WinShun updated</translation>
+    </message>
+    <message>
+        <source>更新前它以管理员身份运行，现在是普通权限。点这里以管理员身份重新启动，Windows 会请你确认一次。</source>
+        <translation>It ran as administrator before the update and now runs with normal rights. Click here to restart it as administrator; Windows will ask you to confirm once.</translation>
     </message>
     <message>
         <source>开机自启没有关闭</source>

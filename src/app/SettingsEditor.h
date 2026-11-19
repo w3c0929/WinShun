@@ -235,6 +235,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool panelListsAll READ panelListsAll WRITE setPanelListsAll NOTIFY changed FINAL)
     Q_PROPERTY(bool scopeButton READ scopeButton WRITE setScopeButton NOTIFY changed FINAL)
     Q_PROPERTY(bool openAnimation READ openAnimation WRITE setOpenAnimation NOTIFY changed FINAL)
+    Q_PROPERTY(bool rememberWindowSize READ rememberWindowSize WRITE setRememberWindowSize NOTIFY changed FINAL)
     Q_PROPERTY(bool hoverTips READ hoverTips WRITE setHoverTips NOTIFY changed FINAL)
     Q_PROPERTY(QString previewWith READ previewWith WRITE setPreviewWith NOTIFY changed FINAL) // auto | builtin
     Q_PROPERTY(QString previewHotkey READ previewHotkey WRITE setPreviewHotkey NOTIFY changed FINAL)
@@ -276,6 +277,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool clipboardHoldToStep READ clipboardHoldToStep WRITE setClipboardHoldToStep NOTIFY changed FINAL)
     Q_PROPERTY(bool clipboardPasteElevated READ clipboardPasteElevated WRITE setClipboardPasteElevated NOTIFY changed FINAL)
     Q_PROPERTY(QString clipboardSearchBoxSide READ clipboardSearchBoxSide WRITE setClipboardSearchBoxSide NOTIFY changed FINAL) // near | far
+    Q_PROPERTY(bool clipboardSearchBox READ clipboardSearchBox WRITE setClipboardSearchBox NOTIFY changed FINAL)
     Q_PROPERTY(QStringList clipboardExcludedApps READ clipboardExcludedApps NOTIFY changed FINAL)
     Q_PROPERTY(int clipboardCount READ clipboardCount NOTIFY clipboardCountChanged FINAL)
     Q_PROPERTY(bool clipboardImporting READ clipboardImporting NOTIFY clipboardImportChanged FINAL)
@@ -748,6 +750,8 @@ public:
     void setClipboardHoldToStep(bool on);
     QString clipboardSearchBoxSide() const { return m_settings.clipboardSearchBoxSide; }
     void setClipboardSearchBoxSide(const QString& side);
+    bool clipboardSearchBox() const { return m_settings.clipboardSearchBox; }
+    void setClipboardSearchBox(bool on);
     QStringList clipboardExcludedApps() const { return m_settings.clipboardExcludedApps; }
     int clipboardCount() const { return m_clipboardCount; }
     void setClipboardCount(int count); // set by the app
@@ -843,6 +847,8 @@ public:
     void setScopeButton(bool on);
     bool openAnimation() const { return m_settings.openAnimation; }
     void setOpenAnimation(bool on);
+    bool rememberWindowSize() const { return m_settings.rememberWindowSize; }
+    void setRememberWindowSize(bool on);
     bool hoverTips() const { return m_settings.hoverTips; }
     void setHoverTips(bool on);
     void setPureSearch(bool on);
