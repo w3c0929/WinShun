@@ -2125,6 +2125,21 @@
     </message>
 </context>
 <context>
+    <name>DonateButton</name>
+    <message>
+        <source>捐赠</source>
+        <translation>Donate</translation>
+    </message>
+    <message>
+        <source>在爱发电支持 Win顺</source>
+        <translation>Support WinShun on Afdian</translation>
+    </message>
+    <message>
+        <source>wow~</source>
+        <translation>wow~</translation>
+    </message>
+</context>
+<context>
     <name>DropPieHelper</name>
     <message>
         <source>收藏圆盘未启动</source>
@@ -2330,13 +2345,6 @@
         <source>收藏</source>
         <translation>Favorites</translation>
     </message>
-    <message numerus="yes">
-        <source>%n 项，拖动把手排序</source>
-        <translation>
-            <numerusform>%n item; drag the handle to reorder</numerusform>
-            <numerusform>%n items; drag the handles to reorder</numerusform>
-        </translation>
-    </message>
     <message>
         <source>还没有收藏</source>
         <translation>No favorites yet</translation>
@@ -2380,6 +2388,37 @@
     <message>
         <source>%1。只放得下前 8 个文件夹收藏（现有 %2 个）</source>
         <translation>%1. Only the first 8 favorite folders fit (you have %2)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n 项，拖动把手或点列头排序</source>
+        <translation>
+            <numerusform>%n item; drag the handle or click a column header to reorder</numerusform>
+            <numerusform>%n items; drag the handles or click a column header to reorder</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>名称</source>
+        <translation>Name</translation>
+    </message>
+    <message>
+        <source>修改日期</source>
+        <translation>Date modified</translation>
+    </message>
+    <message>
+        <source>类型</source>
+        <translation>Type</translation>
+    </message>
+    <message>
+        <source>大小</source>
+        <translation>Size</translation>
+    </message>
+    <message>
+        <source>恢复默认</source>
+        <translation>Restore order</translation>
+    </message>
+    <message>
+        <source>回到第一次点列头排序之前的顺序，之后新加的收藏排在后面</source>
+        <translation>Back to the order from before the first sort by a column; favorites added since come after them</translation>
     </message>
     <message>
         <source>已不存在 · %1</source>
@@ -4168,6 +4207,65 @@ Installing first renames it to %2, left beside the plugin; no file is deleted.</
     </message>
 </context>
 <context>
+    <name>PluginTile</name>
+    <message>
+        <source>作者：%1</source>
+        <translation>Author: %1</translation>
+    </message>
+    <message>
+        <source>状态：%1</source>
+        <translation>Status: %1</translation>
+    </message>
+    <message>
+        <source>权限：</source>
+        <translation>Permissions:</translation>
+    </message>
+    <message>
+        <source>（仅声明）</source>
+        <translation> (declared only)</translation>
+    </message>
+    <message>
+        <source>随包</source>
+        <translation>Bundled</translation>
+    </message>
+    <message>
+        <source>再试一次</source>
+        <translation>Try again</translation>
+    </message>
+    <message>
+        <source>确认</source>
+        <translation>Confirm</translation>
+    </message>
+    <message>
+        <source>以管理员身份重新启动</source>
+        <translation>Restart as administrator</translation>
+    </message>
+    <message>
+        <source>新版本 %1 已下载</source>
+        <translation>Version %1 downloaded</translation>
+    </message>
+    <message>
+        <source>现在更新</source>
+        <translation>Update now</translation>
+    </message>
+    <message>
+        <source>新版本已经下载好。现在更新会先停一下这个插件；不点的话，下次启动 Win顺 时自动换上</source>
+        <translation>The new version is downloaded. Updating now stops this plugin for a moment; otherwise it is put in place the next time WinShun starts</translation>
+    </message>
+    <message>
+        <source>详情</source>
+        <translation>Details</translation>
+    </message>
+    <message>
+        <source>%1详情</source>
+        <translation>%1 details</translation>
+    </message>
+    <message>
+        <source>设置</source>
+        <translation>Settings</translation>
+    </message>
+</context>
+<context>
     <name>PluginsPreview</name>
     <message>
         <source>插件</source>
@@ -4453,6 +4551,10 @@ Installing first renames it to %2, left beside the plugin; no file is deleted.</
     <message>
         <source>展开内置功能</source>
         <translation>Expand built-in features</translation>
+    </message>
+    <message>
+        <source>全部插件</source>
+        <translation>All plugins</translation>
     </message>
     <message>
         <source>同时常驻的插件</source>
@@ -8687,8 +8789,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>A program you ran as administrator with Ctrl+Shift+Enter runs as administrator on Enter from then on; right-click it and choose “Run with normal rights” to change it back</translation>
     </message>
     <message>
-        <source>记住打开过的项目和最近 100 条搜索词；同样的字常打开的项目排在前面。插件命令不记入搜索历史</source>
-        <translation>Remember opened items and up to 100 search queries. Frequently opened matches rank higher. Plugin commands are excluded from query history.</translation>
+        <source>记住打开过的项目和最近 100 条搜索词；同样的字常打开的项目排在前面</source>
+        <translation>Remember opened items and up to 100 search queries. Frequently opened matches rank higher.</translation>
     </message>
     <message>
         <source>搜索历史快捷键</source>
@@ -14094,8 +14196,8 @@ Content index: %5</translation>
         <translation>Uninstalling %1: %2</translation>
     </message>
     <message>
-        <source>插件还没准备好，请稍后再试</source>
-        <translation>The plugin is not ready yet; please try again in a moment</translation>
+        <source>设置窗口打不开</source>
+        <translation>The settings window could not be opened</translation>
     </message>
     <message>
         <source>没有这种模板</source>

@@ -41,6 +41,7 @@ qt_add_executable(WinShun WIN32
     InteractionOptimizationProbe.cpp InteractionOptimizationProbe.h
     IdleOpenProbe.cpp IdleOpenProbe.h
     ClipboardAnimationProbe.cpp ClipboardAnimationProbe.h
+    SettingsMotionProbe.cpp SettingsMotionProbe.h
     ForegroundUseProbe.cpp ForegroundUseProbe.h
     main.cpp
     DropPieHelper.cpp DropPieHelper.h
@@ -105,6 +106,8 @@ qt_add_executable(WinShun WIN32
     platform/HotPages.cpp platform/HotPages.h
     platform/IdleTrim.cpp platform/IdleTrim.h
     platform/UiStall.cpp platform/UiStall.h
+    platform/CodeAddress.cpp platform/CodeAddress.h
+    platform/CrashRecord.cpp platform/CrashRecord.h
     platform/MemoryReport.cpp platform/MemoryReport.h
     ActivityText.cpp ActivityText.h
     BackgroundStatus.cpp BackgroundStatus.h
@@ -226,6 +229,7 @@ set(qml_files
     qml/OnboardingWindow.qml
     qml/SettingsSearchBox.qml
     qml/TitleBar.qml
+    qml/DonateButton.qml
     qml/SettingsSection.qml
     qml/SettingsContext.qml
     qml/SettingsPage.qml
@@ -270,6 +274,8 @@ set(qml_files
     qml/PluginsSection.qml
     qml/OcrPackageRow.qml
     qml/PluginCard.qml
+    qml/PluginTile.qml
+    qml/TileFlow.qml
     qml/Tag.qml
     qml/PluginDevSection.qml
     qml/PluginDialog.qml

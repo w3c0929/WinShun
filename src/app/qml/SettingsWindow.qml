@@ -756,6 +756,19 @@ Window {
         // places only the sections): every card is still at y 0. Once more after a frame.
         revealAfterFrame = pluginId
     }
+    // 已安装的插件: a plugin opened in place of the grid shows from the top;
+    // back, the grid is where it was left.
+    property real pluginGridY: 0
+    function pluginDetailToggled(open) {
+        flick.stopScrolling()
+        if (open) {
+            pluginGridY = flick.contentY
+            flick.contentY = 0
+            return
+        }
+        layoutNow()
+        Qt.callLater(() => flick.contentY = Math.max(0, Math.min(window.pluginGridY, flick.contentHeight - flick.height)))
+    }
     function showPluginLibrary(pluginId) {
         window.editor.plugins.gallery.updatesOnly = false
         window.editor.plugins.gallery.filter = pluginId
@@ -903,6 +916,13 @@ Window {
         property: "active"
         value: window.visible && !window.searching && window.currentPage === window.pluginsPage && window.currentTab === 1
     }
+    Timer { // the 插件库's entries made from the kept list while 已安装 is looked at, a few at a time between
+        // frames (PluginGallerySection): the first click on its tab held the window some 150 ms making them all,
+        // its line not moving meanwhile. After the page's own motion; once a run; nothing fetched (that waits for the tab).
+        interval: 300
+        running: window.visible && !window.searching && window.currentPage === window.pluginsPage && window.currentTab === 0
+        onTriggered: window.editor.plugins.gallery.readList()
+    }
 
     TitleBar {
         id: titleBar
@@ -912,6 +932,11 @@ Window {
         title: window.title + " - " + Qt.application.displayName
         iconX: navList.x + 16 // over the categories' icons, the title over their names
         foreground: window.warm ? WarmPalette.ink : Theme.text
+        tools: DonateButton {
+            visible: Gleaning.donateUrl.length > 0
+            dpr: window.dpr
+            onClicked: window.editor.openUrl(Gleaning.donateUrl)
+        }
     }
 
     Item { // category list
@@ -919,6 +944,10 @@ Window {
         y: titleBar.height
         width: 248
         height: parent.height - y
+        // The window's parts each one element for UI Automation, so that a
+        // client (screen reader, input method, assistant) finds a handful
+        // under the window, not every text of every page (see SettingsSection).
+        Accessible.role: Accessible.Pane
 
         MouseArea { // clicking empty space finishes editing a field
             anchors.fill: parent
@@ -1233,6 +1262,8 @@ Window {
     GleaningPage {
         id: gleaningView
         visible: window.warm
+        Accessible.role: Accessible.Pane // hidden: one element skipped whole (see nav)
+        Accessible.name: Gleaning.title
         anchors.left: nav.right
         anchors.right: parent.right
         anchors.top: titleBar.bottom
@@ -1244,6 +1275,7 @@ Window {
     Item {
         id: pageHeader
         visible: !window.warm
+        Accessible.role: Accessible.Pane // see nav
         anchors.left: nav.right
         anchors.right: parent.right
         anchors.top: titleBar.bottom
@@ -1300,6 +1332,8 @@ Window {
     Flickable {
         id: flick
         visible: !window.warm
+        Accessible.role: Accessible.Pane // see nav; the pages under it (PageSlot)
+        Accessible.name: pageTitle.text
         anchors.left: nav.right
         anchors.right: parent.right
         anchors.top: pageHeader.bottom
@@ -4536,7 +4570,7 @@ Window {
                 SettingRow {
                     title: qsTr("记住搜索和打开过的项目")
                     keywords: qsTr("历史;最近;记录;history;recent").split(";")
-                    description: qsTr("记住打开过的项目和最近 100 条搜索词；同样的字常打开的项目排在前面。插件命令不记入搜索历史")
+                    description: qsTr("记住打开过的项目和最近 100 条搜索词；同样的字常打开的项目排在前面")
 
                     ToggleSwitch {
                         dpr: window.dpr
@@ -6305,6 +6339,7 @@ Window {
                 plugins: window.editor.plugins
                 editor: window.editor
                 lockedElsewhere: pluginDevSection.lockedRows
+                onDetailToggled: (open) => window.pluginDetailToggled(open)
                 onSettingRequested: (which) => window.goTo(window.part(window.integrationPage, which === "folderMenu" ? "folderMenuRow"
                                                                           : which === "dialogBar" ? "dialogBarRow" : "explorerTypingRow"))
             }
@@ -6419,6 +6454,7 @@ Window {
     UpdateDialog {
         id: updateDialog
         z: 1
+        Accessible.role: Accessible.Dialog // closed: one element skipped whole (see nav)
         anchors.fill: parent
         updater: window.updater
         icon: window.frame.icon
@@ -6428,6 +6464,7 @@ Window {
     PluginReadmeDialog {
         id: readmeDialog
         z: 1
+        Accessible.role: Accessible.Dialog
         anchors.fill: parent
         plugins: window.editor.plugins
         frame: window.frame
@@ -6435,6 +6472,7 @@ Window {
 
     PluginNotesDialog {
         z: 1
+        Accessible.role: Accessible.Dialog
         anchors.fill: parent
         plugins: window.editor.plugins
         frame: window.frame
@@ -6443,6 +6481,7 @@ Window {
     PluginDialog { // the 插件 page's questions: permissions, versions, removal
         id: pluginDialog
         z: 1
+        Accessible.role: Accessible.Dialog
         anchors.fill: parent
         plugins: window.editor.plugins
         Component.onCompleted: window.frame.addPopup(pluginDialog)

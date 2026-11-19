@@ -1,5 +1,57 @@
 # 踩坑记录
 
+## 卡片网格：卡片展开、收起时报绑定循环（2026-11-19，插件页改成网格）
+
+- **现象**：插件页的卡片改成网格（TileFlow）后，「内置功能」的卡片从小卡片展开成整行时，日志报 `Binding loop detected for property "width"`，预览因此退出码非 0。
+- **原因**：卡片里文字的宽度取决于 `tileFace`（小卡片还是展开），它和网格读的 `wide` 同时变。文字宽度重算时折行变了，卡片高度跟着变，网格在同一轮更新里又改了卡片宽度，又回到这段文字的宽度上。
+- **做法**：
+  - 卡片里横向的排布（宽度、x、对齐）只看建好后不再变的 `tile`；`tileFace` 只用于高度。展开后的卡片沿用小卡片的版式，设置项接在下面。
+  - TileFlow 的宽度和高度分两个属性算（`widths`、`heights`），高度变化不会再改宽度。
+- **验证**：`WinShun.exe --preview-settings <目录> --page 8 --builtins`（内置功能展开）和设置搜索「粘贴为文件」的截图都是 0 warning(s)。
+
+## 设置窗口在前台时卡：无障碍树是平的，外部程序每读一遍几百毫秒（2026-11-19，用户反馈）
+
+- **现象**：设置 › 插件 里「已安装」「插件库」来回切，标签下的蓝线一顿一顿；插件库里上下滚动也卡。窗口不在前台时（探针里不激活）一切正常。
+- **原因**：有程序通过 UI Automation 读前台窗口（本机有 codex-computer-use、微信输入法、Tokline、DesktopAITaskCenter 等），Qt 在 GUI 线程上回答它们。Qt 6.12 的 `QAccessibleQuickItem` 列子元素时（`unignoredChildren`，qaccessiblequickitem.cpp）会穿过所有本身不是无障碍元素的 Item 往下找，不管可不可见；`QAccessibleQuickWindow::child(i)` 每调一次都重算 `rootItems()`；`QWindowsUiaMainProvider::Navigate` 找下一个兄弟时逐个 `child(i)` 跳过不可见的。设置窗口里原来只有文字、按钮是无障碍元素，各页（打开后会陆续全建好）的几百个元素全挂在窗口根下，走一遍是 O(N²)：所有页建好后，已安装 / 插件库分别是根下 189 / 345 个、一遍 82 / 305 ms。外部程序反复读，窗口在前台时空闲也会停 139 / 271 ms，切标签时帧间隔 130–260 ms。
+- **做法**：
+  - 容器设 `Accessible.role`：Qt 遇到无障碍元素就不再往下钻，不可见的容器被 Navigate 整个跳过。SettingsSection、SettingRow、PluginCard、PluginTile、PluginGalleryEntry 用 `Grouping`（新加的卡片类控件照此设置）；PageSlot、导航栏、页头、`flick`、拾穗页用 `Pane`；几个对话框用 `Dialog`（关着时根不可见）。根下剩 8 个，一遍 1.3 / 1.7 ms；前台空闲最长停顿 0 / 12 ms，切标签帧间隔 8–11 ms。
+  - 插件库的 39 个条目每个约 3–4 ms，原来第一次点「插件库」时一次建完，卡约 170 ms。现在停在「已安装」300 ms 后读本地保存的列表（不联网），条目放在 `Loader { asynchronous: !visible }` 里分帧建，GUI 线程最长停 6 ms。建到一半就点过去时 `asynchronous` 变 false，Qt 当场补完，不会显示空列表。
+- **验证**：
+  - `WinShun.exe --probe-runtime <目录> --settings-motion-check --all-pages --activate --renderer d3d11 --scale 1.5`（SettingsMotionProbe）：按 Navigate 的走法走无障碍树，根下超过 20 个或一遍超过 20 ms 就失败；`--activate` 把窗口放到前台各停 3 s，记 GUI 线程最长停顿（本机的 UIA 客户端会来读）；每次切页、切标签、转滚轮都记下每一帧。`--gallery-early` 在条目建到一半时切到插件库，检查条目全在；`--other-windows` 也走搜索框和剪贴板（1.3 / 0.1 ms，没问题）。
+  - 在跑着的程序上看：另起线程不停 `SendMessageTimeout(WM_NULL)` 测 GUI 线程多久才应答，同时挂起 GUI 线程用 `StackWalk64` 采样。修之前栈顶是 `QWindowsUiaMainProvider::Navigate` → `QAccessibleQuickWindow::child` → `unignoredChildren`。
+- **别踩**：
+  - 不激活窗口的探针测不出来：UIA 客户端只读前台窗口，只在装了这类程序的机器上卡。
+  - 新加页面、卡片、列表条目时，外层给 `Accessible.role`，不然里面的字又全挂到根下。
+  - 别用 `QAccessible::installUpdateHandler` 计数：它替换了 Qt 的处理函数，平台的无障碍通知就不发了，测出来的不是真实情况。
+  - 诊断时别在 `afterAnimating` 里遍历整棵树：每帧都被拖慢，量出的“第一帧晚”是诊断自己造成的。
+
+## 闪退什么都没留下：`abort()` 绕过了日志（2026-11-19，用户来信）
+
+- **现象**：Win10 LTSC 1809 云电脑，每次启动约两分钟就闪退，连续几天，跨 0.31–0.37 多个版本。日志和诊断事件只有一次次的 `app-start`，没有任何错误；Windows 的错误报告（Report.wer）是 `c0000409`、参数 7，出错模块 `ucrtbase.dll`。
+- **怎么读 WER**：`c0000409` 参数 7 是 `FAST_FAIL_FATAL_APP_EXIT`，出在 `ucrtbase.dll` 就是有人调了 `abort()`：最常见的是 `std::terminate`，比如 `std::thread`/`std::jthread` 的函数体里抛出没人接的异常，或者 Qt 容器分配失败抛 `std::bad_alloc`。`qFatal` 也是这个码，但出错模块是 `Qt6Core.dll`（Qt 自己 `__fastfail`，不走 `abort()`），而且它的消息会先进日志。
+- **线索**：空闲内存记录里，启动后 20 秒前工作集约 250 MB，21–27 秒涨到 2–5 GB，之后两分钟左右闪退；20 秒正好是剪贴板历史补读图片文字的时刻（`m_backlogTimer`），而进程里加载了只有读图才用的 `onnxruntime.dll`。闪退从某天起才开始，之前同一版本跑了好几天，说明是那天复制进历史的一张图。本机用各种合成大图都没复现出 GB 级内存（PP-OCRv6 峰值不到 900 MB，ZXing 读二维码 64 MP 约 130 MB），因为没想到是图的**形状**。
+- **根因**（用户跑了读图测试 [tools/ocrtest](../tools/ocrtest/README.md) 才找到）：11-17 复制的一张 **32739 × 35** 的长条图，接连撞上两处没有上限的地方。
+  - 找文字行：`PaddleOcr::find` 先按宽度缩到 2000，可这样短边只剩 2 px，于是“短边不小于 30”把比例改回 30/35，看图尺寸变成 28062 × 30，宽度上限失效；接着细条按“上下补黑到宽度的四分之一”补成 28062 × 7014，约 1.97 亿像素，切成四条 28064 × 2016 交给检测模型。第一层卷积和池化就要好几 GB（dump：`NchwcMaxPool` 里 `bad_alloc`）。用户的云电脑 CPU 没有 AVX，ORT 走 SSE 内核，这一步要算很久。
+  - 读二维码：什么都没找到时，`readQrCodes` 会把图放大 2 倍、3 倍再找，只限制了总像素不超过 1200 万。98217 × 105 只有 1030 万像素，可宽度超过了 ZXing 单边 65535 的上限，`ImageView` 抛 `std::invalid_argument`。0.38 的读图线程不接这个异常，于是 `abort()`。
+  - 所以在用户电脑上是：内存涨到 2–5 GB，两分钟左右后找文字行做完，读二维码时抛异常，程序闪退。测试工具里子进程有 3 GB 的内存上限，找文字行这一步先失败了，走不到读二维码，是本机用同尺寸的图复现时才发现第二处。
+- **做法**：
+  - 很宽的图分块找：短边规则让看图宽度超过 2000 时，横向切成不超过 2000 宽的块（块与块重叠 160），每块单独补黑、单独分条，每次检测都不超过 2016 × 2016。各块里同一行、左右有重叠的框合成一个（`joinedAcrossTiles`）。2000 宽以内的图走的还是原来的路径。
+  - 很长的行分段读：一行按 48 高缩放后超过 12000 列（长是高的 250 倍），就在空白最多的列上切开（`partsOf`），分段读完再拼回去，拉丁文字的词间空隙补一个空格，字符位置换算回整行。每批合计不超过 36000 列（宽表格六行各约 6000 列，仍然一批读完）。
+  - 读二维码：哪条边超过 65535 就不放大，原图已经超过的直接不读；ZXing 自己吞掉以外的异常也只算“没有二维码”，不影响已经读出的字。
+  - 同尺寸的合成长条（106 段文字）：修之前 2.4 GB、识别失败；修之后最高 301 MB、3.2 秒，2973 个字全部读出。
+  - 读图线程（`TextRecognizer::work`）把每张图的识别整段包进 `try`，`std::exception` 和其他异常都只算这张图读不了（不再每次启动重试），不让异常飞出线程。
+  - 读每张图时把编号写进 `reading-picture`，读完删掉；启动时还在就是读它时死了：第一次放到最后重读，第二次放弃并记 `clipboard-picture-not-read`。死循环最多再闪退一两次就断开。
+  - `CrashRecord`：`SIGABRT` 和未处理异常时写 `crash.txt`（原因、线程、当时在做什么、模块+偏移的调用栈），下次启动记成 `app-crash`。下回再有人闪退，诊断包里就有停在哪。
+  - 守卫和 `CrashRecord` 只能让程序不再死循环，下次出事时说得出停在哪。找根因要靠读图测试 [tools/ocrtest](../tools/ocrtest/README.md)：发给用户，它在用户电脑上照 Win顺 的顺序读剪贴板历史里的图，记下每一步的内存，出问题时在限额内停下，找出是哪张图，并带回 dump。
+- **测试**：`tst_ocr::veryWideStrip` 用 32700 多宽、35 高的一行字，按 trace 检查每次检测不超过 2016 × 2016、每批识别不超过 36000 列、单段不超过 12000 列，每个段号都只读出一次；`tst_stage7::longStripReadsWithoutThrowing` 用 32739 × 35、70000 × 20、20 × 70000 三种尺寸读二维码，不抛异常，字照常保留。`tst_uistall` 起自己的子进程，分别 `abort()`、在另一个线程里抛没人接的异常、写空指针，检查留下的记录（原因、线程、activity、帧里有 `tst_uistall.exe+`、访问违规的异常码和位置）；`tst_cliplifecycle` 检查守卫文件只在读图时存在、两次才放弃；`WinShun --preview-results <目录> --clipboard-crashed-reading` 用真的 `Clipboard` 和临时历史走三次启动。
+- **别踩**：
+  - 线程函数体里调到的任何会抛异常的代码（ONNX Runtime、ZXing、Qt 容器），都要在线程里接住；`std::jthread` 里漏掉一个，就是整个程序 `abort()`，日志里什么都没有。
+  - 尺寸规则要看最坏的形状，不能只看最大像素：“宽度不超过 X”和“短边不小于 Y”同时成立时，后者会让前者失效；按宽度比例补边会随宽度无限变大。用极端长宽比的图（几万 × 几十）测一遍，再看 trace 里每一步模型输入的尺寸。
+  - 第三方库的输入限制（ZXing 单边 65535）要在调用前检查，放大之后的尺寸也要检查。
+  - 用 cdb 看 dump 时，ORT 的帧要加 `-i` 指向同版本的 `onnxruntime.dll`。dump 里没有模块的映像，缺了它就没法回溯。
+  - 崩溃处理函数里不分配内存、不用 Qt：缓冲区放栈上，`CreateFileW`/`WriteFile` 直接写。模块名和偏移用 `codeaddress::describe`（`UiStall` 也用它）。
+  - 测试子进程里要 `_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT)` 和 `SetErrorMode(SEM_NOGPFAULTERRORBOX)`，不然会弹窗、报给 Windows。
+
 ## 长截图预览框被截进长图：`visibleChanged` 比窗口真正显示早（2026-11-18，#378）
 
 - **现象**：选区几乎占满屏幕时，手动点开“长图预览”，预览框盖在选区上，被一起截进长图（越截越多层）；它还拖不动，只能挡着。

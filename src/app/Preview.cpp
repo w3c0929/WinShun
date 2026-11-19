@@ -5,6 +5,7 @@
 #include "ForegroundUseProbe.h"
 #include "IdleOpenProbe.h"
 #include "ClipboardAnimationProbe.h"
+#include "SettingsMotionProbe.h"
 #include "platform/AllocationTrace.h"
 #include "InteractionOptimizationProbe.h"
 #include "UiFont.h"
@@ -435,6 +436,7 @@ int runPlugins(const QStringList& args)
         {u"allowShown"_s, allow},
         {u"asideShown"_s, aside},
         {u"aiPage"_s, aiPage},
+        {u"opened"_s, args.contains(u"--open"_s)},
     });
     auto* window = qobject_cast<QQuickWindow*>(object);
     if (!window) {
@@ -453,6 +455,12 @@ int runPlugins(const QStringList& args)
     // window's content item (the cards' are not QObject children of the
     // window: a Repeater's delegates have no QObject parent).
     if (const QString menu = valueAfter(args, u"--menu"); !menu.isEmpty()) {
+        if (menu == u"card") { // the first plugin opened: its card, with the "…", in place of the tiles
+            if (QQuickItem* section = visualNamed(window->contentItem(), u"pluginsSection"_s))
+                QMetaObject::invokeMethod(section, "expandAt", Q_ARG(QVariant, QVariant(0)));
+            pump(300);
+            settle(window);
+        }
         QObject* chosen = nullptr;
         for (QQuickItem* o : window->contentItem()->childItems()) {
             if (!QString::fromLatin1(o->metaObject()->className()).startsWith(u"DropMenu"))
@@ -1591,6 +1599,7 @@ int runSettings(const QStringList& args)
     settings.pasteFileEnabled = true; // its card's two ways in
     settings.dialogBar = true; // the rows they keep away when off, whatever the defaults
     settings.folderMenu = u"auto"_s;
+    settings.pluginBuiltinsExpanded = args.contains(u"--builtins"_s); // 内置功能's cards on show
     const QString shareOnline = u"\\\\192.168.1.10\\资料"_s;
     const QString shareSignIn = u"\\\\nas\\photos"_s;
     const QString shareWsl = u"\\\\wsl.localhost\\Ubuntu-24.04\\home\\me\\项目"_s;
@@ -2894,6 +2903,131 @@ int runSettings(const QStringList& args)
         return finish(window, ok);
     }
 
+    // GitHub #397: 收藏夹's column headers clicked as its user does: by name,
+    // the other way, by date (the disk asked off the GUI thread), by size,
+    // the third click back to the order of before, 恢复默认 too; each
+    // pictured (--favorites-sort, with --dark / --scale as ever).
+    if (args.contains(u"--favorites-sort"_s)) {
+        bool ok = true;
+        bool saved = true;
+        const auto check = [&](bool okay, const QString& what) {
+            if (!okay)
+                qWarning("favorites sort: %s", qUtf8Printable(what));
+            ok = okay && ok;
+            return okay;
+        };
+        // Files and a folder of known dates and sizes, beside the demo ones.
+        const QDir demo(favoritesDir.path());
+        const QDateTime now = QDateTime::currentDateTime();
+        struct Made {
+            QString name;
+            qint64 bytes;
+            int daysAgo;
+        };
+        for (const Made& m : {Made {u"季度报告 10.docx"_s, 48 << 10, 2}, Made {u"季度报告 2.docx"_s, 1200 << 10, 40},
+                 Made {u"Photos.zip"_s, 3 << 20, 9}, Made {u"notes.txt"_s, 900, 1}}) {
+            QFile file(demo.filePath(m.name));
+            if (!file.open(QIODevice::WriteOnly) || file.write(QByteArray(m.bytes, 'x')) != m.bytes)
+                return finish(window, check(false, u"demo file not written"_s));
+            file.setFileTime(now.addDays(-m.daysAgo), QFileDevice::FileModificationTime);
+            file.close();
+            favorites.add({Favorite::Kind::File, QDir::toNativeSeparators(file.fileName()), {}, {}});
+        }
+        demo.mkpath(u"项目资料"_s);
+        favorites.add({Favorite::Kind::Folder, QDir::toNativeSeparators(demo.filePath(u"项目资料"_s)), {}, u"xmzl"_s});
+        QStringList manual;
+        for (const Favorite& f : favorites.items())
+            manual.append(f.path);
+        const auto names = [&] {
+            QStringList out;
+            for (const Favorite& f : favorites.items())
+                out.append(f.name);
+            return out.join(u" | "_s);
+        };
+        const auto inOrder = [&](const QStringList& expected) {
+            QStringList paths;
+            for (const Favorite& f : favorites.items())
+                paths.append(f.path);
+            return paths == expected;
+        };
+
+        QMetaObject::invokeMethod(window, "showFavoritesPage", Q_ARG(QVariant, QVariant(QString())));
+        window->resize(920, 1080);
+        settle(window, 3);
+        pump(400); // the disks asked (lookForMissing)
+        QQuickItem* section = visualNamed(window->contentItem(), u"favoritesSection"_s);
+        const auto header = [&](const QString& key) { return section ? visualNamed(section, u"sortColumn-"_s + key) : nullptr; };
+        QQuickItem* restore = section ? visualNamed(section, u"restoreOrderButton"_s) : nullptr;
+        if (!check(section && header(u"name"_s) && header(u"modified"_s) && header(u"type"_s) && header(u"size"_s) && restore,
+                u"the headers or 恢复默认 missing"_s))
+            return finish(window, false);
+        // Down to the headers, a little room above them.
+        const qreal top = header(u"name"_s)->mapToItem(flick->property("contentItem").value<QQuickItem*>(), QPointF()).y();
+        flick->setProperty("contentY", std::max(0.0, top - 140));
+        settle(window, 3);
+        check(!restore->isVisible(), u"恢复默认 shown with nothing to go back to"_s);
+        saved = saveGrab(window, out.filePath(u"favorites-sort-0-manual.png"_s)) && saved;
+
+        const auto click = [&](QQuickItem* item) {
+            const QPointF at = item->mapToScene({item->width() / 2, item->height() / 2});
+            QMouseEvent press(QEvent::MouseButtonPress, at, window->mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, {});
+            QCoreApplication::sendEvent(window, &press);
+            QMouseEvent release(QEvent::MouseButtonRelease, at, window->mapToGlobal(at), Qt::LeftButton, {}, {});
+            QCoreApplication::sendEvent(window, &release);
+        };
+        // Clicked, then waited for (by date or size: once the disk has said).
+        const auto sortedBy = [&](const QString& key, FavoriteSort sort, bool descending, const QString& picture) {
+            click(header(key));
+            QElapsedTimer waited;
+            waited.start();
+            while ((favorites.sort() != sort || favorites.sortDescending() != descending) && waited.elapsed() < 5000)
+                pump(50);
+            settle(window, 3);
+            const bool there = check(favorites.sort() == sort && favorites.sortDescending() == descending,
+                u"%1 clicked: not sorted so (%2)"_s.arg(key, names()));
+            check(header(key)->property("active").toBool(), key + u" header shows no caret"_s);
+            check(restore->isVisible(), u"恢复默认 hidden while sorted"_s);
+            saved = saveGrab(window, out.filePath(picture)) && saved;
+            say(u"%1%2: %3"_s.arg(key, descending ? u" ↓"_s : u" ↑"_s, names()));
+            return there;
+        };
+        sortedBy(u"name"_s, FavoriteSort::Name, false, u"favorites-sort-1-name.png"_s);
+        check(favorites.items().constFirst().name == u"notes.txt"_s, u"by name: notes.txt not first (%1)"_s.arg(names()));
+        sortedBy(u"name"_s, FavoriteSort::Name, true, u"favorites-sort-2-name-down.png"_s);
+        sortedBy(u"modified"_s, FavoriteSort::Modified, true, u"favorites-sort-3-modified.png"_s);
+        // The newest first: notes.txt (a day) or a folder made just now; the command and the gone one last.
+        check(favorites.items().constLast().kind == Favorite::Kind::Command || !QFileInfo::exists(favorites.items().constLast().path),
+            u"by date: one with no date not last (%1)"_s.arg(names()));
+        sortedBy(u"type"_s, FavoriteSort::Type, false, u"favorites-sort-4-type.png"_s);
+        check(favorites.items().constFirst().kind == Favorite::Kind::Folder && favorites.items().constLast().kind == Favorite::Kind::Command,
+            u"by type: not folders first and commands last (%1)"_s.arg(names()));
+        sortedBy(u"size"_s, FavoriteSort::Size, true, u"favorites-sort-5-size.png"_s);
+        check(QFileInfo(favorites.items().constFirst().path).fileName() == u"WinShun.exe"_s
+                || QFileInfo(favorites.items().constFirst().path).fileName() == u"Photos.zip"_s,
+            u"by size: not the largest first (%1)"_s.arg(names()));
+        sortedBy(u"size"_s, FavoriteSort::Size, false, u"favorites-sort-6-size-up.png"_s);
+        click(header(u"size"_s)); // the third time: as before
+        pump(100);
+        settle(window, 3);
+        check(favorites.sort() == FavoriteSort::None && !favorites.hasManualOrder() && inOrder(manual),
+            u"the third click did not bring back the order of before (%1)"_s.arg(names()));
+        check(!restore->isVisible(), u"恢复默认 still shown"_s);
+        saved = saveGrab(window, out.filePath(u"favorites-sort-7-back.png"_s)) && saved;
+        // 恢复默认 after a sort and a move by hand.
+        sortedBy(u"type"_s, FavoriteSort::Type, false, u"favorites-sort-8-type.png"_s);
+        favorites.move(0, 2);
+        settle(window, 3);
+        check(!header(u"type"_s)->property("active").toBool() && restore->isVisible(), u"a move by hand: caret kept or 恢复默认 gone"_s);
+        click(restore);
+        pump(100);
+        settle(window, 3);
+        check(favorites.sort() == FavoriteSort::None && !favorites.hasManualOrder() && inOrder(manual),
+            u"恢复默认 did not bring back the order of before (%1)"_s.arg(names()));
+        saved = saveGrab(window, out.filePath(u"favorites-sort-9-restored.png"_s)) && saved;
+        say(u"favorites sort: %1"_s.arg(ok && saved ? u"all checks passed"_s : u"FAILED"_s));
+        return finish(window, ok && saved);
+    }
+
     // Every page, every tab: the window as tall as the page, so the
     // picture has all of it.
     bool saved = true;
@@ -2971,13 +3105,25 @@ int runSettings(const QStringList& args)
         for (int tab = 0; tab < count; ++tab) {
             const QString title = pages[page].toMap().value(u"title"_s).toString() + (pageTabs.isEmpty() ? QString() : u" / "_s + pageTabs[tab].toString());
             QMetaObject::invokeMethod(window, "showPage", Q_ARG(QVariant, QVariant(page)), Q_ARG(QVariant, QVariant(tab)));
-            if (page == pluginsPage && tab == 0) { // the cards come folded: one unfolded too (翻译: settings, permissions)
+            if (page == pluginsPage && tab == 0 && args.contains(u"--open"_s)) { // one plugin opened (翻译: settings, permissions), 粘贴为文件's 设置 unfolded
                 if (QObject* section = partOf(window, pluginsPage, "pluginsSection"))
                     QMetaObject::invokeMethod(section, "expandAt", Q_ARG(QVariant, QVariant(1)));
                 if (auto* paste = window->findChild<QQuickItem*>(u"pasteFileSettingsCard"_s))
                     paste->setProperty("expanded", true);
                 else
                     qWarning("preview: no 粘贴为文件 card on the 插件 page");
+            }
+            // --favorites-by name|modified|type|size: 收藏夹 pictured sorted, its caret on (GitHub #397);
+            // back to the order of before once grabbed, for the checks after the pages.
+            const QString favoritesBy = page == favoritesPage ? valueAfter(args, u"--favorites-by") : QString();
+            if (!favoritesBy.isEmpty()) {
+                editor->favorites()->sortBy(favoritesBy);
+                QElapsedTimer waited;
+                waited.start();
+                while (favorites.sort() == FavoriteSort::None && waited.elapsed() < 5000)
+                    pump(50);
+                if (favorites.sort() == FavoriteSort::None)
+                    qWarning("preview: --favorites-by %s did not sort the favorites", qUtf8Printable(favoritesBy));
             }
             window->setHeight(baseHeight);
             settle(window, 3);
@@ -3002,6 +3148,8 @@ int runSettings(const QStringList& args)
             if (tree)
                 writeTree(window, file + u".tree.txt"_s);
             saved = saveGrab(window, file) && saved;
+            if (!favoritesBy.isEmpty())
+                favorites.restoreOrder();
             // --hover x,y (logical): the pointer resting there, as a second picture.
             if (const QStringList at = valueAfter(args, u"--hover").split(u','); at.size() == 2) {
                 const QPointF point(at[0].toDouble(), at[1].toDouble());
@@ -3009,6 +3157,12 @@ int runSettings(const QStringList& args)
                 QCoreApplication::sendEvent(window, &move);
                 pump(400); // past the hover fade
                 saved = saveGrab(window, out.filePath(u"p%1-t%2-hover.png"_s.arg(page, 2, 10, u'0').arg(tab))) && saved;
+                // --hover-frames N: N more pictures while it rests, 30 ms apart besides the grabbing,
+                // to see a hover's motion frame by frame (the 捐赠 button's).
+                for (int frame = 0, frames = valueAfter(args, u"--hover-frames").toInt(); frame < frames; ++frame) {
+                    pump(30);
+                    saved = saveGrab(window, out.filePath(u"p%1-t%2-hover-f%3.png"_s.arg(page, 2, 10, u'0').arg(tab).arg(frame, 2, 10, u'0'))) && saved;
+                }
                 QMouseEvent away(QEvent::MouseMove, QPointF(-50, -50), window->mapToGlobal(QPointF(-50, -50)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
                 QCoreApplication::sendEvent(window, &away);
                 pump(400);
@@ -3194,7 +3348,8 @@ int runSettings(const QStringList& args)
         {u"命令行"_s, aiPage, 0},
         {u"ws"_s, aiPage, 0},
         {u"command line"_s, aiPage, 0},
-        {u"终端"_s, aiPage, 0},
+        // A setting titled with the word comes first: 在终端中打开 (GitHub #386), above the AI page's keyword.
+        {u"终端"_s, resultsPage, 2},
         // "Favorites" also matches the opening-menu option; use this page's exact setting title.
         {QCoreApplication::translate("FavoritesSection", "拖文件时按 ` 键，弹出收藏圆盘"), favoritesPage, 0},
         {QCoreApplication::translate("SettingsWindow", "网络与 WSL 文件夹"), scopePage, 3},
@@ -6549,6 +6704,34 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
         query({});
         launcher.setPluginHost(nullptr);
     }
+    // GitHub #395: what is typed after a plugin's keyword goes into the
+    // search history too, unless its command keeps it out ("history": false).
+    {
+        const QString folder = temporary.filePath(u"plugins/test.history"_s);
+        QDir().mkpath(folder);
+        QFile manifest(QDir(folder).filePath(u"plugin.json"_s));
+        check(manifest.open(QIODevice::WriteOnly), "could not create the isolated history plugin");
+        manifest.write(R"({"manifest":1,"id":"test.history","name":"History fixture","version":"1.0.0","commands":[
+            {"id":"sum","keyword":"sum","title":"Sum","run":{"items":[{"id":"r","title":"21"}]}},
+            {"id":"hide","keyword":"hide","title":"Hidden","history":false,"run":{"items":[{"id":"r","title":"x"}]}}]})");
+        manifest.close();
+        plugin::Host host({.userPluginDir = temporary.filePath(u"plugins"_s)});
+        host.catalog().scan();
+        host.setEnabled(u"test.history"_s, true);
+        launcher.setPluginHost(&host);
+        query(u"sum 3*7"_s);
+        launcher.rememberQuery();
+        check(launcher.pluginKeyword() == u"sum" && launcher.queryHistory().value(0) == u"sum 3*7",
+            "#395: a plugin keyword's search did not go into the search history");
+        query(u"hide p@ss"_s);
+        launcher.rememberQuery();
+        check(launcher.pluginKeyword() == u"hide" && launcher.queryHistory().value(0) == u"sum 3*7"
+                && !launcher.queryHistory().contains(u"hide p@ss"_s),
+            "#395: a command with \"history\": false was kept in the search history");
+        say(u"#395 search history after \"sum 3*7\" and \"hide p@ss\": %1"_s.arg(launcher.queryHistory().join(u" | "_s)));
+        query({});
+        launcher.setPluginHost(nullptr);
+    }
 
     const QString pluginFolder = temporary.filePath(u"plugins/test.columns"_s);
     QDir().mkpath(pluginFolder);
@@ -7328,6 +7511,73 @@ bool checkClipboardInteractions(QQmlEngine* engine, const QDir& output, const QS
     check(!watcher.running(), "fixture must never start the native clipboard writer");
     window->hide();
     say(u"clipboard double-click preview and list resizing: real QML, temporary history; native clipboard untouched"_s);
+    return ok;
+}
+
+// --clipboard-crashed-reading: a picture whose reading the program did not
+// live through (the recognizer's guard file, found at a start) is read once
+// more, after the others; the second time it is given up as a picture
+// without words, and later starts leave it alone. Three starts of the real
+// Clipboard over a temporary history; nothing is recognized.
+bool checkClipboardCrashedReading()
+{
+    bool ok = true;
+    const auto check = [&](bool passed, const char* what) {
+        if (!passed) {
+            say(u"crashed reading: "_s + QString::fromUtf8(what));
+            ok = false;
+        }
+    };
+    QTemporaryDir temporary;
+    const QString folder = temporary.filePath(u"clipboard"_s);
+    const QString guard = folder + u"/reading-picture"_s;
+    qint64 id = 0;
+    {
+        ClipStore store(folder);
+        check(store.open(QDateTime::currentMSecsSinceEpoch()), "could not open the temporary history");
+        QImage image(64, 32, QImage::Format_RGB32);
+        image.fill(Qt::white);
+        const QString png = temporary.filePath(u"picture.png"_s);
+        QFile file(png);
+        check(image.save(png) && file.open(QIODevice::ReadOnly), "could not make the picture");
+        ClipCapture picture;
+        picture.kind = ClipKind::Image;
+        picture.imageData = file.readAll();
+        picture.hash = "crashed-reading";
+        picture.width = image.width();
+        picture.height = image.height();
+        id = store.add(picture, QDateTime::currentMSecsSinceEpoch());
+        store.close(); // its file written
+    }
+    check(id > 0, "the picture was not kept");
+    // A start after a run that ended while reading it (or not), then what it left.
+    const auto start = [&](bool endedWhileReading, const auto& look) {
+        if (endedWhileReading) {
+            QFile file(guard);
+            check(file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(QByteArray::number(id)) > 0,
+                "could not leave the guard file");
+        }
+        ClipStore store(folder);
+        check(store.open(QDateTime::currentMSecsSinceEpoch()), "could not open the history again");
+        ClipboardWatcher watcher({}, {});
+        Clipboard clipboard(&store, &watcher); // gone again long before its backlog's 20 s
+        const std::vector<qint64> unread = store.unreadPictures();
+        look(store.value(u"crashedReading"_s), std::ranges::find(unread, id) != unread.end());
+        check(!QFile::exists(guard), "the guard file was left behind");
+    };
+    start(true, [&](const QString& noted, bool unread) {
+        check(noted == QString::number(id), "the first time, the picture was not noted");
+        check(unread, "the first time, the picture was given up already");
+    });
+    start(true, [&](const QString& noted, bool unread) {
+        check(noted.isEmpty(), "the second time, the note stayed");
+        check(!unread, "the second time, the picture was still to be read");
+    });
+    start(false, [&](const QString& noted, bool unread) {
+        check(noted.isEmpty() && !unread, "a start after that went back to the picture");
+    });
+    say(u"crashed reading: read once more the first time, given up the second, left alone after: %1"_s
+            .arg(ok ? u"checked"_s : u"FAILED"_s));
     return ok;
 }
 
@@ -8560,6 +8810,8 @@ int runResults(const QStringList& args)
         return checkClipboardFilePreview(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--clipboard-select"_s))
         return checkClipboardTextSelection(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--clipboard-crashed-reading"_s)) // its warning when it gives up is expected
+        return checkClipboardCrashedReading() ? 0 : 4;
     if (const qsizetype at = args.indexOf(u"--terminal-launch"_s); at >= 0 && at + 2 < args.size()) {
         // 在终端中打开 for real (GitHub #386): <id> <folder> [command]. Only
         // started here; the script that runs it finds the new shell, checks
@@ -12033,7 +12285,7 @@ int runRuntime(const QStringList& args)
         const auto idleOpenProfile = qScopeGuard([&args] {
             const QFileInfo profile(Settings::profile());
             if ((args.contains(u"--idle-open-check"_s) || args.contains(u"--foreground-use-check"_s)
-                    || args.contains(u"--clipboard-animation-check"_s))
+                    || args.contains(u"--clipboard-animation-check"_s) || args.contains(u"--settings-motion-check"_s))
                 && profile.fileName().startsWith(u"WinShun-preview-")
                 && QDir::cleanPath(profile.absolutePath()).compare(QDir::cleanPath(QDir::tempPath()), Qt::CaseInsensitive) == 0)
                 QDir(profile.absoluteFilePath()).removeRecursively();
@@ -12041,11 +12293,13 @@ int runRuntime(const QStringList& args)
         // Before the App is made, so that what it holds from its start is told too.
         if (args.contains(u"--foreground-use-trace"_s) && !(memory::allocationTrace::start() && checkAllocationTrace()))
             return 4;
+        if (args.contains(u"--settings-motion-check"_s))
+            copyGalleryCacheForMotionCheck();
         App app;
         QElapsedTimer since;
         since.start();
         if (!app.start({.background = true, .clipboardDisplayProbe = args.contains(u"--clipboard-display-probe"_s),
-                .settingsProbe = args.contains(u"--settings-reopen-check"_s)}))
+                .settingsProbe = args.contains(u"--settings-reopen-check"_s) || args.contains(u"--settings-motion-check"_s)}))
             return 4;
         if (args.contains(u"--live"_s)) {
             const int code = runLive(app, out);
@@ -12098,6 +12352,8 @@ int runRuntime(const QStringList& args)
             return checkClipboardAnimation(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--settings-reopen-check"_s))
             return probeSettingsReopen(app, args, out, report) ? 0 : 4;
+        if (args.contains(u"--settings-motion-check"_s))
+            return checkSettingsMotion(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--clipboard-shell-probe"_s)) {
             const bool ok = probeClipboardShell(valueAfter(args, u"--clipboard-shell-probe"_s), out, report,
                 args.contains(u"--clipboard-display-probe"_s) || args.contains(u"--clipboard-display-service-probe"_s),
@@ -12382,8 +12638,8 @@ int run(const QStringList& args)
             QDir(profile).removeRecursively();
     });
     if (valueAfter(args, runtimeMode ? kRuntimeFlag : resultsMode ? kResultsFlag : cardsMode ? kAiCardsFlag : settingsMode ? kSettingsFlag : kFlag).isEmpty()) {
-        std::fprintf(stderr, "usage: WinShun --preview-plugins <file.png> [--dark] [--scale 1.5] [--dialog | --dialog-allow | --dialog-aside] [--updates] [--log-many] [--page ai] [--elevated]\n"
-                             "       WinShun --preview-settings <folder> [--dark] [--scale 1.5] [--tree] [--edges] [--renderer d3d11]\n");
+        std::fprintf(stderr, "usage: WinShun --preview-plugins <file.png> [--dark] [--scale 1.5] [--dialog | --dialog-allow | --dialog-aside] [--updates] [--log-many] [--page ai] [--elevated] [--open]\n"
+                             "       WinShun --preview-settings <folder> [--dark] [--scale 1.5] [--tree] [--edges] [--renderer d3d11] [--builtins] [--open]\n");
         return 2;
     }
     g_previous = qInstallMessageHandler(countWarnings);
