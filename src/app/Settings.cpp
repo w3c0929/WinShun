@@ -1025,6 +1025,7 @@ void Settings::load()
     scopeButton = readOrDefault(s, u"Appearance/ScopeButton"_s, d.scopeButton);
     openAnimation = readOrDefault(s, u"Appearance/OpenAnimation"_s, d.openAnimation);
     rememberWindowSize = readOrDefault(s, u"Appearance/RememberWindowSize"_s, d.rememberWindowSize);
+    donateOnGleaningPage = readOrDefault(s, u"Appearance/DonateOnGleaningPage"_s, d.donateOnGleaningPage);
     hoverTips = readOrDefault(s, u"Appearance/HoverTips"_s, d.hoverTips);
     previewWith = readOrDefault(s, u"Results/PreviewWith"_s, d.previewWith).trimmed().toLower();
     if (previewWith != u"builtin")
@@ -1199,6 +1200,10 @@ void Settings::load()
     if (clipboardOpenAt != u"caret" && clipboardOpenAt != u"pointer" && clipboardOpenAt != u"last")
         clipboardOpenAt = d.clipboardOpenAt;
     clipboardPreviewRestore = readOrDefault(s, u"Clipboard/PreviewRestore"_s, d.clipboardPreviewRestore);
+    clipboardOpenTab = readOrDefault(s, u"Clipboard/OpenTab"_s, d.clipboardOpenTab).trimmed().toLower();
+    static const QRegularExpression openTab(u"^(all|last|text|links|images|files|pinned|group:[1-9][0-9]{0,17})$"_s);
+    if (!openTab.match(clipboardOpenTab).hasMatch())
+        clipboardOpenTab = d.clipboardOpenTab;
     clipboardPauseInFullScreen = readOrDefault(s, u"Clipboard/PauseInFullScreen"_s, d.clipboardPauseInFullScreen);
     clipboardFlipAbove = readOrDefault(s, u"Clipboard/FlipAbove"_s, d.clipboardFlipAbove);
     clipboardHoldToStep = readOrDefault(s, u"Clipboard/HoldToStep"_s, d.clipboardHoldToStep);
@@ -1444,6 +1449,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Appearance/ScopeButton"_s, scopeButton);
     s.setValue(u"Appearance/OpenAnimation"_s, openAnimation);
     s.setValue(u"Appearance/RememberWindowSize"_s, rememberWindowSize);
+    s.setValue(u"Appearance/DonateOnGleaningPage"_s, donateOnGleaningPage);
     s.setValue(u"Appearance/HoverTips"_s, hoverTips);
     s.setValue(u"Results/PreviewWith"_s, previewWith);
     s.setValue(u"Results/PreviewHotkey"_s, previewHotkey);
@@ -1509,6 +1515,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Clipboard/OpenAt"_s, clipboardOpenAt);
     s.remove(u"Clipboard/AtPointer"_s); // said by OpenAt now
     s.setValue(u"Clipboard/PreviewRestore"_s, clipboardPreviewRestore);
+    s.setValue(u"Clipboard/OpenTab"_s, clipboardOpenTab);
     s.setValue(u"Clipboard/PauseInFullScreen"_s, clipboardPauseInFullScreen);
     s.setValue(u"Clipboard/FlipAbove"_s, clipboardFlipAbove);
     s.setValue(u"Clipboard/HoldToStep"_s, clipboardHoldToStep);
@@ -1601,6 +1608,12 @@ CrawlRules Settings::crawlRules() const
     ownFolder(dataDir());
     if (!indexFolder.isEmpty())
         ownFolder(indexDir());
+    // But not the plugins installed there (GitHub #406): found by name, as
+    // anything of the user's, ranked with the program folders. Each one's
+    // .data folder too: a plugin's own files, written now and then.
+    const std::wstring plugins = normalizePath(dataDir() + u"\\plugins"_s);
+    rules.keptPaths.push_back(plugins);
+    rules.lowPriorityPaths.push_back(plugins);
     for (const QString& n : excludedNames) {
         if (!n.trimmed().isEmpty() && !everythingCompat)
             rules.excludedNames.push_back(normalizeName(n));

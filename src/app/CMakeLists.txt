@@ -128,6 +128,8 @@ qt_add_executable(WinShun WIN32
     platform/NumberKeys.cpp platform/NumberKeys.h
     platform/Paster.cpp platform/Paster.h
     platform/PointerWatch.cpp platform/PointerWatch.h
+    platform/Power.cpp platform/Power.h
+    platform/SelectedText.cpp platform/SelectedText.h
     platform/PreviewHost.cpp platform/PreviewHost.h
     platform/Shell.cpp platform/Shell.h platform/ShellDialogs.cpp
     platform/ShellContextMenu.cpp platform/ShellContextMenu.h
@@ -208,6 +210,7 @@ set(qml_files
     qml/FontPicker.qml
     qml/ChoiceBox.qml
     qml/SettingSlider.qml
+    qml/SettingTextArea.qml
     qml/ComboPopup.qml
     qml/ClipGroupPicker.qml
     qml/DropPieWindow.qml
@@ -230,6 +233,8 @@ set(qml_files
     qml/SettingsSearchBox.qml
     qml/TitleBar.qml
     qml/DonateButton.qml
+    qml/DonateMoveDialog.qml
+    qml/DonateSideKey.qml
     qml/SettingsSection.qml
     qml/SettingsContext.qml
     qml/SettingsPage.qml
@@ -472,6 +477,7 @@ target_link_libraries(WinShun PRIVATE
     windowsapp # TextRecognizer: Windows.Media.Ocr, through C++/WinRT from the Windows SDK
     onnxruntime_headers) # PaddleOcr
 target_link_libraries(WinShun PRIVATE advapi32 userenv miniz zstd_decompress comdlg32 gdi32) # native report printing; delta updates
+target_link_libraries(WinShun PRIVATE powrprof) # platform/Power: SetSuspendState, IsPwrHibernateAllowed
 # The execution level (asInvoker, since 0.8.0) comes from app.manifest alone,
 # with the rest of the manifest; the linker's own UAC fragment would be a
 # second one. Media Foundation is loaded only when used (SoundClip): Windows

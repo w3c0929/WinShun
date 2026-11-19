@@ -148,6 +148,11 @@ Window {
         function onWebSettingsRequested() { window.showWebPage() }
     }
     property int currentPage: 0
+    // A category chosen in the list whose page is not made yet: the list
+    // shows the choice at once, the page follows a frame later (navigate). -1: none.
+    property int navPending: -1
+    readonly property int navPage: navPending >= 0 ? navPending : currentPage
+    property int navHovered: -1 // the category under the pointer (hoverNav)
     property int currentTab: 0
     property var lastTabs: [] // by page: the tab it was left on, to come back to
     // A tab gone from the page on show (its switch turned off): the last one left.
@@ -205,6 +210,9 @@ Window {
     function resetForReopen() {
         clearFocus()
         fillTimer.stop()
+        navPrefetch.stop()
+        navPending = -1
+        navHovered = -1
         // Each page made so far its own (its recorders stopped, its fields cleared, …).
         for (let i = 0; i < pageSlots.length; ++i)
             pageSlots[i].item?.resetForReopen()
@@ -213,6 +221,7 @@ Window {
         readmeDialog.close()
         if (pluginDialog.open)
             pluginDialog.reject()
+        donateDialog.close()
         webEditing = -2
         webReturnFocus = null
         // Dropped menus and hover tips live on the content item (DropMenu, HoverTip).
@@ -437,6 +446,7 @@ Window {
             console.warn("settings: no page", which)
             return
         }
+        navPending = -1
         if (index !== gleaningPage)
             loadPage(index) // made now if it is not yet: in this frame, not after it
         if (searching) {
@@ -451,6 +461,65 @@ Window {
         flick.stopScrolling()
         flick.contentY = 0
     }
+
+    // A category chosen in the list (a press, ↑ ↓, Enter). Its page at once
+    // if it is made. If not (20–120 ms to make one never shown, measured
+    // 2026-11-19), the list shows the choice in the next frame and the page
+    // is made right after, instead of nothing moving until it is there.
+    function navigate(index: int): void {
+        navPrefetch.stop()
+        if (index === gleaningPage || searching || pageItem(index) !== null) {
+            showPage(index)
+            return
+        }
+        navPending = index
+        navFrames.frames = 0
+    }
+    FrameAnimation { // navPending's page made on the second tick: a frame with the choice has been synced in between
+        id: navFrames
+        property int frames: 0
+        running: window.navPending >= 0
+        onTriggered: {
+            if (++frames < 2)
+                return
+            const index = window.navPending
+            window.navPending = -1
+            if (!window.searching) // typed into the box meanwhile: the search's
+                window.showPage(index)
+        }
+    }
+    // The pointer resting on a category whose page is not made: the page made
+    // meanwhile in the background (PageSlot.prefetch, a few ms a frame), so
+    // that the press finds it made, or nearly. Not while the pointer only
+    // passes over the list; only the pages pointed at (each ~20 MB).
+    function hoverNav(index: int, on: bool): void {
+        if (!on) {
+            if (navHovered === index) {
+                navHovered = -1
+                navPrefetch.stop()
+            }
+            return
+        }
+        navHovered = index
+        const slot = index < pageSlots.length ? pageSlots[index] : null
+        if (slot && !slot.item && !slot.incubator && index !== navPending)
+            navPrefetch.restart()
+        else
+            navPrefetch.stop()
+    }
+    Timer {
+        id: navPrefetch
+        interval: 60
+        onTriggered: {
+            const index = window.navHovered
+            if (window.visible && index >= 0 && index < window.pageSlots.length && index !== window.navPending)
+                window.pageSlots[index].prefetch(null)
+        }
+    }
+    // That page made faster than the window's own pace meanwhile.
+    readonly property bool navHurry: visible && navHovered >= 0 && navHovered < pageSlots.length
+                                     && pageSlots[navHovered].incubator !== null
+    onNavHurryChanged: editor.hurryIncubation(window, navHurry)
 
     function showTab(tab) {
         if (tab === currentTab)
@@ -667,19 +736,19 @@ Window {
 
     Shortcut { // Ctrl+F: to the search box
         sequences: [StandardKey.Find]
-        enabled: !window.editor.recordingHotkey && !updateDialog.open && !pluginDialog.open && !webDialog.active
+        enabled: !window.editor.recordingHotkey && !updateDialog.open && !pluginDialog.open && !donateDialog.open && !webDialog.active
         onActivated: searchBox.focusAll()
     }
     Shortcut { // Ctrl+Tab, Ctrl+Shift+Tab: through the page's tabs
         sequences: [StandardKey.NextChild]
-        enabled: !window.searching && !window.warm && !window.editor.recordingHotkey && !updateDialog.open && !webDialog.active
+        enabled: !window.searching && !window.warm && !window.editor.recordingHotkey && !updateDialog.open && !donateDialog.open && !webDialog.active
         onActivated: window.cycleTab(1)
     }
     Shortcut {
         // Not StandardKey.PreviousChild: its Ctrl+Shift+Backtab never matches
         // on Windows (Qt 6.12), the written-out keys do.
         sequences: ["Ctrl+Shift+Tab"]
-        enabled: !window.searching && !window.warm && !window.editor.recordingHotkey && !updateDialog.open && !webDialog.active
+        enabled: !window.searching && !window.warm && !window.editor.recordingHotkey && !updateDialog.open && !donateDialog.open && !webDialog.active
         onActivated: window.cycleTab(-1)
     }
 
@@ -932,10 +1001,24 @@ Window {
         title: window.title + " - " + Qt.application.displayName
         iconX: navList.x + 16 // over the categories' icons, the title over their names
         foreground: window.warm ? WarmPalette.ink : Theme.text
-        tools: DonateButton {
-            visible: Gleaning.donateUrl.length > 0
-            dpr: window.dpr
-            onClicked: window.editor.openUrl(Gleaning.donateUrl)
+        tools: Row { // 捐赠, and the × that asks to move it to the 拾穗计划 page (GitHub #402)
+            objectName: "titleDonateButton"
+            visible: Gleaning.donateUrl.length > 0 && !window.editor.donateOnGleaningPage
+            spacing: 2
+
+            DonateButton {
+                anchors.verticalCenter: parent.verticalCenter
+                dpr: window.dpr
+                onClicked: window.editor.openUrl(Gleaning.donateUrl)
+            }
+            DonateSideKey {
+                objectName: "titleDonateTuck"
+                anchors.verticalCenter: parent.verticalCenter
+                iconName: "x"
+                tip: qsTr("挪到%1页").arg(Gleaning.title)
+                dpr: window.dpr
+                onClicked: donateDialog.ask()
+            }
         }
     }
 
@@ -959,7 +1042,7 @@ Window {
 
             required property int index
             required property var modelData
-            readonly property bool selected: index === window.currentPage && !window.searching
+            readonly property bool selected: index === window.navPage && !window.searching
             // While searching: its options on show.
             readonly property int found: window.searching ? settingsSearch.counts[index] ?? 0 : -1
             readonly property bool gleaning: modelData.gleaning === true
@@ -969,7 +1052,7 @@ Window {
                                               : navArea.pressed ? Theme.subtext : Theme.text
 
             function select(to) {
-                window.showPage(to)
+                window.navigate(to)
                 window.navItemAt(to).forceActiveFocus()
             }
 
@@ -981,9 +1064,9 @@ Window {
             color: window.warm && navArea.containsMouse && !selected ? WarmPalette.chip : "transparent"
             activeFocusOnTab: true
 
-            Keys.onSpacePressed: window.showPage(navItem.index)
-            Keys.onReturnPressed: window.showPage(navItem.index)
-            Keys.onEnterPressed: window.showPage(navItem.index)
+            Keys.onSpacePressed: window.navigate(navItem.index)
+            Keys.onReturnPressed: window.navigate(navItem.index)
+            Keys.onEnterPressed: window.navigate(navItem.index)
             Keys.onUpPressed: {
                 if (navItem.index === 0)
                     searchBox.focusAll()
@@ -1070,10 +1153,13 @@ Window {
                 id: navArea
                 anchors.fill: parent
                 hoverEnabled: true
-                onClicked: {
+                // Chosen on the press, as Windows' lists and Explorer's
+                // navigation pane choose: a click's ~100 ms sooner than on release.
+                onPressed: {
                     window.clearFocus()
-                    window.showPage(navItem.index)
+                    window.navigate(navItem.index)
                 }
+                onContainsMouseChanged: window.hoverNav(navItem.index, containsMouse)
             }
 
             HoverTip { // 插件: what the number is
@@ -5826,6 +5912,39 @@ Window {
                     }
                 }
 
+                SettingRow { // the tab it opens on (GitHub #404); also a tab's own menu, 打开时显示这里
+                    title: qsTr("打开时显示")
+                    keywords: qsTr("分组;默认;打开;标签;记住;上次;固定;文本;链接;图片;文件;tab;group").split(";")
+                    description: qsTr("每次打开剪贴板先显示哪一栏；在分组上点右键也能设")
+
+                    ChoiceBox {
+                        id: clipboardOpenTabPicker
+                        objectName: "clipboardOpenTabPicker"
+                        implicitWidth: 180
+                        implicitHeight: 36
+                        model: window.editor.clipboardOpenTabs
+                        textRole: "text"
+                        valueRole: "value"
+                        // A group since removed opens on 全部, the first.
+                        currentIndex: Math.max(0, window.editor.clipboardOpenTabs.findIndex(t => t.value === window.editor.clipboardOpenTab))
+                        onActivated: window.editor.clipboardOpenTab = currentValue
+                        Accessible.name: qsTr("打开时显示")
+                        dpr: window.dpr
+                        leftPadding: 12
+                        contentItem: Text {
+                            text: clipboardOpenTabPicker.displayText
+                            font: clipboardOpenTabPicker.font
+                            color: clipboardOpenTabPicker.palette.buttonText
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                        Connections {
+                            target: clipboardOpenTabPicker.popup
+                            function onOpened() { window.frame.addPopup(clipboardOpenTabPicker.popup.background) }
+                        }
+                    }
+                }
+
                 SettingRow {
                     title: qsTr("剪贴板大小")
                     keywords: qsTr("字体;字号;文字大小;行高;密集;紧凑;宽松;ditto;font size;dense").split(";")
@@ -6514,6 +6633,17 @@ Window {
         anchors.fill: parent
         plugins: window.editor.plugins
         Component.onCompleted: window.frame.addPopup(pluginDialog)
+    }
+
+    DonateMoveDialog { // before the 捐赠 button goes to the 拾穗计划 page (GitHub #402)
+        id: donateDialog
+        z: 1
+        Accessible.role: Accessible.Dialog
+        anchors.fill: parent
+        onDonate: window.editor.openUrl(Gleaning.donateUrl)
+        onVisitSite: window.editor.openUrl(Gleaning.siteUrl)
+        onConfirmed: window.editor.donateOnGleaningPage = true
+        Component.onCompleted: window.frame.addPopup(donateDialog)
     }
 
     Image { // the window as it looked before a theme or language change, fading out (see changeAppearance)

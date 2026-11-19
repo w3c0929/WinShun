@@ -2192,6 +2192,41 @@
     </message>
 </context>
 <context>
+    <name>DonateMoveDialog</name>
+    <message>
+        <source>把捐赠按钮挪到%1页？</source>
+        <translation>Move the Donate button to the %1 page?</translation>
+    </message>
+    <message>
+        <source>谢谢你的心意！</source>
+        <translation>Thank you!</translation>
+    </message>
+    <message>
+        <source>Win顺 会继续用心做下去。</source>
+        <translation>I&apos;ll keep putting my heart into WinShun.</translation>
+    </message>
+    <message>
+        <source>用最&lt;font color=&quot;%1&quot;&gt;&lt;b&gt;用心&lt;/b&gt;&lt;/font&gt;的态度，做最&lt;font color=&quot;%1&quot;&gt;&lt;b&gt;好用&lt;/b&gt;&lt;/font&gt;的产品。</source>
+        <translation>The utmost &lt;font color=&quot;%1&quot;&gt;&lt;b&gt;care&lt;/b&gt;&lt;/font&gt;, for the most &lt;font color=&quot;%1&quot;&gt;&lt;b&gt;useful&lt;/b&gt;&lt;/font&gt; software.</translation>
+    </message>
+    <message>
+        <source>如果 Win顺 帮到了你，欢迎请我喝瓶快乐水～</source>
+        <translation>If WinShun has helped you, how about buying me a soda?</translation>
+    </message>
+    <message>
+        <source>点“确认”，它就挪到%1页，标题栏清爽一些。</source>
+        <translation>Click Confirm and it moves to the %1 page, leaving the title bar tidier.</translation>
+    </message>
+    <message>
+        <source>来官网坐坐，那里很有趣</source>
+        <translation>Drop by our website, it&apos;s fun</translation>
+    </message>
+    <message>
+        <source>确认</source>
+        <translation>Confirm</translation>
+    </message>
+</context>
+<context>
     <name>DropPieHelper</name>
     <message>
         <source>收藏圆盘未启动</source>
@@ -2438,8 +2473,8 @@
         <translation>drag;drop;drag and drop;pie;key;move;copy</translation>
     </message>
     <message>
-        <source>%1。只放得下前 8 个文件夹收藏（现有 %2 个）</source>
-        <translation>%1. Only the first 8 favorite folders fit (you have %2)</translation>
+        <source>%1。文件夹收藏每 8 个一页（现有 %2 个）：按 Tab 翻到下一页，Shift+Tab 翻回上一页</source>
+        <translation>%1. Folder favorites go 8 to a page (you have %2): Tab turns to the next page, Shift+Tab back to the one before</translation>
     </message>
     <message numerus="yes">
         <source>%n 项，拖动把手或点列头排序</source>
@@ -2841,6 +2876,10 @@
     <message>
         <source>作者</source>
         <translation>Author</translation>
+    </message>
+    <message>
+        <source>放回标题栏</source>
+        <translation>Put back in the title bar</translation>
     </message>
     <message>
         <source>作者主页</source>
@@ -7878,6 +7917,10 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>File managers</translation>
     </message>
     <message>
+        <source>挪到%1页</source>
+        <translation>Move to the %1 page</translation>
+    </message>
+    <message>
         <source>界面风格</source>
         <translation>Interface style</translation>
     </message>
@@ -8763,6 +8806,18 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>关闭剪贴板时预览一起收起，下次打开从列表开始</source>
         <translation>The preview closes with the clipboard; it opens on the list next time</translation>
+    </message>
+    <message>
+        <source>打开时显示</source>
+        <translation>Opens on</translation>
+    </message>
+    <message>
+        <source>分组;默认;打开;标签;记住;上次;固定;文本;链接;图片;文件;tab;group</source>
+        <translation>group;default;open;tab;remember;last;pinned;text;links;images;files;tab;group</translation>
+    </message>
+    <message>
+        <source>每次打开剪贴板先显示哪一栏；在分组上点右键也能设</source>
+        <translation>The tab the clipboard shows each time it opens; right-click a tab to set it there too</translation>
     </message>
     <message>
         <source>重新复制同样的内容仍会排到最前。粘贴过的条目右下角带蓝色对勾，也不会因“保留天数”到期而被删</source>
@@ -11240,6 +11295,14 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Delete the group</translation>
     </message>
     <message>
+        <source>打开时显示这里</source>
+        <translation>Open on this tab</translation>
+    </message>
+    <message>
+        <source>上次看的</source>
+        <translation>The one left open</translation>
+    </message>
+    <message>
         <source>图片还在保存，请稍后再试</source>
         <translation>The picture is still being saved; try again in a moment</translation>
     </message>
@@ -11775,6 +11838,10 @@ Content index: %5</translation>
     <message>
         <source>在中间松开或按 Esc 取消</source>
         <translation>Let go in the middle or press Esc to cancel</translation>
+    </message>
+    <message>
+        <source>Tab 下一页</source>
+        <translation>Tab next page</translation>
     </message>
     <message numerus="yes">
         <source>复制 %n 项到</source>
@@ -14065,6 +14132,14 @@ Content index: %5</translation>
         <translation>Get WinShun&apos;s settings backup and restore the settings from one</translation>
     </message>
     <message>
+        <source>关机、重启、睡眠</source>
+        <translation>Shut down, restart, sleep</translation>
+    </message>
+    <message>
+        <source>读取你在其他程序里选中的文字</source>
+        <translation>Read the words you select in other programs</translation>
+    </message>
+    <message>
         <source>读最近打开的项目</source>
         <translation>Read the recently opened items</translation>
     </message>
@@ -14111,6 +14186,14 @@ Content index: %5</translation>
     <message>
         <source>经 Win顺 弹出，每 2 秒最多一条</source>
         <translation>Shown by WinShun, at most one every 2 seconds</translation>
+    </message>
+    <message>
+        <source>只能通过 Win顺 关机、重启、睡眠，插件自己没有这个权限</source>
+        <translation>It can only ask WinShun to shut down, restart or sleep; the plugin itself has no such right</translation>
+    </message>
+    <message>
+        <source>由 Win顺 读前台窗口里选中的字，不经过剪贴板；浏览器等 Chromium 程序不读</source>
+        <translation>WinShun reads the words selected in the window in front, never through the clipboard; browsers and other Chromium programs are not read</translation>
     </message>
     <message>
         <source>在局域网上开端口，让别的设备连进来</source>

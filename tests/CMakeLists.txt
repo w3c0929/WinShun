@@ -1443,14 +1443,26 @@ set_tests_properties(tst_explorertabs PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 # winshun.gestures's rules (src/gestures-plugin/Gesture), built in again:
-# the directions a drag draws, the actions as written, the gestures of the
-# "more" setting and the programs left alone.
+# the directions and circles a drag draws, the actions as written, the
+# rules kept as JSON and which holds where, 1.0's settings read in, the
+# corners and edges of the screen, the programs left alone.
 qt_add_executable(tst_gestures tst_gestures.cpp ${PROJECT_SOURCE_DIR}/src/gestures-plugin/Gesture.cpp)
-target_include_directories(tst_gestures PRIVATE ${PROJECT_SOURCE_DIR}/src/gestures-plugin)
+target_include_directories(tst_gestures PRIVATE ${PROJECT_SOURCE_DIR}/src/gestures-plugin ${PROJECT_SOURCE_DIR}/src/plugins-sdk)
 target_link_libraries(tst_gestures PRIVATE winshun_options Qt6::Test)
 set_target_properties(tst_gestures PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_gestures COMMAND tst_gestures)
 set_tests_properties(tst_gestures PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# winshun.expander's rules (src/expander-plugin/Expander), built in again:
+# the abbreviations its setting lists, the one typed text ends with (its
+# case, the longest, after a word or not) and the programs left alone.
+qt_add_executable(tst_expander tst_expander.cpp ${PROJECT_SOURCE_DIR}/src/expander-plugin/Expander.cpp)
+target_include_directories(tst_expander PRIVATE ${PROJECT_SOURCE_DIR}/src/expander-plugin)
+target_link_libraries(tst_expander PRIVATE winshun_options Qt6::Test user32)
+set_target_properties(tst_expander PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_expander COMMAND tst_expander)
+set_tests_properties(tst_expander PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 # winshun.bookmarks (src/bookmarks-plugin/Bookmarks), built in again: reading
@@ -1529,7 +1541,8 @@ target_link_libraries(tst_pluginsdk PRIVATE winshun_options Qt6::Test)
 target_compile_definitions(tst_pluginsdk PRIVATE WINSHUN_SDK_SETTINGS_DEMO="$<TARGET_FILE:sdk_settings_demo>")
 add_dependencies(tst_pluginsdk sdk_settings_demo)
 set_target_properties(tst_pluginsdk PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
-qt_add_executable(tst_plugin tst_plugin.cpp)
+qt_add_executable(tst_plugin tst_plugin.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/Power.cpp # Power: the power tool, with the test's performer
+    ${PROJECT_SOURCE_DIR}/src/app/platform/SelectedText.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/ComWorker.cpp) # the selected_text tool
 qt_add_executable(plugin_qt plugin_qt.cpp)
 target_link_libraries(plugin_qt PRIVATE winshun_options Qt6::Quick)
 set_target_properties(plugin_qt PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
@@ -1551,7 +1564,7 @@ add_test(NAME tst_pluginreviewsettings COMMAND $<TARGET_FILE:WinShun>
 set_tests_properties(tst_puresearch tst_pluginreviewsettings PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 target_include_directories(tst_plugin PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
-target_link_libraries(tst_plugin PRIVATE wsplugin miniz Qt6::Test) # miniz: the test writes zips to install
+target_link_libraries(tst_plugin PRIVATE wsplugin miniz Qt6::Test advapi32 powrprof) # miniz: the test writes zips to install; the others: Power
 target_compile_definitions(tst_plugin PRIVATE
     WINSHUN_PLUGIN_HOST="$<TARGET_FILE:WinShunPluginHost>"
     WINSHUN_PLUGIN_FAKE="$<TARGET_FILE:plugin_fake>"

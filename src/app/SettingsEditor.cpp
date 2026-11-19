@@ -49,6 +49,8 @@
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QLocale>
+#include <QQmlEngine>
+#include <QQmlIncubator>
 #include <QRegularExpression>
 #include <QProcess>
 #include <QTimer>
@@ -571,6 +573,14 @@ void SettingsEditor::setRememberWindowSize(bool on)
     if (m_settings.rememberWindowSize == on)
         return;
     m_settings.rememberWindowSize = on;
+    commit();
+}
+
+void SettingsEditor::setDonateOnGleaningPage(bool on)
+{
+    if (m_settings.donateOnGleaningPage == on)
+        return;
+    m_settings.donateOnGleaningPage = on;
     commit();
 }
 
@@ -1380,6 +1390,30 @@ void SettingsEditor::refreshFileManagers()
     emit fileManagersChanged();
 }
 
+void SettingsEditor::hurryIncubation(QObject* window, bool on)
+{
+    if (!on) {
+        if (m_incubationHurry)
+            m_incubationHurry->stop();
+        return;
+    }
+    m_incubationWindow = window;
+    if (!m_incubationHurry) {
+        m_incubationHurry = new QTimer(this);
+        m_incubationHurry->setInterval(0); // when the event loop has nothing else to do
+        connect(m_incubationHurry, &QTimer::timeout, this, [this] {
+            QQmlEngine* engine = m_incubationWindow ? qmlEngine(m_incubationWindow) : nullptr;
+            QQmlIncubationController* controller = engine ? engine->incubationController() : nullptr;
+            if (!controller || controller->incubatingObjectCount() == 0) {
+                m_incubationHurry->stop();
+                return;
+            }
+            controller->incubateFor(8);
+        });
+    }
+    m_incubationHurry->start();
+}
+
 QString SettingsEditor::opusFolderMenuCommand() const
 {
     // {sourcepath$}: the folder shown, and nothing run for a non-folder
@@ -2057,6 +2091,25 @@ void SettingsEditor::setClipboardPreviewRestore(bool on)
         return;
     m_settings.clipboardPreviewRestore = on;
     commit();
+}
+
+void SettingsEditor::setClipboardOpenTab(const QString& key)
+{
+    const bool offered = std::ranges::any_of(m_clipboardOpenTabs, [&key](const QVariant& tab) {
+        return tab.toMap().value(u"value"_s).toString() == key;
+    });
+    if (m_settings.clipboardOpenTab == key || !offered)
+        return;
+    m_settings.clipboardOpenTab = key;
+    commit();
+}
+
+void SettingsEditor::setClipboardOpenTabs(const QVariantList& tabs)
+{
+    if (m_clipboardOpenTabs == tabs)
+        return;
+    m_clipboardOpenTabs = tabs;
+    emit clipboardOpenTabsChanged();
 }
 
 void SettingsEditor::setClipboardUiSize(const QString& size)

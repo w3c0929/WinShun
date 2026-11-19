@@ -1,5 +1,19 @@
 # 踩坑记录
 
+## 搜不到装好的插件文件夹：Win顺 自己的数据文件夹整个不进索引（2026-11-19，#406）
+
+- **现象**：输入插件 ID（`crazy-zxx.yigengming`）搜不到它的文件夹；同名文件夹放在别处就搜得到，所以不是查询里的 `-`、`.` 的问题（解析和匹配都把它们当普通字符）。
+- **原因**：`Settings::crawlRules` 把数据文件夹（`%LOCALAPPDATA%\WinShun`，便携版是程序旁的 `data`）整个排除：里面的 `index.bin`、日志、`state.ini`、剪贴板一直在写，收进来既占“最近修改”，`index.bin` 还会让索引一存就脏、再存。可用户装的插件也在这里（`plugins\<id>`），一起被藏了。
+- **做法**：`CrawlRules::keptPaths`——排除的文件夹里仍要索引的子文件夹。被排除的文件夹（及它和保留文件夹之间的各级）在索引里只是“通路”：只收通往保留文件夹的那一项，自己的文件和别的子文件夹都不收（`Crawler::isExcludedDir` 管子文件夹，`addToListing` 管文件，日志应用里 `UsnApplier::holdsNoFiles` 管新建、移入的文件，先按名字筛再拼路径）。只在恰好一条排除规则包住它时才算：用户自己排除了上级或这个文件夹本身，就照用户的。`plugins` 同时进 `lowPriorityPaths`，排在程序文件夹一档。保留集合变了（升级后第一次运行、换了配置文件夹）就整盘重读一次（`applyRuleChanges`），重读会自然去掉不再允许的条目，所以 `removeExcluded` 不用管它。快照升到 v10，多存这一组；老快照读进来规则对不上，正好触发那次重读。
+- **测法**：`tst_core keptInsideExcluded`（规则、真实目录的遍历、日志应用）、`tst_core snapshotRoundTrip`、`tst_settings ownFolderKeepsItsPlugins`。现场：`WinShun.exe --query <插件 ID>` 后 `--dump <文件>` 看结果行。
+
+## 设置窗口切分类不够快：第一次进的页现建，高亮也跟着等（2026-11-19，用户反馈）
+
+- **现象**：在设置窗口左侧切分类，感觉“不够快”。量下来（240 Hz、150%）：没建过的页点下去 40–120 ms 才出第一帧，这段时间连左边的选中高亮都不动；再次进入只要约 10 ms。另外分类是松开鼠标才切，又多了按下到松开那一段。
+- **原因**：页面按需建（`PageSlot`，每页约 20 MB，不全建），`showPage` 在同一帧里先把页建完，高亮和页面一起等。后台增量创建（`incubateObject(..., Qt.Asynchronous)`）靠窗口的控制器推进，每帧只给三分之一帧（240 Hz 下 1 ms），一页约 100 ms 的页要 400 多 ms 才建完。QML 的 `Timer` 也帮不上：它跟着动画帧触发（一帧最多一次），`interval: 1` 实际是一帧，还会让动画驱动一直跑。
+- **做法**（`SettingsWindow.navigate` / `hoverNav`）：分类在按下时就选中（Windows 的列表、资源管理器导航窗格也是按下就选）；页面没建过时先只把高亮挪过去（`navPending`），隔一个动画帧（`FrameAnimation` 第二次触发，中间必有一次同步）再建页。指针在没建过的分类上停 60 ms 就在后台建那一页，同时 `SettingsEditor::hurryIncubation` 用零间隔 `QTimer`（事件循环空闲时才触发）每次 `incubateFor(8)`，输入和帧在中间照常处理。
+- **验证**（`--settings-motion-check`，用 Qt 鼠标、按键事件按分类）：没建过的页，高亮 4–6 ms 上屏，页面约 100–120 ms 跟上；指针先停一下的，那页 187 ms 内建好（原来 422 ms），按下后约 10 ms 上屏；↓ 键到没建过的页，高亮和焦点立即过去。本机这类测量会被电源模式影响（有几轮整机降到 60 Hz、建页慢一倍），比较前后先看 `interval_p50` 是否一致。
+
 ## 窗口记住大小：隐藏时设的最大化被 Qt 当成还原（2026-11-19，#401）
 
 - **现象**：设置窗口上次是最大化关的，重启后打开却是普通大小，state.ini 里的 `Maximized` 也被删掉了。
@@ -93,6 +107,14 @@
 - **别踩**：
   - 阴影外扩量要按窗口自己的 DPI（`GetDpiForWindow`）算，探针进程的 `devicePixelRatio` 可能是 1。
   - 系统拖动是从越过拖动阈值那一刻、指针所在的位置开始的，窗口会落后指针一步。探针先慢慢越过阈值，再大步拖动。
+
+## 长截图结束后屏幕上留下预览框的空框残影（2026-11-19）
+
+- **现象**：长截图结束后，“长图预览”原来的位置留下一个圆角空框：有边框和阴影，框里透出下面的内容，一直不消失。截图进程里这个窗口已经隐藏（`IsWindowVisible` 为假），其他截图工具也能截到这个空框。
+- **原因**：面板拥有预览窗口（QML 里嵌套的 `Window`，transient parent 就是面板）。长截图进行时两个窗口都设了 `WDA_EXCLUDEFROMCAPTURE`。结束时先隐藏两个窗口，`ended()` 里再把两个都改回 `WDA_NONE`。在两个窗口都已隐藏的情况下把两个都改回，DWM 就会留下被拥有那个窗口的边框和阴影。纯 Win32 探针（`WS_CAPTION` 边框加 `DwmExtendFrameIntoClientArea`）也能复现：只改回其中一个、owner 没隐藏、没有拥有关系，或者在隐藏之前就改回，都不会留下残影。“取消”时拼接线程几乎立刻收尾，隐藏和改回之间 DWM 还没合成新的一帧，所以不一定出现；“完成”和“复制”要多等几帧画面，每次都会出现。
+- **做法**：`LongCapture::updateExclusion` 只在长截图进行时设置面板和预览窗口；结束后让它们带着原来的设置隐藏着。隐藏的窗口本来就不会出现在任何截图里，下次开始、移动或显示时会重新设置。选区边框的四条细窗口不属于任何窗口、也没有阴影，照旧在结束时改回。
+- **验证**：`--preview-long-capture` 测试在结束后读取预览原位置的屏幕像素，和夹具的纯色底比较。改之前，`--copy` 有 8291 个像素不一致，改之后 `--copy`、`--cancel` 都是 0，`--preview-over`（#378）仍然通过。
+- **别踩**：对隐藏的、有拥有关系的窗口改 `SetWindowDisplayAffinity` 之前先想一想。要清除这个设置，就在窗口还显示着的时候清。
 
 ## 剪贴板出现、消失没有动画：截一张图来淡出（2026-11-18，#377）
 
@@ -2559,6 +2581,13 @@
 - **现象**：manifest 写了 `clipboard:read`，作业的 UI 限制里也确实没有 `READCLIPBOARD` 了，插件 `OpenClipboard` 成功、`GetClipboardData` 却返回空，错误 6（`ERROR_INVALID_HANDLE`）；探针里不带 UI 限制的对照组读得到。
 - **原因**：没有 `ui` 权限时作业带 `JOB_OBJECT_UILIMIT_HANDLES`（不许用作业外进程拥有的 USER 句柄）；剪贴板里的数据句柄正是别的进程的，所以被挡。
 - **做法**：`sandbox::makeJob` 只在既没有 `ui` 也没有任何剪贴板权限时才加 `UILIMIT_HANDLES`；桌面、退出 Windows、系统参数、显示设置这几项照旧。`tst_plugin::jobsAndPermissions` 提权跑时断言有权限的插件 `clipRead = true`，这一条就是它抓出来的。
+
+### 作业有任何 UI 限制，UI 自动化就不通（连只禁读剪贴板也算）
+
+- **现象**：鼠标手势在 Win10 记事本里选中文字后画 ↓，执行的是“到底部”不是“复制”。插件日志：`GetFocusedElement` 返回 `0x80131505`（`UIA_E_TIMEOUT`），16 毫秒就回来；同样的代码做成独立探针直接跑，15 毫秒读到选中的字。
+- **原因**：插件进程在作业里，没有 `clipboard:read` 时作业带 `JOB_OBJECT_UILIMIT_READCLIPBOARD`。探针放进只带这一项 UI 限制的作业，照样立刻超时，连 `SendMessage(EM_GETSEL)` 都只回 0..0；只带进程缓解策略、不带 UI 限制的作业里一切正常。也就是说作业有 UI 限制时，跨作业的窗口消息（UI 自动化靠它）被挡，`SendInput`、`PostMessage`、`OpenProcess` 不受影响（手势的按键、关窗口照常）。
+- **做法**：要读别的程序界面的事交给 Win顺 做：`selected_text` 工具（权限 `selection:read`，`app/platform/SelectedText.cpp`），插件经 `winshun/tool` 要结果。别为这个去掉作业的剪贴板限制。探针在 `F:\HyperV\Win10\selprobe*.ps1`（`selprobe.exe jobA` 只带剪贴板限制、`jobB` 只带缓解策略）。
+- **同时**：Win顺 读的时候照“Chromium 的界面自动化会让 VS Code 进入屏幕阅读器模式”一条，不问 Chromium 和 Firefox 的窗口（焦点窗口和它往上直到顶层窗口的类名）。
 
 ### moc 把原始字符串里的 `//` 当注释，整个测试类就没了
 

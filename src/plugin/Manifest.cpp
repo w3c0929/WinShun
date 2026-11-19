@@ -97,6 +97,8 @@ constexpr Named kPermissions[] = {
     {Permission::SystemSettings, u"system:settings"},
     {Permission::Elevated, u"elevated"},
     {Permission::WinshunBackup, u"winshun:backup"},
+    {Permission::SystemPower, u"system:power"},
+    {Permission::SelectionRead, u"selection:read"},
 };
 
 // Collects the first error; every check after it is skipped.
@@ -567,6 +569,20 @@ Setting readSetting(const QJsonValue& value, int index, Check& check)
         if (!o.value(u"options"_s).isArray())
             check.fail(where + u".options 要是数组"_s);
         s.options = o.value(u"options"_s).toArray();
+    }
+    if (const QJsonValue multiline = o.value(u"multiline"_s); !multiline.isUndefined()) {
+        if (!multiline.isBool())
+            check.fail(where + u".multiline 要是 true 或 false"_s);
+        else if (s.type != u"text" && multiline.toBool())
+            check.fail(where + u".multiline 只用于 text"_s);
+        s.multiline = multiline.toBool();
+    }
+    if (const QJsonValue hidden = o.value(u"hidden"_s); !hidden.isUndefined()) {
+        if (!hidden.isBool())
+            check.fail(where + u".hidden 要是 true 或 false"_s);
+        else if (hidden.toBool() && s.type != u"text" && s.type != u"number" && s.type != u"bool" && s.type != u"choice")
+            check.fail(where + u".hidden 只用于 text、number、bool、choice"_s);
+        s.hidden = hidden.toBool();
     }
     if (s.type == u"number") { // its range, step and unit (GitHub #359); on other types they mean nothing
         const auto number = [&](const QString& name) -> std::optional<double> {

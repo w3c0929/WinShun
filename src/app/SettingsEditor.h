@@ -17,6 +17,8 @@
 #include <memory>
 #include <vector>
 
+class QTimer;
+
 namespace ws {
 
 class CliSetup;
@@ -236,6 +238,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool scopeButton READ scopeButton WRITE setScopeButton NOTIFY changed FINAL)
     Q_PROPERTY(bool openAnimation READ openAnimation WRITE setOpenAnimation NOTIFY changed FINAL)
     Q_PROPERTY(bool rememberWindowSize READ rememberWindowSize WRITE setRememberWindowSize NOTIFY changed FINAL)
+    Q_PROPERTY(bool donateOnGleaningPage READ donateOnGleaningPage WRITE setDonateOnGleaningPage NOTIFY changed FINAL)
     Q_PROPERTY(bool hoverTips READ hoverTips WRITE setHoverTips NOTIFY changed FINAL)
     Q_PROPERTY(QString previewWith READ previewWith WRITE setPreviewWith NOTIFY changed FINAL) // auto | builtin
     Q_PROPERTY(QString previewHotkey READ previewHotkey WRITE setPreviewHotkey NOTIFY changed FINAL)
@@ -272,6 +275,10 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool clipboardKeepPlace READ clipboardKeepPlace WRITE setClipboardKeepPlace NOTIFY changed FINAL)
     Q_PROPERTY(QString clipboardOpenAt READ clipboardOpenAt WRITE setClipboardOpenAt NOTIFY changed FINAL) // caret | pointer | last
     Q_PROPERTY(bool clipboardPreviewRestore READ clipboardPreviewRestore WRITE setClipboardPreviewRestore NOTIFY changed FINAL)
+    // The tab the clipboard opens on (GitHub #404, Settings::clipboardOpenTab),
+    // out of clipboardOpenTabs: [{value, text}] (Clipboard::openTabChoices, set by the app).
+    Q_PROPERTY(QString clipboardOpenTab READ clipboardOpenTab WRITE setClipboardOpenTab NOTIFY changed FINAL)
+    Q_PROPERTY(QVariantList clipboardOpenTabs READ clipboardOpenTabs NOTIFY clipboardOpenTabsChanged FINAL)
     Q_PROPERTY(bool clipboardPauseInFullScreen READ clipboardPauseInFullScreen WRITE setClipboardPauseInFullScreen NOTIFY changed FINAL)
     Q_PROPERTY(bool clipboardFlipAbove READ clipboardFlipAbove WRITE setClipboardFlipAbove NOTIFY changed FINAL)
     Q_PROPERTY(bool clipboardHoldToStep READ clipboardHoldToStep WRITE setClipboardHoldToStep NOTIFY changed FINAL)
@@ -535,6 +542,12 @@ public:
     // Preferences > File Displays > Mouse > Background Events.
     Q_INVOKABLE QString opusFolderMenuCommand() const;
     Q_INVOKABLE void openOpusPreferences() const;
+    // While `on`: what `window`'s engine is making in the background (a
+    // settings page the pointer rests on: SettingsWindow.hoverNav) made on
+    // whenever the event loop is idle, 8 ms at a time, input and frames in
+    // between. The window's own pace, a third of a frame now and then, took
+    // ~450 ms for a page made in ~100 (2026-11-19). Stops by itself when nothing is left.
+    Q_INVOKABLE void hurryIncubation(QObject* window, bool on);
     QString opusFolderMenu() const { return m_opusFolderMenu; }
     QString opusFolderMenuTaken() const { return m_opusFolderMenuTaken; }
     QString opusFolderMenuProblem() const { return m_opusFolderMenuProblem; }
@@ -739,6 +752,10 @@ public:
     QString clipboardOpenAt() const { return m_settings.clipboardOpenAt; }
     bool clipboardPreviewRestore() const { return m_settings.clipboardPreviewRestore; }
     void setClipboardPreviewRestore(bool on);
+    QString clipboardOpenTab() const { return m_settings.clipboardOpenTab; }
+    void setClipboardOpenTab(const QString& key);
+    QVariantList clipboardOpenTabs() const { return m_clipboardOpenTabs; }
+    void setClipboardOpenTabs(const QVariantList& tabs); // set by the app
     bool clipboardPauseInFullScreen() const { return m_settings.clipboardPauseInFullScreen; }
     void setClipboardPauseInFullScreen(bool on);
     void setClipboardOpenAt(const QString& at);
@@ -849,6 +866,8 @@ public:
     void setOpenAnimation(bool on);
     bool rememberWindowSize() const { return m_settings.rememberWindowSize; }
     void setRememberWindowSize(bool on);
+    bool donateOnGleaningPage() const { return m_settings.donateOnGleaningPage; }
+    void setDonateOnGleaningPage(bool on);
     bool hoverTips() const { return m_settings.hoverTips; }
     void setHoverTips(bool on);
     void setPureSearch(bool on);
@@ -1154,6 +1173,7 @@ signals:
     void taskbarStateChanged();
     void fileManagersChanged();
     void clipboardCountChanged();
+    void clipboardOpenTabsChanged();
     void numberKeysNoteChanged();
     void doubleCtrlClashChanged();
     void doubleTapActionsChanged();
@@ -1189,6 +1209,8 @@ signals:
 private:
     friend class PluginSettings; // edits m_settings' plugin sections and commits
     friend class FavoritesSettings; // reads the web shortcuts' keywords and the window
+    QTimer* m_incubationHurry = nullptr; // hurryIncubation's, made on its first use
+    QPointer<QObject> m_incubationWindow;
     void commit();
     void refreshKnownPlaces(); // m_knownShares, m_knownWsl, m_knownFolders read again; told when they changed
     void refreshOnReturn(); // windowActivated()'s
@@ -1237,6 +1259,7 @@ private:
     bool m_classicTaskbar = false;
     QString m_clipboardHotkeyError;
     int m_clipboardCount = 0;
+    QVariantList m_clipboardOpenTabs;
     bool m_clipboardImporting = false;
     QString m_clipboardImportMessage;
     QPointer<QWindow> m_window;

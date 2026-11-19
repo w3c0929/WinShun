@@ -701,6 +701,35 @@ private slots:
         QCOMPARE(unknown.clipboardOpenAt, u"caret"_s);
     }
 
+    // The tab the clipboard opens on (GitHub #404): 全部 unless chosen; a
+    // tab's key kept, written in any case; anything else is 全部.
+    void clipboardOpenTab()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        ws::Settings settings;
+        settings.load();
+        QCOMPARE(settings.clipboardOpenTab, u"all"_s);
+        for (const QString& tab : {u"last"_s, u"text"_s, u"pinned"_s, u"group:42"_s, u"all"_s}) {
+            settings.clipboardOpenTab = tab;
+            settings.save();
+            ws::Settings restored;
+            restored.load();
+            QCOMPARE(restored.clipboardOpenTab, tab);
+        }
+        const auto read = [](const QString& written) {
+            QSettings(ws::Settings::filePath(), QSettings::IniFormat).setValue(u"Clipboard/OpenTab"_s, written);
+            ws::Settings s;
+            s.load();
+            return s.clipboardOpenTab;
+        };
+        QCOMPARE(read(u" Group:7 "_s), u"group:7"_s);
+        QCOMPARE(read(u"Links"_s), u"links"_s);
+        for (const QString& wrong : {u"group:"_s, u"group:0"_s, u"group:-3"_s, u"groups"_s, u"上次"_s, QString()})
+            QCOMPARE(read(wrong), u"all"_s);
+    }
+
     // 在终端中打开 (GitHub #386): the command prompt unless chosen; a choice
     // and its own command line kept; an unknown one is the command prompt.
     void terminalChoice()
@@ -953,6 +982,34 @@ private slots:
         const ws::CrawlRules hidden = settings.hiddenRules();
         QCOMPARE(hidden.excludedPaths, std::vector<std::wstring> {L"D:\\Work\\Skipped"});
         QCOMPARE(hidden.excludedNames, std::vector<std::wstring> {L"node_modules"});
+    }
+
+    // GitHub #406: Win顺's own data folder stays out of the index, the
+    // plugins installed in it do not (ranked with the program folders).
+    void ownFolderKeepsItsPlugins()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        ws::Settings settings;
+        settings.load();
+        settings.excludedPaths = {u"D:\\Work\\Skipped"_s}; // not %TEMP%, which the profile is in: that would win
+        const std::wstring data = QDir::toNativeSeparators(QDir(profile.path()).absolutePath()).toStdWString();
+        const ws::CrawlRules rules = settings.crawlRules();
+        const ws::Crawler crawler(rules);
+        QVERIFY(crawler.keptFolders() == std::vector<std::wstring> {data + L"\\plugins"});
+        QVERIFY(crawler.isExcludedPath(data + L"\\state.ini"));
+        QVERIFY(crawler.isExcludedPath(data + L"\\clipboard\\1.png"));
+        QVERIFY(!crawler.isExcludedPath(data + L"\\plugins\\crazy-zxx.yigengming\\main.ps1"));
+        QVERIFY(crawler.dirPriorityFlags(data + L"\\plugins", L"plugins") & ws::EntryFlag::LowPriority);
+
+        // A custom index folder elsewhere changes nothing of that; the user's
+        // own exclusion of the plugins wins.
+        QTemporaryDir indexes;
+        settings.indexFolder = indexes.path();
+        QCOMPARE(ws::Crawler(settings.crawlRules()).keptFolders().size(), std::size_t {1});
+        settings.excludedPaths.append(profile.path() + u"/plugins"_s);
+        QVERIFY(ws::Crawler(settings.crawlRules()).keptFolders().empty());
     }
 
     void opusTyping()

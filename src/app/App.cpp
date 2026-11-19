@@ -94,6 +94,8 @@
 #include "platform/NetworkNotifier.h"
 #include "platform/Paster.h"
 #include "platform/PointerWatch.h"
+#include "platform/Power.h"
+#include "platform/SelectedText.h"
 #include "platform/ServiceDialogNav.h"
 #include "platform/ServiceKeyListener.h"
 #include "platform/Shell.h"
@@ -919,6 +921,15 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
     connect(m_clipboard.get(), &Clipboard::shortcutSettingsRequested, this, [this] {
         hideClipboard(false);
         showShortcutSettings();
+    });
+    // 打开时显示这里 in a tab's menu (GitHub #404): the same setting as 设置 › 剪贴板 › 打开时显示.
+    connect(m_clipboard.get(), &Clipboard::openTabChosen, this, [this](const QString& key) {
+        if (m_settings.clipboardOpenTab == key)
+            return;
+        m_settings.clipboardOpenTab = key;
+        m_settings.save();
+        if (m_settingsEditor) // its copy must not bring the old value back with its next change
+            m_settingsEditor->setSettings(m_settings);
     });
     connect(m_clipboard.get(), &Clipboard::pinRequested, this, [this](qint64 id) { pictureAction(u"pin"_s, id, {}, false); });
     connect(m_clipboard.get(), &Clipboard::pinTextRequested, this, &App::pinText);
@@ -1863,6 +1874,7 @@ void App::applyKeyListener(bool force)
             if (DropPie* pie = m_dropPie.get()) {
                 callbacks.dragMenu = [pie](POINT pt, HWND capture, DWORD pid) { pie->summoned(pt, capture, pid); };
                 callbacks.leftButtonUp = [pie] { pie->buttonReleased(); };
+                callbacks.dragMenuPage = [pie](bool back) { pie->pageKey(back); };
                 // Another program's hotkey has the key: the pie never comes (GitHub #150).
                 callbacks.dragKeyRefused = [this](unsigned, unsigned long error) {
                     QMetaObject::invokeMethod(this, [this, error] {
@@ -2040,6 +2052,7 @@ void App::applySettings(bool initial)
     m_clipboard->setHoldToStep(m_settings.clipboardHoldToStep);
     m_clipboard->setPasteElevated(m_settings.clipboardPasteElevated);
     m_clipboard->setPreviewRestore(m_settings.clipboardPreviewRestore);
+    m_clipboard->setOpenTab(m_settings.clipboardOpenTab);
     if (!m_settings.clipboardHoldToStep && (m_hold || m_browseHotkey))
         endClipboardHold("setting-off");
     updateNumberKeys();
@@ -2609,6 +2622,21 @@ void App::setUpAppTools()
                 done(toolError(tr("网页搜索插件未启用或没有可用的网站，请在设置 → 插件中安装并启用网页搜索")));
             } else
                 done({});
+        }});
+    // Shut down, restart, sleep or hibernate the computer (system:power, 0.41.0;
+    // the gestures plugin): `action` is shutdown, restart, sleep or hibernate.
+    // A plugin's token has no shutdown privilege, so Win顺 does it, and forces
+    // nothing: a program with unsaved work can still hold a shutdown up.
+    tools.push_back({u"power"_s, plugin::Permission::SystemPower,
+        [](const QString& pluginId, const QString&, const QJsonObject& arguments, std::function<void(mcp::ToolResult)> done) {
+            power::run(pluginId, arguments, std::move(done));
+        }});
+    // The words selected in the window in front (selection:read, 0.41.0; the
+    // gestures plugin): read by Win顺, as a plugin's job keeps it from other
+    // programs' windows; never asked of Chromium or Firefox.
+    tools.push_back({u"selected_text"_s, plugin::Permission::SelectionRead,
+        [](const QString&, const QString&, const QJsonObject& arguments, std::function<void(mcp::ToolResult)> done) {
+            selection::run(arguments, std::move(done));
         }});
     // GitHub #225: open_item opens files and folders only, so a link the
     // screenshot plugin read (a QR code) did nothing. Web and mail links,
@@ -3830,6 +3858,11 @@ void App::showSettings(const std::function<void(QQuickWindow*)>& at)
         connect(editor, &SettingsEditor::explorerRestartRequested, this, &App::restartExplorer);
         connect(editor, &SettingsEditor::giveBackRequested, this, &App::giveBackWinKey);
         connect(editor, &SettingsEditor::autostartRequested, this, &App::setAutostart);
+        // 打开时显示's list: the tabs as the window has them, groups renamed, added or removed too.
+        editor->setClipboardOpenTabs(m_clipboard->openTabChoices());
+        connect(m_clipboard.get(), &Clipboard::categoriesChanged, editor, [this, editor] {
+            editor->setClipboardOpenTabs(m_clipboard->openTabChoices());
+        });
         connect(editor, &SettingsEditor::clipboardClearRequested, this, [this, editor] {
             if (!m_clipStore->isOpen() && !m_clipStore->open(QDateTime::currentMSecsSinceEpoch()))
                 return;
@@ -4791,6 +4824,13 @@ void App::applyDropPie()
             return;
         }
         pie->setWindow(window);
+        // Tab and Shift+Tab turn its pages, held by the key listener only
+        // while it shows more than one (the listener is made anew at times:
+        // looked for when asked).
+        connect(pie.get(), &DropPie::pageKeysWanted, this, [this](bool on) {
+            if (m_keyListener)
+                m_keyListener->holdDragPages(on);
+        });
         m_dropPieWindow = window;
         m_dropPie = std::move(pie);
     }
