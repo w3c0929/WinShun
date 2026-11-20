@@ -281,6 +281,13 @@ std::vector<Entry> buildCatalog()
                     "Off by default and independent of Explorer typing. Punctuation, shortcuts, menus and edit fields "
                     "stay in Opus."},
         &Settings::opusTyping));
+    add(boolean({"Launcher/OneCommanderTyping", QT_TRANSLATE_NOOP("AiSettings", "在 OneCommander 里直接打字搜索"),
+                    "files_and_dialogs", 1,
+                    "In a OneCommander file list, letters and digits open Win顺 to search the folder of that pane, "
+                    "instead of OneCommander's own filter by the first letters. Off by default and independent of "
+                    "Explorer and Opus typing. Punctuation, shortcuts, menus, the sidebar and edit fields stay in "
+                    "OneCommander."},
+        &Settings::oneCommanderTyping));
     add(boolean({"Launcher/EverythingCompat", QT_TRANSLATE_NOOP("AiSettings", "让其他软件把 Win顺 当作 Everything 搜索"),
                     "files_and_dialogs", 1,
                     "Win顺 answers the queries programs send to Everything (its IPC window): Directory Opus, Total "
@@ -415,6 +422,14 @@ std::vector<Entry> buildCatalog()
                     "dropping a little from where it opens; both fade out. "
                     "false: they appear and disappear at once. Never animated while Windows' animation effects are off."},
         &Settings::openAnimation));
+    add(choice({"Appearance/SearchShadow", QT_TRANSLATE_NOOP("AiSettings", "搜索框阴影"), "appearance", -1,
+                   "The shadow around the search box; the search panel and the other windows keep theirs. light: smaller and paler "
+                   "(Windows 11 with round corners; elsewhere none). none: no shadow, and the search box square: "
+                   "Windows rounds only the windows it shadows."},
+        &Settings::searchShadow,
+        {{u"standard"_s, u"standard shadow"_s, QT_TRANSLATE_NOOP("AiSettings", "标准")},
+            {u"light"_s, u"light shadow"_s, QT_TRANSLATE_NOOP("AiSettings", "浅")},
+            {u"none"_s, u"no shadow"_s, QT_TRANSLATE_NOOP("AiSettings", "无")}}));
     add(boolean({"Appearance/HoverTips", QT_TRANSLATE_NOOP("AiSettings", "悬停提示"), "appearance", -1,
                     "true: resting the mouse on an icon or button (the kinds of file under the search box, the +, a row's buttons) shows a line "
                     "saying what it is. false: no such tips; an \"i\" in the settings still shows its words, and a cut-off name still shows in full."},
@@ -621,7 +636,7 @@ std::vector<Entry> buildCatalog()
                 return QString();
             if (!previewkeys::allowed(value))
                 return u"Use Space, a function key or an unused Ctrl/Alt chord; navigation and editing shortcuts are reserved."_s;
-            if (previewkeys::usedGlobally(value, {s.settings.hotkey, s.settings.clipboardHotkey, s.settings.folderMenuHotkey}))
+            if (previewkeys::usedGlobally(value, s.settings.globalHotkeys()))
                 return u"This shortcut is already used by a global action."_s;
             return QString();
         };
@@ -641,7 +656,7 @@ std::vector<Entry> buildCatalog()
             const QString normal = previewkeys::normalizedOpen(value);
             if (normal.isEmpty())
                 return u"Use a function key or an unused Ctrl/Alt chord; Space, navigation and editing shortcuts are reserved."_s;
-            if (previewkeys::usedGlobally(value, {s.settings.hotkey, s.settings.clipboardHotkey, s.settings.folderMenuHotkey}))
+            if (previewkeys::usedGlobally(value, s.settings.globalHotkeys()))
                 return u"This shortcut is already used by a global action."_s;
             if (normal == s.settings.previewHotkey)
                 return u"This shortcut is the preview's."_s;
@@ -814,6 +829,11 @@ std::vector<Entry> buildCatalog()
     add(hotkey({"Clipboard/Hotkey", QT_TRANSLATE_NOOP("AiSettings", "另设快捷键"), "clipboard", 1,
                    "Another shortcut that opens the clipboard history, written like Ctrl+Alt+V. Empty: none."},
         &Settings::clipboardHotkey));
+    add(hotkey({"Clipboard/PastePlainHotkey", QT_TRANSLATE_NOOP("AiSettings", "粘贴为纯文本的快捷键"), "clipboard", 1,
+                   "A shortcut that works in any program, as PureText: what the clipboard holds is pasted as plain text "
+                   "(no fonts, colours or links) into the window in front, and the clipboard keeps that plain text. "
+                   "Works with the clipboard history off too. Written like Ctrl+Alt+V; empty (the default): none."},
+        &Settings::pastePlainHotkey));
     add(boolean({"Clipboard/HoldToStep", QT_TRANSLATE_NOOP("AiSettings", "按住连按快捷键，松开粘贴"), "clipboard", 1,
                     "As Ditto: with the modifiers of the shortcut that opened the clipboard (Ctrl, Alt, Shift or Win) "
                     "still held, each further press of its key moves the selection one entry down, and letting go pastes "
@@ -1876,7 +1896,8 @@ namespace {
 // look set and do nothing.
 void checkHotkeysDiffer(Plan& plan)
 {
-    static const QStringList own {u"Launcher/Hotkey"_s, u"Launcher/FolderMenuHotkey"_s, u"Clipboard/Hotkey"_s};
+    static const QStringList own {u"Launcher/Hotkey"_s, u"Launcher/FolderMenuHotkey"_s, u"Clipboard/Hotkey"_s,
+        u"Clipboard/PastePlainHotkey"_s};
     for (const Item& item : plan.items) {
         const QString wanted = Settings::normalizedHotkey(item.newValue.toString());
         if (!item.changed || item.entry->type != Type::Hotkey || wanted.isEmpty())

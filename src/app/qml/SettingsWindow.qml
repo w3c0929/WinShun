@@ -81,6 +81,7 @@ Window {
             openKeys: [window.editor.doubleCtrl && window.editor.doubleTapAction === "launcher" ? qsTr("双击 %1").arg(window.tapKey) : "", window.editor.hotkey].filter(keys => keys.length > 0).join(" / "),
             clipboardHotkey: [window.editor.doubleCtrl && window.editor.doubleTapAction === "clipboard" ? qsTr("双击 %1").arg(window.tapKey) : "", window.editor.clipboardHotkey].filter(keys => keys.length > 0).join(" / "),
             panelHotkey: window.editor.panelHotkey,
+            pastePlainHotkey: window.editor.pastePlainHotkey,
             previewKey: window.editor.previewHotkey,
             openKey: window.editor.openHotkey,
             historyModifier: !window.editor.recordHistory || window.editor.queryHistoryKeys === "off" ? "" : window.editor.queryHistoryKeys === "alt" ? "Alt" : "Ctrl",
@@ -2525,6 +2526,27 @@ Window {
                         labels: [qsTr("圆角"), qsTr("直角")]
                         current: Math.max(0, corners.indexOf(window.editor.corners))
                         onActivated: (index) => window.editor.corners = corners[index]
+                    }
+                }
+
+                SettingRow { // GitHub #412
+                    id: searchShadowRow
+                    // 浅 is a rounded window's lighter shadow: a square one has none at all.
+                    readonly property bool light: SystemTheme.nativeWindowBorder && window.editor.corners === "round"
+                    title: qsTr("搜索框阴影")
+                    description: light ? qsTr("“浅”阴影更小更淡；“无”不显示阴影，搜索框随之变成直角")
+                                       : qsTr("“无”时搜索框周围不显示阴影")
+                    tip: light ? qsTr("Windows 只给带阴影的窗口画圆角。搜索面板和其他窗口照常有阴影") : qsTr("搜索面板和其他窗口照常有阴影")
+                    keywords: qsTr("阴影;投影;影子;黑边;发黑;搜索框;搜索窗口;shadow;drop shadow").split(";")
+
+                    ScopeTabs {
+                        objectName: "searchShadowTabs"
+                        readonly property var shadows: searchShadowRow.light ? ["standard", "light", "none"] : ["standard", "none"]
+                        readonly property string shown: window.editor.searchShadow === "light" && !searchShadowRow.light
+                            ? "none" : window.editor.searchShadow // the same as none here
+                        labels: searchShadowRow.light ? [qsTr("标准"), qsTr("浅"), qsTr("无")] : [qsTr("标准"), qsTr("无")]
+                        current: Math.max(0, shadows.indexOf(shown))
+                        onActivated: (index) => window.editor.searchShadow = shadows[index]
                     }
                 }
             }
@@ -5190,6 +5212,23 @@ Window {
                     }
                 }
 
+                SettingRow {
+                    id: oneCommanderTypingRow
+                    title: qsTr("在 OneCommander 里直接打字搜索")
+                    keywords: qsTr("OneCommander;One Commander;直接打字;输入;当前文件夹;双栏;type to search").split(";")
+                    description: qsTr("文件列表有焦点时，输入字母或数字即可搜索当前文件夹")
+                    tip: qsTr("代替 OneCommander 自带的“按首字母筛选”；符号键、侧栏、重命名和地址栏输入不受影响")
+                    unlocks: [folderTypingRow]
+
+                    ToggleSwitch {
+                        dpr: window.dpr
+                        objectName: "oneCommanderTypingToggle"
+                        checked: window.editor.oneCommanderTyping
+                        Accessible.name: qsTr("在 OneCommander 里直接打字搜索")
+                        onToggled: (on) => window.editor.oneCommanderTyping = on
+                    }
+                }
+
                 SettingRow { // GitHub #82
                     id: opusScopeRow
                     sub: true
@@ -5209,7 +5248,7 @@ Window {
                 SettingRow { // GitHub #110
                     id: folderTypingRow
                     sub: true
-                    shown: window.editor.explorerTyping || window.editor.opusTyping
+                    shown: window.editor.explorerTyping || window.editor.opusTyping || window.editor.oneCommanderTyping
                     title: qsTr("在文件夹里打字时")
                     keywords: qsTr("打字;当前文件夹;优先;只搜;其他位置;子文件夹;Listary;Ctrl+Shift+D;current folder;type to search").split(";")
                     description: qsTr("搜索时可按 Ctrl+Shift+D 临时切换范围")
@@ -5735,9 +5774,10 @@ Window {
                 content: Component { SettingsPage {
                     host: settingsContext
                     parts: ({ captureKeywordError: captureKeywordError }) // the probe's (--settings-reopen-check)
-                    recordingHotkey: clipHotkeyRecorder.recording
+                    recordingHotkey: clipHotkeyRecorder.recording || pastePlainHotkeyRecorder.recording
                     onResetForReopen: {
                         clipHotkeyRecorder.stop()
+                        pastePlainHotkeyRecorder.stop()
                         appInput.clear()
                         captureKeywordBox.text = Qt.binding(() => window.editor.captureKeyword)
                         captureKeywordError.text = ""
@@ -6166,6 +6206,37 @@ Window {
                         visible: window.editor.clipboardHotkeyError.length > 0
                         width: parent.width
                         text: window.editor.clipboardHotkeyError
+                        color: Theme.danger
+                        font.pixelSize: Theme.fontCaption
+                        wrapMode: Text.Wrap
+                    }
+                }
+
+                SettingRow { // GitHub #408
+                    title: qsTr("粘贴为纯文本的快捷键")
+                    keywords: qsTr("纯文本;去格式;无格式;清除格式;去掉格式;PureText;快捷键;热键;plain text;paste;hotkey").split(";")
+                    values: [window.editor.pastePlainHotkey]
+                    description: qsTr("在任何程序里按下，把剪贴板里的文字去掉字体、颜色和链接后粘贴，例如 Ctrl+Alt+V")
+                    tip: qsTr("剪贴板里也换成纯文本。不记录剪贴板历史时也能用")
+
+                    FlatButton {
+                        dpr: window.dpr
+                        visible: window.editor.pastePlainHotkey.length > 0 && !pastePlainHotkeyRecorder.recording
+                        flat: true
+                        text: qsTr("清除")
+                        onClicked: window.editor.pastePlainHotkey = ""
+                    }
+                    HotkeyRecorder {
+                        id: pastePlainHotkeyRecorder
+                        objectName: "pastePlainHotkeyRecorder"
+                        hotkey: window.editor.pastePlainHotkey
+                        onRecorded: (hotkey) => window.editor.pastePlainHotkey = hotkey
+                    }
+
+                    body: Text {
+                        visible: window.editor.pastePlainHotkeyError.length > 0
+                        width: parent.width
+                        text: window.editor.pastePlainHotkeyError
                         color: Theme.danger
                         font.pixelSize: Theme.fontCaption
                         wrapMode: Text.Wrap

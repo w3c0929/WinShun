@@ -1,5 +1,15 @@
 # 踩坑记录
 
+## 录屏：Win10 LTSC 2019（1809）上“录屏失败：不支持此接口（0x80004002）”（2026-11-20，用户反馈）
+
+- **现象**：虚拟机里的 Win10 企业版 LTSC，Win顺 0.40.0、截图与录屏 1.1.28，一开始录屏就报这句，截图正常。在新装的 1809 虚拟机（17763）上用已发布的 1.1.29 照样复现，停在 `screen capture startup`，硬件、软件编码两次都一样。
+- **原因**：录屏用 Windows.Graphics.Capture 抓整块显示器，要先用 `IGraphicsCaptureItemInterop::CreateForMonitor` 拿到 capture item。这个互操作接口是 1903（18362）才有的，1809 只能让用户在系统的选取窗口（`GraphicsCapturePicker`）里自己点，程序拿不到显示器。C++/WinRT 取工厂接口时 `QueryInterface` 失败，抛 `hresult_no_interface`，界面上只有系统的那句“不支持此接口”。帧池的 `CreateFreeThreaded` 也是 1903 起才有，所以在 1809 上换帧池救不了。2026-11-17 那次排查只修了 `IsCursorCaptureEnabled`（2004 起），1903–1909 因此能录，1809 一直不能。截图在 Windows 10 上本来就用 BitBlt，所以不受影响。
+- **做法**：`openScreen` 先试 Windows.Graphics.Capture（`CaptureSource`），起不来就用 GDI（`ScreenDcSource`）。不只 1809，凡是它起不来的机器都这样。GDI 每个视频帧 BitBlt 一次选区，不带 `CAPTUREBLT`（一秒 30 次会让指针闪，DWM 合成后分层窗口本来就在屏幕像素里）。按 `GetCursorInfo` 用 `DrawIconEx` 把指针画上去，热点按指针形状缓存。把 alpha 补成 255（GDI 留 0），再 `UpdateSubresource` 进 BGRA 纹理，后面的编码流程不变。显示器的检查（`displayOf`）两条路共用。用的是哪条路、为什么，写在 `Progress::screen` 里，日志 `Recording finished: … screen GDI (Windows.Graphics.Capture: 0x80004002 不支持此接口)`。WinRT 的错误现在带上阶段名（“录屏失败：…（0x80004002，screen capture startup）”）。
+- **试错**：一开始只当成帧池的问题，在专用 DispatcherQueue 线程上用 `Create` 建帧池，Windows 11 上强制走这条路测试也过了，到了真 1809 才看到还是失败。强制走某条路只能说明那段代码对，说明不了旧系统缺什么；旧系统的问题要在旧系统上测。
+- **顺带**：同一个进程里录第二次会崩，访问违例出在 `AddRef` 上。`get_activation_factory` 把 `IGraphicsCaptureItemInterop` 这些工厂缓存在静态变量里，`uninit_apartment` 之后系统卸了 DLL，缓存的指针就悬空了。正式使用不受影响，因为每次录屏都是一个新的工作进程；是新测试在一个进程里录两次才撞到。现在 `uninit_apartment` 之前先 `winrt::clear_factory_cache()`。
+- **测法**：`tst_recording screenFrames` 真录屏幕上一个纯色窗口（320×180），分两行：`windows-graphics-capture`，和用 `Options::screenByGdi` 强制的 `gdi`。解码后至少 5 帧，中心颜色对得上。真机：1809 虚拟机里跑 `WinShunCapture --preview-recording`，结果见[验证记录](validation/recording-1809-20261120/README.md)。虚拟机的显示器要先关掉“关闭显示器”的计时，屏幕熄了 DWM 就不合成，录下来每帧都一样。
+- **以后**：用 WinRT 的新类、新方法、新接口前先查最低版本（1809 是 UniversalApiContract 7，`IGraphicsCaptureItemInterop` 这类互操作接口看文档的“最低客户端”）。比 1809 新的，要有退路。
+
 ## 搜不到装好的插件文件夹：Win顺 自己的数据文件夹整个不进索引（2026-11-19，#406）
 
 - **现象**：输入插件 ID（`crazy-zxx.yigengming`）搜不到它的文件夹；同名文件夹放在别处就搜得到，所以不是查询里的 `-`、`.` 的问题（解析和匹配都把它们当普通字符）。
@@ -162,12 +172,21 @@
   - 验证字重要比像素：同一句话，常规体的墨量比细体多约 10%（虚拟机里 786,671 对 714,818）。光看截图像不像楷体不够。
 - **没做**：可变字体的“字重家族”（Noto Sans SC Thin 之类）加载后具体落在哪个实例没有逐个验证；设置里的预览只换家族名，不带字重。
 
-## 截图：遮罩一出来固定卡约 2 秒，原因还不知道；日志现在会记调用栈（2026-11-15）
+## 截图：遮罩一出来固定卡约 2 秒：卡在 AMD 驱动的呈现（Present）里，它在等什么还不知道（2026-11-15，11-20）
 
 - **现象**（#325 的报告人，Win10 22H2、RX 6800 XT、4K 200%、144 Hz、Win顺 以管理员运行）：按截图键后“黑屏卡一两秒”，或者刚要拖选区时卡一两秒。两周的 `capture-stall` 一共 25 条，其中 15 条是同一个样子：最后一次正常的 tick 就在遮罩第一帧显示出来的那一刻（前后 50 ms 内），然后界面线程 2.06–2.17 秒不应答，恢复时离“遮罩显示”固定 2181–2206 ms；有两次是两段各约 1 秒。只出现在距上次截图 1 分钟以上（或进程启动后第一次）的截图上，连着截的从不卡。改成拷贝呈现（`QT_D3D_NO_FLIP`）之后照样有。
 - **排除了的**：UI Automation 探测（在自己的线程里）、PrtScn 的 `WM_SETTINGCHANGE` 广播（只在改设置时）、截图历史（默认关）、`HotPages` 的后台学习（11-02 还没有它时就有同样的卡顿）。本机（Win11、RTX 4060）和 Win10 虚拟机（WARP）都没复现。
 - **教训**：`capture-stall` 只量了“卡多久”，量了两周还是不知道卡在哪。固定时长说明是在等某个超时或某个固定耗时的东西，这种问题要的是卡住那一刻的调用栈，而且界面线程多半只是在等渲染线程，得连其他线程一起记。现在截图期间有 `ui-stall` / `ui-stall-threads`（architecture.md“运行诊断”）。
 - **拿到新日志后先看**：`ui-stall` 第一条的 `frames` 最里层是哪个系统调用；是 `NtWaitForSingleObject` 且上面是 `Qt6Quick` 的话，去 `ui-stall-threads` 里找名字是 `QSGRenderThread` 的线程和显卡驱动（`atidxx64.dll`、`amdxx64.dll`）的线程。
+- **卡在哪**（11-20，报告人 0.38.0、截图 1.1.26 的诊断包）：三次 `ui-stall-threads` 一模一样。界面线程在 Qt Quick 里等渲染线程（`NtWaitForSingleObject` ← `Qt6Quick`），`QSGRenderThread` 在交换链的 `Present` 里：`dxgi.dll` → `d3d11.dll` → `amdxx64.dll`（AMD 的 D3D11 驱动）→ `NtGdiDdDDIPresent`，进了内核就不回来。卡的 1.7 秒里整个进程只用了 15–31 ms 处理器。Win顺 自己没在算东西，是驱动的呈现在内核里等了约 2 秒。
+- **卡的时间点挪过一次**：11-14 以前卡顿从遮罩第一帧开始，约 2.2 秒结束，就是报告人说的“黑屏卡顿”。那时还是翻转呈现。之后改成拷贝呈现（`QT_D3D_NO_FLIP`，截图 1.1.12 起），第一帧正常了，卡顿改在遮罩出来后 1.93–2.05 秒开始、约 4.1 秒结束（之后 12 条里 11 条），正好赶上拖选框。报告人也说黑屏基本没了，拖选框时还卡。卡多久始终是 2.06–2.17 秒。
+- **和空闲多久有关，和交还内存无关**：进程启动后第一次截图 36 次卡了 12 次，距上次截图 5 分钟以上 51 次卡了 11 次，1–5 分钟 27 次卡了 4 次，20–60 秒 16 次卡了 1 次，15 秒内 39 次卡了 1 次。空闲 20 秒交还内存（`IdleTrim`）之后的那些截图几乎不卡，对不上。
+- **还不知道驱动在等什么**：固定约 2 秒，像 Windows 的显卡超时恢复（TDR，默认 2 秒），也像显示器换模式（FreeSync、多平面叠加 MPO）。没有 AMD 显卡复现不了。`capture-stall` 和 `capture` 现在多记 `graphics_lost`：遮罩的图形设备丢了、Qt Quick 重建了几次（`GraphicsLoss`，TDR 会让它是 1；只在 `capture` 里大于 0 时才写）。11-15 问过报告人显示器、线材、增强同步、FreeSync，只回了诊断包；这些事以后由日志自己记，不再问报告人（见下一条）。
+- **现在日志自己记下判断要的东西**（11-20）：
+  - 截图插件从遮罩出现到收起，另开两个线程跟着显示器和桌面的节拍（`DisplayPulse`）：一个等指针所在显示器的每次垂直消隐（`D3DKMTWaitForVerticalBlankEvent`），一个等桌面的每次合成（`DwmFlush`，桌面不动也照常返回，本机 4–17 ms 一次）。`capture-stall` 里多了 `vblank_gap_ms` 和 `dwm_gap_ms`：卡的这段时间里两者各自最长等了多久；`capture` 里是整次截图的最大值 `vblank_gap_max_ms` / `dwm_gap_max_ms`；等待出错时记 `vblank_error`（NTSTATUS）。
+  - 怎么读：`vblank_gap_ms` 也约 2000，说明屏幕自己停了（换模式、显卡重置），再看 `graphics_lost`、`vblank_error` 和下面的系统事件；只有 `dwm_gap_ms` 约 2000，是桌面合成（dwm.exe）整个停了，所有程序一起卡；两个都只有一帧左右，就只是 Win顺 这次的呈现在驱动里等，问题在我们的交换链用法上。本机把截图界面线程挂起 1 秒实测：`stall_ms` 979，`vblank_gap_ms` 16，`dwm_gap_ms` 4。
+  - 诊断包 `summary.json` 的 `display` 多了四项（`DisplaySetup`，在导出的后台线程里读，本机 70–80 ms）：`monitors`（每台显示器的名字、EDID 厂商和型号码、接口 DisplayPort/HDMI、分辨率、刷新率、HDR、是否主屏），`graphics_settings`（硬件加速 GPU 计划 `HwSchMode`、MPO 开关 `OverlayTestMode`、`TdrDelay`/`TdrLevel`、DirectX 的用户设置、游戏模式、Game DVR），`driver_settings`（每块显卡驱动键下和 `HKCU\Software\AMD\CN` 下名字像帧同步开关的值：FreeSync、TurboSync（增强同步）、Chill、Anti-Lag、Boost、HYPR-RX、AFMF、FlipQueueSize、ULPS、Stutter、MPO、TDR……），`display_events`（系统日志近 14 天显卡相关的警告和错误，Display 4101 就是一次 TDR）。
+- **试了不能用的**：想用 `DwmGetCompositionTimingInfo` 的刷新数和帧数看卡的时候桌面是否还在合成、显示器是否还在刷新。Windows 11 上桌面不动时 `cRefresh` 700 ms 只涨了 1；旁边一个窗口每 30 ms 变色，`cFrame` 也只涨了 1；`rateRefresh` 报 181 Hz。这两个数当不了时钟，没有采用。
 
 ## 前台内存：图标字体缺字形时 Qt 把所有字体加载一遍；`thread_local` 数组每个线程一份（2026-11-15）
 
@@ -287,6 +306,13 @@
 - **原因**：DWM 只给 8（默认）/ 4（小）/ 直角；更大的圆角只能整套自己来，还得自己补阴影窗口（跟随移动、淡入淡出、Z 序、遮挡、截图排除）、透明角的点击穿透、切回 DWM 时的系统标题栏残影。看起来始终和系统窗口不一样，代码也多了一千多行。
 - **做法**：所有风格、所有窗口（菜单、提示、插件窗口）都用 DWM 的圆角、边、阴影和 Mica，自绘框整套删掉（`win::setOwnFrame`、`OwnFrame`、`Theme.ownFrame`、阴影窗口）。风格只改窗口里面：`windowRadius` 和 fluent 一样是 DWM 的 8，靠近窗口角的东西按“内圆角 = max(8 − 间距, 4)”同心（搜索框离边 10 → 4）。要不要透明由 Look 的 `backdrop` / `backdropCapable` 决定，不按风格名判断。
 - **规则**：永远不要自绘窗口圆角、窗口边或窗口阴影；要改的是窗口里的东西。详见 `src/app/qml/themes/README.md` 第 4 节。
+
+## 搜索框阴影：DWM 的阴影没有大小和深浅可调，只能换窗口种类（2026-11-20，#412）
+
+- **现象**：用户嫌搜索框四周的阴影太重，想关掉或调小。`DwmExtendFrameIntoClientArea` 改成 0、`DWMWA_NCRENDERING_POLICY` 设成 DISABLED，阴影都还在（后者只淡一点）；DWM 没有调阴影大小的属性。
+- **原因**：Windows 11 按窗口种类给阴影。实测（洋红底窗口上量窗口下方、右侧的平均变暗量）：带 `WS_CAPTION` 的（`styleFramelessWindow` 一直加着）是完整阴影，下方 49.7、右侧 19.5；纯 `WS_POPUP` 加 `DWMWCP_ROUND` 只有一半左右（31.7 / 10.0），圆角和 DWM 的边都在；`WS_POPUP` 加 `DWMWCP_DONOTROUND` 完全没有阴影，也没有边。方角的 popup 不给阴影，所以“没阴影的圆角窗口”做不出来（自己画圆角是禁止的，见上一节）。Windows 10 上 popup 一律没有阴影。Mica、亚克力在三种窗口上都一样。
+- **做法**：`win::setWindowShadow` 给窗口记一个属性，`nativeFrameProc` 的 `WM_STYLECHANGING` 按它加上或去掉 `WS_CAPTION`（Qt 改样式、再次 `styleFramelessWindow` 都保持）；“无”时 `applyWindowCorners` 一律给直角。没有 DWM 边时由 `WindowEdge.qml` 画（`nativeEdge`，经 Hook `extra` 传给 fluent 的 `WindowBody`）。设置 › 外观 › 搜索框阴影：标准 / 浅 / 无，只管搜索框（展开成面板时 `WS_THICKFRAME` 必然带完整阴影，`App::applySearchShadow` 让面板照常用标准）；“浅”只在 Windows 11 且圆角时出现。
+- **验证**：`WinShun.exe --probe-runtime <目录> --search-shadow-check --renderer d3d11`（SearchShadowProbe）：真实 App 和正在运行的 Win顺 并存，按快捷键的路径依次打开标准、浅、无、标准，量阴影、角上的像素、`WS_CAPTION` 和 WindowEdge，写 `search-shadow.json`。`tst_appearance` 的 `liveWindows` 查样式和圆角属性。
 
 ## 界面风格：列表行里的部件随悬停造、毁，滚动时掉帧（2026-11-05）
 

@@ -275,6 +275,11 @@ add_test(NAME tst_clipboardfile COMMAND $<TARGET_FILE:WinShun>
     --preview-results "${CMAKE_CURRENT_BINARY_DIR}/clipboard-file" --clipboard-file --renderer d3d11)
 set_tests_properties(tst_clipboardfile PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+# #414: a copied picture large beside the window; its words folded until asked for.
+add_test(NAME tst_clipboardpictureview COMMAND $<TARGET_FILE:WinShun>
+    --preview-results "${CMAKE_CURRENT_BINARY_DIR}/clipboard-picture-view" --clipboard-picture-view --renderer d3d11)
+set_tests_properties(tst_clipboardpictureview PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 # #111: the clipboard rows have no Screen attached objects of their own; a
 # resize that frees rows then never walks the screen's connections per row.
 add_test(NAME tst_clipboardscreen COMMAND $<TARGET_FILE:WinShun>
@@ -1016,6 +1021,39 @@ add_test(NAME tst_keyrouter COMMAND tst_keyrouter -o -,txt)
 set_tests_properties(tst_keyrouter PROPERTIES RUN_SERIAL TRUE
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
+# The screenshot's count of graphics thrown away under its overlays (a lost
+# device, TDR), on the real D3D11 renderer: a small window shown for a moment.
+qt_add_executable(tst_graphicsloss tst_graphicsloss.cpp)
+target_include_directories(tst_graphicsloss PRIVATE ${PROJECT_SOURCE_DIR}/src/capture)
+target_link_libraries(tst_graphicsloss PRIVATE winshun_options Qt6::Quick Qt6::Test)
+set_target_properties(tst_graphicsloss PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+add_test(NAME tst_graphicsloss COMMAND tst_graphicsloss -o -,txt)
+# A real window on D3D11: offscreen never gives its graphics up.
+set_tests_properties(tst_graphicsloss PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_QUICK_BACKEND="
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# The screen's vertical blanks and the desktop's compositions beside the
+# capture (DisplayPulse.h, GitHub #325), on this PC's monitors.
+qt_add_executable(tst_displaypulse tst_displaypulse.cpp ${PROJECT_SOURCE_DIR}/src/capture/DisplayPulse.cpp)
+target_include_directories(tst_displaypulse PRIVATE ${PROJECT_SOURCE_DIR}/src/capture)
+target_link_libraries(tst_displaypulse PRIVATE winshun_options Qt6::Core Qt6::Test dwmapi gdi32 user32)
+set_target_properties(tst_displaypulse PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_displaypulse COMMAND tst_displaypulse -o -,txt)
+set_tests_properties(tst_displaypulse PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# How this PC's displays are set up, for an export's summary (DisplaySetup.h,
+# GitHub #325): monitors, Windows' graphics switches, the drivers' frame
+# pacing switches, the System log's graphics events, read from this PC.
+qt_add_executable(tst_displaysetup tst_displaysetup.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/DisplaySetup.cpp)
+target_include_directories(tst_displaysetup PRIVATE ${PROJECT_SOURCE_DIR}/src/app/platform)
+target_link_libraries(tst_displaysetup PRIVATE winshun_options Qt6::Core Qt6::Test advapi32 setupapi user32 wevtapi)
+set_target_properties(tst_displaysetup PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_displaysetup COMMAND tst_displaysetup -o -,txt)
+set_tests_properties(tst_displaysetup PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
 # Where the interface was when it stopped answering (GitHub #111): the watch
 # on this test's own thread, made to compute and to wait.
 qt_add_executable(tst_uistall tst_uistall.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/UiStall.cpp
@@ -1415,6 +1453,17 @@ add_dependencies(tst_localsend WinShunLocalSend)
 set_target_properties(tst_localsend PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_localsend COMMAND tst_localsend)
 set_tests_properties(tst_localsend PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# winshun.sync's pieces (src/sync-plugin, the wsshunsync library): ShunSync v1
+# against the test vectors Mac顺 runs too (docs/shunsync-test-vectors.json),
+# then three engines on 127.0.0.1 pairing, sharing and revoking.
+qt_add_executable(tst_shunsync tst_shunsync.cpp)
+target_link_libraries(tst_shunsync PRIVATE wsshunsync Qt6::Test)
+target_compile_definitions(tst_shunsync PRIVATE SHUNSYNC_VECTORS="${PROJECT_SOURCE_DIR}/docs/shunsync-test-vectors.json")
+set_target_properties(tst_shunsync PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_shunsync COMMAND tst_shunsync)
+set_tests_properties(tst_shunsync PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 # winshun.break's clock (src/break-plugin/Schedule), built in again: the

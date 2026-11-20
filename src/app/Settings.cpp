@@ -930,6 +930,7 @@ void Settings::load()
     explorerTyping = readOrDefault(s, u"Launcher/ExplorerTyping"_s, firstRun ? d.explorerTyping : false);
     desktopTyping = readOrDefault(s, u"Launcher/DesktopTyping"_s, d.desktopTyping);
     opusTyping = readOrDefault(s, u"Launcher/OpusTyping"_s, d.opusTyping);
+    oneCommanderTyping = readOrDefault(s, u"Launcher/OneCommanderTyping"_s, d.oneCommanderTyping);
     everythingCompat = readOrDefault(s, u"Launcher/EverythingCompat"_s, d.everythingCompat);
     opusTypingScope = readOrDefault(s, u"Launcher/OpusTypingScope"_s, d.opusTypingScope).trimmed().toLower();
     if (opusTypingScope != u"all")
@@ -1024,6 +1025,9 @@ void Settings::load()
     panelListsAll = readOrDefault(s, u"Panel/ListAll"_s, d.panelListsAll);
     scopeButton = readOrDefault(s, u"Appearance/ScopeButton"_s, d.scopeButton);
     openAnimation = readOrDefault(s, u"Appearance/OpenAnimation"_s, d.openAnimation);
+    searchShadow = readOrDefault(s, u"Appearance/SearchShadow"_s, d.searchShadow).trimmed().toLower();
+    if (searchShadow != u"standard" && searchShadow != u"light" && searchShadow != u"none")
+        searchShadow = d.searchShadow;
     rememberWindowSize = readOrDefault(s, u"Appearance/RememberWindowSize"_s, d.rememberWindowSize);
     donateOnGleaningPage = readOrDefault(s, u"Appearance/DonateOnGleaningPage"_s, d.donateOnGleaningPage);
     hoverTips = readOrDefault(s, u"Appearance/HoverTips"_s, d.hoverTips);
@@ -1176,6 +1180,7 @@ void Settings::load()
     clipboard = readOrDefault(s, u"Clipboard/Enabled"_s, d.clipboard);
     clipboardWinV = readOrDefault(s, u"Clipboard/WinV"_s, d.clipboardWinV);
     clipboardHotkey = readOrDefault(s, u"Clipboard/Hotkey"_s, d.clipboardHotkey);
+    pastePlainHotkey = readOrDefault(s, u"Clipboard/PastePlainHotkey"_s, d.pastePlainHotkey).trimmed();
     clipboardMaxItems = readOrDefault(s, u"Clipboard/MaxItems"_s, d.clipboardMaxItems);
     if (clipboardMaxItems != 0) // 0 = no limit (GitHub #32)
         clipboardMaxItems = std::clamp(clipboardMaxItems, 10, 100000);
@@ -1380,6 +1385,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/ExplorerTyping"_s, explorerTyping);
     s.setValue(u"Launcher/DesktopTyping"_s, desktopTyping);
     s.setValue(u"Launcher/OpusTyping"_s, opusTyping);
+    s.setValue(u"Launcher/OneCommanderTyping"_s, oneCommanderTyping);
     s.setValue(u"Launcher/EverythingCompat"_s, everythingCompat);
     s.setValue(u"Launcher/OpusTypingScope"_s, opusTypingScope);
     s.setValue(u"Launcher/FolderTyping"_s, folderTyping);
@@ -1448,6 +1454,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Panel/ListAll"_s, panelListsAll);
     s.setValue(u"Appearance/ScopeButton"_s, scopeButton);
     s.setValue(u"Appearance/OpenAnimation"_s, openAnimation);
+    s.setValue(u"Appearance/SearchShadow"_s, searchShadow);
     s.setValue(u"Appearance/RememberWindowSize"_s, rememberWindowSize);
     s.setValue(u"Appearance/DonateOnGleaningPage"_s, donateOnGleaningPage);
     s.setValue(u"Appearance/HoverTips"_s, hoverTips);
@@ -1503,6 +1510,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Clipboard/Enabled"_s, clipboard);
     s.setValue(u"Clipboard/WinV"_s, clipboardWinV);
     s.setValue(u"Clipboard/Hotkey"_s, clipboardHotkey);
+    s.setValue(u"Clipboard/PastePlainHotkey"_s, pastePlainHotkey);
     s.setValue(u"Clipboard/MaxItems"_s, clipboardMaxItems);
     s.setValue(u"Clipboard/MaxDays"_s, clipboardMaxDays);
     s.setValue(u"Clipboard/MissingFiles"_s, clipboardMissingFiles);
@@ -1611,9 +1619,9 @@ CrawlRules Settings::crawlRules() const
     // But not the plugins installed there (GitHub #406): found by name, as
     // anything of the user's, ranked with the program folders. Each one's
     // .data folder too: a plugin's own files, written now and then.
-    const std::wstring plugins = normalizePath(dataDir() + u"\\plugins"_s);
-    rules.keptPaths.push_back(plugins);
-    rules.lowPriorityPaths.push_back(plugins);
+    const std::wstring pluginsDir = normalizePath(dataDir() + u"\\plugins"_s);
+    rules.keptPaths.push_back(pluginsDir);
+    rules.lowPriorityPaths.push_back(pluginsDir);
     for (const QString& n : excludedNames) {
         if (!n.trimmed().isEmpty() && !everythingCompat)
             rules.excludedNames.push_back(normalizeName(n));

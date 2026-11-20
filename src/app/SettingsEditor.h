@@ -83,6 +83,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool explorerTyping READ explorerTyping WRITE setExplorerTyping NOTIFY changed FINAL)
     Q_PROPERTY(bool desktopTyping READ desktopTyping WRITE setDesktopTyping NOTIFY changed FINAL)
     Q_PROPERTY(bool opusTyping READ opusTyping WRITE setOpusTyping NOTIFY changed FINAL)
+    Q_PROPERTY(bool oneCommanderTyping READ oneCommanderTyping WRITE setOneCommanderTyping NOTIFY changed FINAL)
     Q_PROPERTY(bool everythingCompat READ everythingCompat WRITE setEverythingCompat NOTIFY changed FINAL)
     Q_PROPERTY(QString opusTypingScope READ opusTypingScope WRITE setOpusTypingScope NOTIFY changed FINAL) // folder | all (GitHub #82)
     Q_PROPERTY(QString folderTyping READ folderTyping WRITE setFolderTyping NOTIFY changed FINAL) // first | only | level (GitHub #110, #182)
@@ -121,6 +122,9 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(QString folderMenuHotkey READ folderMenuHotkey WRITE setFolderMenuHotkey NOTIFY changed FINAL)
     Q_PROPERTY(bool dropPie READ dropPie WRITE setDropPie NOTIFY changed FINAL) // 拖放圆盘
     Q_PROPERTY(QString folderMenuHotkeyError READ folderMenuHotkeyError NOTIFY hotkeyErrorChanged FINAL)
+    // 粘贴为纯文本 anywhere (GitHub #408); empty = none.
+    Q_PROPERTY(QString pastePlainHotkey READ pastePlainHotkey WRITE setPastePlainHotkey NOTIFY changed FINAL)
+    Q_PROPERTY(QString pastePlainHotkeyError READ pastePlainHotkeyError NOTIFY hotkeyErrorChanged FINAL)
     // The screenshot history's keyword (jt): set through saveCaptureKeyword.
     Q_PROPERTY(QString captureKeyword READ captureKeyword NOTIFY changed FINAL)
     // The screenshot plugin, as App reads it: installed, on (the history works), and the shortcuts it holds.
@@ -237,6 +241,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool panelListsAll READ panelListsAll WRITE setPanelListsAll NOTIFY changed FINAL)
     Q_PROPERTY(bool scopeButton READ scopeButton WRITE setScopeButton NOTIFY changed FINAL)
     Q_PROPERTY(bool openAnimation READ openAnimation WRITE setOpenAnimation NOTIFY changed FINAL)
+    Q_PROPERTY(QString searchShadow READ searchShadow WRITE setSearchShadow NOTIFY changed FINAL) // standard | light | none
     Q_PROPERTY(bool rememberWindowSize READ rememberWindowSize WRITE setRememberWindowSize NOTIFY changed FINAL)
     Q_PROPERTY(bool donateOnGleaningPage READ donateOnGleaningPage WRITE setDonateOnGleaningPage NOTIFY changed FINAL)
     Q_PROPERTY(bool hoverTips READ hoverTips WRITE setHoverTips NOTIFY changed FINAL)
@@ -471,6 +476,8 @@ public:
     void setDesktopTyping(bool on);
     bool opusTyping() const { return m_settings.opusTyping; }
     void setOpusTyping(bool on);
+    bool oneCommanderTyping() const { return m_settings.oneCommanderTyping; }
+    void setOneCommanderTyping(bool on);
     bool everythingCompat() const { return m_settings.everythingCompat; }
     void setEverythingCompat(bool on);
     QString opusTypingScope() const { return m_settings.opusTypingScope; }
@@ -519,6 +526,10 @@ public:
     void setFolderMenuHotkey(const QString& hotkey);
     QString folderMenuHotkeyError() const { return m_folderMenuHotkeyError; }
     void setFolderMenuHotkeyError(const QString& error);
+    QString pastePlainHotkey() const { return m_settings.pastePlainHotkey; }
+    void setPastePlainHotkey(const QString& hotkey);
+    QString pastePlainHotkeyError() const { return m_pastePlainHotkeyError; }
+    void setPastePlainHotkeyError(const QString& error);
     QString captureKeyword() const { return m_settings.captureKeyword; }
     bool screenshotInstalled() const { return m_screenshotInstalled; }
     bool screenshotHistory() const { return m_screenshotHistory; }
@@ -864,6 +875,8 @@ public:
     void setScopeButton(bool on);
     bool openAnimation() const { return m_settings.openAnimation; }
     void setOpenAnimation(bool on);
+    QString searchShadow() const { return m_settings.searchShadow; }
+    void setSearchShadow(const QString& shadow);
     bool rememberWindowSize() const { return m_settings.rememberWindowSize; }
     void setRememberWindowSize(bool on);
     bool donateOnGleaningPage() const { return m_settings.donateOnGleaningPage; }
@@ -1234,6 +1247,7 @@ private:
     QString m_doubleCtrlClash;
     QVariantList m_doubleTapPluginActions;
     QString m_folderMenuHotkeyError;
+    QString m_pastePlainHotkeyError;
     bool m_screenshotInstalled = false;
     bool m_screenshotHistory = false;
     QStringList m_screenshotHotkeys;

@@ -28,6 +28,7 @@ QtObject {
         { where: "global", group: qsTr("打开"), keys: c => c.panelHotkey ?? "", text: qsTr("直接打开完整搜索面板"), setting: { page: "keys", tab: 0 } },
         { where: "global", group: qsTr("打开"), keys: c => c.clipboardHotkey, text: qsTr("打开剪贴板"), setting: { page: "clipboard", tab: 1 } },
         { where: "global", group: qsTr("打开"), keys: c => c.captureKeys, text: qsTr("截图"), setting: { page: "plugins", tab: 0 } },
+        { where: "global", group: qsTr("打开"), keys: c => c.pastePlainHotkey ?? "", text: qsTr("在任何程序里粘贴为纯文本"), setting: { page: "clipboard", tab: 1 } },
         // the search box
         { where: "launcher", group: qsTr("移动"), brief: true, keys: "↑ ↓", text: qsTr("上下移动，PgUp PgDn 翻页") },
         { where: "launcher", group: qsTr("移动"), brief: true, keys: c => c.historyModifier ? c.historyModifier + "+↑/↓" : "",
@@ -37,7 +38,7 @@ QtObject {
         { where: "launcher", group: qsTr("移动"), brief: true, keys: "Shift+↑ ↓", text: qsTr("选中多行，也可 Ctrl+单击、Shift+单击") },
         { where: "launcher", group: qsTr("移动"), brief: true, keys: "Tab", text: qsTr("进入用 ↑ ↓ 或单击选中的文件夹，列出里面的内容；路径输入一半时补全文件夹") },
         { where: "launcher", group: qsTr("移动"), keys: "Ctrl+Backspace", text: qsTr("返回上一级：退出文件夹，回到进入前的搜索") },
-        { where: "launcher", group: qsTr("范围与筛选"), brief: true, keys: "Shift+Tab", text: qsTr("切换到上一个范围") },
+        { where: "launcher", group: qsTr("范围与筛选"), brief: true, keys: "Shift+Tab", text: qsTr("切换到上一个范围；插件关键字后面：改搜文件名") },
         { where: "launcher", group: qsTr("范围与筛选"), brief: true, keys: "Ctrl+Tab", text: qsTr("在“文件”里切换类型，在“内容”里换个文件夹") },
         { where: "launcher", group: qsTr("范围与筛选"), brief: true, keys: "Ctrl+S", text: qsTr("切换排序；不输入时切换最近打开、最近修改") },
         { where: "launcher", group: qsTr("范围与筛选"), brief: true, keys: "Ctrl+R", text: qsTr("正则模式：每个词都按正则表达式匹配名字，“内容”里匹配文件里的文字；再按一次关闭") },

@@ -763,6 +763,18 @@
         <translation>Open animation</translation>
     </message>
     <message>
+        <source>搜索框阴影</source>
+        <translation>Search bar shadow</translation>
+    </message>
+    <message>
+        <source>浅</source>
+        <translation>Light</translation>
+    </message>
+    <message>
+        <source>无</source>
+        <translation>None</translation>
+    </message>
+    <message>
         <source>悬停提示</source>
         <translation>Hover tips</translation>
     </message>
@@ -805,6 +817,10 @@
     <message>
         <source>标准</source>
         <translation>Standard</translation>
+    </message>
+    <message>
+        <source>在 OneCommander 里直接打字搜索</source>
+        <translation>Type to search in OneCommander</translation>
     </message>
     <message>
         <source>宽松</source>
@@ -1449,6 +1465,10 @@
         <source>全屏时不响应剪贴板快捷键</source>
         <translation>Pause clipboard hotkeys in full screen</translation>
     </message>
+    <message>
+        <source>粘贴为纯文本的快捷键</source>
+        <translation>Paste as plain text shortcut</translation>
+    </message>
 </context>
 <context>
     <name>AppearancePreview</name>
@@ -1504,6 +1524,17 @@
     </message>
 </context>
 <context>
+    <name>ClipFilePreview</name>
+    <message>
+        <source>关闭大图</source>
+        <translation>Close the large view</translation>
+    </message>
+    <message>
+        <source>看大图</source>
+        <translation>View large</translation>
+    </message>
+</context>
+<context>
     <name>ClipGroupPicker</name>
     <message>
         <source>%1，%2 项</source>
@@ -1531,6 +1562,29 @@
     <message>
         <source>%1 导入</source>
         <translation>%1 import</translation>
+    </message>
+</context>
+<context>
+    <name>ClipPictureViewer</name>
+    <message>
+        <source>查看图片</source>
+        <translation>Picture</translation>
+    </message>
+    <message>
+        <source>图片加载失败</source>
+        <translation>The picture could not be loaded</translation>
+    </message>
+    <message>
+        <source>正在加载图片…</source>
+        <translation>Loading image…</translation>
+    </message>
+    <message>
+        <source>滚轮缩放 · 双击看原始大小 · Esc 关闭</source>
+        <translation>Wheel to zoom · Double-click for actual size · Esc to close</translation>
+    </message>
+    <message>
+        <source>关闭</source>
+        <translation>Close</translation>
     </message>
 </context>
 <context>
@@ -1565,6 +1619,26 @@
             <numerusform>…%Ln more character</numerusform>
             <numerusform>…%Ln more characters</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>关闭大图</source>
+        <translation>Close the large view</translation>
+    </message>
+    <message>
+        <source>看大图</source>
+        <translation>View large</translation>
+    </message>
+    <message>
+        <source>看大图，滚轮可以放大</source>
+        <translation>View large; the wheel zooms in</translation>
+    </message>
+    <message>
+        <source>收起图中的文字</source>
+        <translation>Fold the words in the picture</translation>
+    </message>
+    <message>
+        <source>展开图中的文字</source>
+        <translation>Show the words in the picture</translation>
     </message>
     <message>
         <source>图中的文字</source>
@@ -3091,8 +3165,8 @@
         <translation>Press Tab to go back to searching names</translation>
     </message>
     <message>
-        <source>按 Esc 清空关键字后面的文字</source>
-        <translation>Press Esc to clear the words after the keyword</translation>
+        <source>按 Shift+Tab 改搜文件名，Esc 清空关键字后面的文字</source>
+        <translation>Press Shift+Tab to search names instead, Esc to clear the words after the keyword</translation>
     </message>
     <message>
         <source>文件名和 %1的内容里都没有</source>
@@ -4493,6 +4567,14 @@ Installing first renames it to %2, left beside the plugin; no file is deleted.</
         <translation>just type;type to search</translation>
     </message>
     <message>
+        <source>OneCommander 里打字搜索</source>
+        <translation>Type to search in OneCommander</translation>
+    </message>
+    <message>
+        <source>OneCommander;One Commander;直接打字;双栏;type to search</source>
+        <translation>OneCommander;One Commander;just type;dual pane;type to search</translation>
+    </message>
+    <message>
         <source>收藏圆盘</source>
         <translation>Favorites pie</translation>
     </message>
@@ -4642,6 +4724,10 @@ Installing first renames it to %2, left beside the plugin; no file is deleted.</
     <message>
         <source>展开内置功能</source>
         <translation>Expand built-in features</translation>
+    </message>
+    <message>
+        <source>在文件列表中输入字母或数字，用 Win顺 搜索这一栏的文件夹，代替 OneCommander 的按首字母筛选</source>
+        <translation>Type letters or digits in a file list to search that pane&apos;s folder with WinShun, instead of OneCommander&apos;s filter by first letters</translation>
     </message>
     <message>
         <source>全部插件</source>
@@ -4909,10 +4995,6 @@ Send suggestions and problems on our website</translation>
     <message>
         <source>空文件</source>
         <translation>Empty file</translation>
-    </message>
-    <message>
-        <source>%1 · %2</source>
-        <translation>%1 · %2</translation>
     </message>
     <message>
         <source>建议</source>
@@ -7989,6 +8071,38 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>animation;motion;fade;transition;slide;popup;instant;sluggish</translation>
     </message>
     <message>
+        <source>搜索框阴影</source>
+        <translation>Search bar shadow</translation>
+    </message>
+    <message>
+        <source>“浅”阴影更小更淡；“无”不显示阴影，搜索框随之变成直角</source>
+        <translation>&quot;Light&quot; is a smaller, paler shadow; &quot;None&quot; shows no shadow, and the search bar turns square</translation>
+    </message>
+    <message>
+        <source>“无”时搜索框周围不显示阴影</source>
+        <translation>&quot;None&quot;: no shadow around the search bar</translation>
+    </message>
+    <message>
+        <source>Windows 只给带阴影的窗口画圆角。搜索面板和其他窗口照常有阴影</source>
+        <translation>Windows rounds only windows with a shadow. The search panel and other windows keep their shadow</translation>
+    </message>
+    <message>
+        <source>搜索面板和其他窗口照常有阴影</source>
+        <translation>The search panel and other windows keep their shadow</translation>
+    </message>
+    <message>
+        <source>阴影;投影;影子;黑边;发黑;搜索框;搜索窗口;shadow;drop shadow</source>
+        <translation>shadow;drop shadow;dark edge;search bar;search window</translation>
+    </message>
+    <message>
+        <source>浅</source>
+        <translation>Light</translation>
+    </message>
+    <message>
+        <source>无</source>
+        <translation>None</translation>
+    </message>
+    <message>
         <source>悬停提示</source>
         <translation>Hover tips</translation>
     </message>
@@ -8218,6 +8332,18 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>字母直达;字母;数字;顺序;左手;单手</source>
         <translation>letter jump;letters;digits;order;left hand;one hand</translation>
+    </message>
+    <message>
+        <source>在 OneCommander 里直接打字搜索</source>
+        <translation>Type to search in OneCommander</translation>
+    </message>
+    <message>
+        <source>OneCommander;One Commander;直接打字;输入;当前文件夹;双栏;type to search</source>
+        <translation>OneCommander;One Commander;just type;typing;current folder;dual pane;type to search</translation>
+    </message>
+    <message>
+        <source>代替 OneCommander 自带的“按首字母筛选”；符号键、侧栏、重命名和地址栏输入不受影响</source>
+        <translation>Replaces OneCommander&apos;s own filter by first letters; symbol keys, the sidebar, renaming and the address bar are not affected</translation>
     </message>
     <message>
         <source>剪贴板大小</source>
@@ -9067,6 +9193,22 @@ Double-click grip: expand/collapse search panel</translation>
         <source>搜索框收起，预览就一起关掉；下次要看再按预览快捷键</source>
         <translation>The preview closes with the search box; press the preview shortcut to see it again</translation>
     </message>
+    <message>
+        <source>粘贴为纯文本的快捷键</source>
+        <translation>Paste as plain text shortcut</translation>
+    </message>
+    <message>
+        <source>纯文本;去格式;无格式;清除格式;去掉格式;PureText;快捷键;热键;plain text;paste;hotkey</source>
+        <translation>plain text;unformatted;clear formatting;strip formatting;PureText;shortcut;hotkey;paste</translation>
+    </message>
+    <message>
+        <source>在任何程序里按下，把剪贴板里的文字去掉字体、颜色和链接后粘贴，例如 Ctrl+Alt+V</source>
+        <translation>Press it in any program to paste the clipboard&apos;s text without fonts, colours or links, e.g. Ctrl+Alt+V</translation>
+    </message>
+    <message>
+        <source>剪贴板里也换成纯文本。不记录剪贴板历史时也能用</source>
+        <translation>The clipboard keeps the plain text too. Works with the clipboard history off</translation>
+    </message>
 </context>
 <context>
     <name>ShareCard</name>
@@ -9235,8 +9377,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Scope and filters</translation>
     </message>
     <message>
-        <source>切换到上一个范围</source>
-        <translation>Back to the previous scope</translation>
+        <source>切换到上一个范围；插件关键字后面：改搜文件名</source>
+        <translation>Back to the previous scope; after a plugin keyword: search names instead</translation>
     </message>
     <message>
         <source>在“文件”里切换类型，在“内容”里换个文件夹</source>
@@ -9397,6 +9539,10 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>翻阅搜索历史，回到最新时恢复未完成输入</source>
         <translation>Browse query history; return to the newest position to restore your draft</translation>
+    </message>
+    <message>
+        <source>在任何程序里粘贴为纯文本</source>
+        <translation>Paste as plain text, in any program</translation>
     </message>
 </context>
 <context>
@@ -11361,6 +11507,10 @@ Double-click grip: expand/collapse search panel</translation>
         <source>无法准备要粘贴的图片文件</source>
         <translation>Could not prepare the image files to paste</translation>
     </message>
+    <message>
+        <source>剪贴板里没有文字，无法粘贴为纯文本</source>
+        <translation>There is no text on the clipboard to paste as plain text</translation>
+    </message>
 </context>
 <context>
     <name>ws::ContentPane</name>
@@ -12883,6 +13033,10 @@ Content index: %5</translation>
     <message>
         <source>返回上一级</source>
         <translation>Up a level</translation>
+    </message>
+    <message>
+        <source>改搜文件名</source>
+        <translation>Search names</translation>
     </message>
     <message>
         <source>打开位置</source>

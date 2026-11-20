@@ -73,6 +73,7 @@
 #include "platform/ComWorker.h"
 #include "platform/Credentials.h"
 #include "platform/DialogJump.h"
+#include "platform/DisplaySetup.h"
 #include "DialogRuleStore.h"
 #include "platform/ExternalPreview.h"
 #include "platform/EverythingServer.h"
@@ -173,6 +174,7 @@ constexpr int kWinSHotkeyId = 5; // Win+S: the launcher over the taskbar, once E
 constexpr int kScreenClipHotkeyId = 6; // Win+Shift+S, which Explorer gives up with Win+S: the screen capture
 constexpr int kFolderMenuHotkeyId = 7; // the folder menu in the window in front (GitHub #25)
 constexpr int kPanelHotkeyId = 8; // directly open the full search panel (#206)
+constexpr int kPastePlainHotkeyId = 9; // the clipboard pasted as plain text into the window in front (#408)
 constexpr int kQuickPasteHotkeyId = 20; // + 1…9: paste without opening the clipboard
 // For another program to tell where its text caret is: longer, and the
 // clipboard would open late; it opens by the mouse pointer then.
@@ -769,7 +771,8 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
     connect(m_launcher->results(), &ResultModel::countChanged, this, &App::followTypingSelection);
     connect(&m_typingSelectionTimer, &QTimer::timeout, this, [this] {
         const auto* row = m_launcher->results()->at(m_launcher->currentRow());
-        if (!row || row->isApp() || row->elsewhere || !m_typingOrigin.tab || m_typingOrigin.opus || !launcherShown())
+        if (!row || row->isApp() || row->elsewhere || !m_typingOrigin.tab || m_typingOrigin.in != TypingIn::Explorer
+            || !launcherShown())
             return;
         const auto origin = m_typingOrigin;
         const auto stop = m_typingSelection.get_token();
@@ -1083,6 +1086,8 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
             startScreenClip();
         else if (id == kFolderMenuHotkeyId)
             folderMenuHotkey();
+        else if (id == kPastePlainHotkeyId)
+            m_clipboard->pastePlainNow(::GetForegroundWindow());
         else if (id == kPanelHotkeyId) {
             beginTrigger(TriggerSource::Hotkey, pressedAt);
             panelHotkey(pressedAt);
@@ -1709,8 +1714,10 @@ void App::applyTheme()
     win::setMenuTheme(dark);
     if (m_pluginHost)
         m_pluginHost->setAppearance(m_language, dark ? u"dark"_s : u"light"_s, pluginLook());
-    if (m_window)
+    if (m_window) {
         styleWindow(m_window, SystemTheme::backdropAvailable());
+        applySearchShadow();
+    }
     if (m_clipWindow)
         styleWindow(m_clipWindow, SystemTheme::backdropAvailable());
     if (QQuickWindow* preview = m_preview ? m_preview->window() : nullptr)
@@ -1723,6 +1730,16 @@ void App::applyTheme()
         styleWindow(m_barWindow);
     updateSearchBoxLook(); // the accent
     guardDarkFrames();
+}
+
+// The box's shadow as set. The panel keeps the standard one: sized at its
+// edges, it has a sizing frame (WS_THICKFRAME), and DWM gives any such window
+// its full shadow (pitfalls: 搜索框阴影); Main.qml's WindowEdge likewise.
+void App::applySearchShadow()
+{
+    if (m_window)
+        win::setWindowShadow(m_window, m_launcher && m_launcher->panel()
+                ? win::WindowShadow::Standard : static_cast<win::WindowShadow>(SystemTheme::searchShadow()));
 }
 
 void App::guardDarkFrames()
@@ -1738,6 +1755,8 @@ void App::guardDarkFrames()
 void App::applyAppearance()
 {
     SystemTheme::setRoundedCorners(m_settings.corners == u"round");
+    SystemTheme::setSearchShadow(m_settings.searchShadow); // 搜索框阴影 (GitHub #412)
+    applySearchShadow(); // not made yet the first time: applyTheme sets it then
     SystemTheme::setUiStyle(m_settings.uiStyle);
     SystemTheme::setGlassAppearance(m_settings.glassTransparency, m_settings.glassClarity);
     SystemTheme::setHoverTips(m_settings.hoverTips); // 悬停提示 (GitHub #368)
@@ -1797,6 +1816,7 @@ void App::applyAppearance()
     m_messages->setTrayTooltip(trayTooltip());
     applyHotkey(); // its error message
     applyFolderMenuHotkey();
+    applyPastePlainHotkey();
     refreshContentIndexStatus();
 }
 
@@ -2058,6 +2078,7 @@ void App::applySettings(bool initial)
     updateNumberKeys();
     applyHotkey();
     applyFolderMenuHotkey(); // after applyFolderMenu: the menu it brings up
+    applyPastePlainHotkey();
     applyScreenshots();
     restorePrintScreen();
     m_launcher->setContentOptions(m_settings.contentSearch, m_settings.contentExtensions,
@@ -2160,6 +2181,28 @@ void App::applyFolderMenuHotkey()
     noteApplyProblem(u"Launcher/FolderMenuHotkey"_s, hotkeyError);
     if (m_settingsEditor)
         m_settingsEditor->setFolderMenuHotkeyError(hotkeyError); // shown next to the shortcut
+    if (!settingsShown() && !hotkeyError.isEmpty() && !m_aiApplying)
+        m_messages->showNotification(tr("快捷键不可用"), hotkeyError);
+}
+
+// 粘贴为纯文本 anywhere (GitHub #408), with the history on or off.
+void App::applyPastePlainHotkey()
+{
+    m_messages->unregisterHotkey(kPastePlainHotkeyId);
+    if (m_settingsEditor && m_settingsEditor->recordingHotkey())
+        return; // the keys being pressed must reach the settings window
+    const QString hotkey = m_settings.pastePlainHotkey.trimmed();
+    QString hotkeyError;
+    if (!hotkey.isEmpty() && !m_messages->registerHotkey(kPastePlainHotkeyId, hotkey)) {
+        UINT modifiers = 0;
+        UINT vk = 0;
+        hotkeyError = MessageWindow::parseHotkey(hotkey, &modifiers, &vk)
+            ? tr("“%1” 已被其他程序或系统占用，请换一个。").arg(hotkey)
+            : tr("无法识别“%1”，请重新设置。").arg(hotkey);
+    }
+    noteApplyProblem(u"Clipboard/PastePlainHotkey"_s, hotkeyError);
+    if (m_settingsEditor)
+        m_settingsEditor->setPastePlainHotkeyError(hotkeyError); // shown next to the shortcut
     if (!settingsShown() && !hotkeyError.isEmpty() && !m_aiApplying)
         m_messages->showNotification(tr("快捷键不可用"), hotkeyError);
 }
@@ -2937,6 +2980,7 @@ void App::applyTypeToSearch()
     const TypeToSearch::Surfaces wanted {.startMenu = m_settings.taskbarStartTyping,
         .explorer = m_settings.explorerTyping,
         .opus = m_settings.opusTyping,
+        .oneCommander = m_settings.oneCommanderTyping,
         .desktop = m_settings.desktopTyping,
         .pasteFile = m_settings.pasteFileEnabled && m_settings.pasteFileCtrlV};
     if (m_typing && m_typing->surfaces() == wanted)
@@ -2953,7 +2997,7 @@ void App::applyTypeToSearch()
             [this, root, tab, vk, request] {
                 qInfo().noquote() << u"Explorer typing: key 0x%1 in window 0x%2"_s.arg(vk, 2, 16, QLatin1Char('0'))
                                          .arg(reinterpret_cast<quintptr>(root), 0, 16);
-                folderTyped(root, tab, false, request);
+                folderTyped(root, tab, TypingIn::Explorer, request);
             },
             Qt::QueuedConnection);
     };
@@ -2965,7 +3009,18 @@ void App::applyTypeToSearch()
                                          .arg(vk, 2, 16, QLatin1Char('0'))
                                          .arg(reinterpret_cast<quintptr>(root), 0, 16)
                                          .arg(reinterpret_cast<quintptr>(tab), 0, 16);
-                folderTyped(root, tab, true, request);
+                folderTyped(root, tab, TypingIn::Opus, request);
+            },
+            Qt::QueuedConnection);
+    };
+    callbacks.typedInOneCommander = [this](HWND root, unsigned vk, TypeToSearch::RequestId request) {
+        QMetaObject::invokeMethod(
+            this,
+            [this, root, vk, request] {
+                qInfo().noquote() << u"OneCommander typing: key 0x%1 in window 0x%2"_s
+                                         .arg(vk, 2, 16, QLatin1Char('0'))
+                                         .arg(reinterpret_cast<quintptr>(root), 0, 16);
+                folderTyped(root, root, TypingIn::OneCommander, request);
             },
             Qt::QueuedConnection);
     };
@@ -3405,22 +3460,35 @@ std::optional<QString> App::hostedPlace(HWND frame, HWND control) const
     return place;
 }
 
-void App::folderTyped(HWND root, HWND tab, bool opus, std::uint64_t request)
+void App::folderTyped(HWND root, HWND tab, TypingIn in, std::uint64_t request)
 {
     if (!m_typing || !m_typing->pending(request))
         return;
-    // Explorer's COM and Opus's DOpusRT query can wait on the file manager:
-    // on a worker of its own, never the GUI thread. The hook holds keys meanwhile.
+    // Explorer's COM, Opus's DOpusRT query and OneCommander's UI Automation
+    // can wait on the file manager: on a worker of its own, never the GUI
+    // thread. The hook holds keys meanwhile.
     if (!m_typingWorker)
         m_typingWorker = std::make_unique<ComWorker>();
-    m_typingWorker->post([this, root, tab, opus, request] {
+    m_typingWorker->post([this, root, tab, in, request] {
         QElapsedTimer clock;
         clock.start();
         // Opus's tab without a folder on disk (This PC, a library, FTP): known
-        // all the same, and searched as the whole PC (GitHub #82).
-        // 360文件夹's tab: told by what it shows (hostedexplorer::place).
+        // all the same, and searched as the whole PC (GitHub #82); so is
+        // OneCommander's pane. 360文件夹's tab: told by what it shows
+        // (hostedexplorer::place).
         std::optional<std::wstring> place;
-        if (opus) {
+        RECT list {};
+        bool notFileList = false;
+        if (in == TypingIn::OneCommander) {
+            // What has its keyboard first: typed in its sidebar or on a
+            // toolbar, the keys are its (and the next ones, TypeToSearch).
+            if (const auto typing = filemanager::oneCommanderTyping(root)) {
+                place = typing->folder;
+                list = typing->list;
+            } else {
+                notFileList = true;
+            }
+        } else if (in == TypingIn::Opus) {
             place = filemanager::opusPlace(tab);
         } else if (folderview::classifyWindow(root).hosted) {
             if (const std::optional<QString> hosted = hostedPlace(root, tab))
@@ -3430,11 +3498,14 @@ void App::folderTyped(HWND root, HWND tab, bool opus, std::uint64_t request)
         }
         const QString folder = QString::fromStdWString(place.value_or({}));
         const bool known = place.has_value(); // with no folder: This PC and the like, the whole PC is searched (#82, #329)
-        qInfo().noquote() << (opus ? u"Opus typing:" : u"Explorer typing:")
-                          << u"folder \"%1\"%2 %3 ms"_s.arg(folder, known ? QString() : u" (none)"_s).arg(clock.elapsed());
+        qInfo().noquote() << (in == TypingIn::Opus ? u"Opus typing:" : in == TypingIn::OneCommander ? u"OneCommander typing:" : u"Explorer typing:")
+                          << (notFileList ? u"not in a file list, %1 ms"_s.arg(clock.elapsed())
+                                          : u"folder \"%1\"%2 %3 ms"_s.arg(folder, known ? QString() : u" (none)"_s).arg(clock.elapsed()));
         QMetaObject::invokeMethod(
             this,
-            [this, root, tab, opus, request, known, folder] { typingFolderKnown(root, tab, opus, request, known, folder); },
+            [this, root, tab, in, request, known, folder, list, notFileList] {
+                typingFolderKnown(root, tab, in, request, known, folder, list, notFileList);
+            },
             Qt::QueuedConnection);
     });
 }
@@ -3458,7 +3529,8 @@ void App::desktopTyped(HWND desktop, std::uint64_t request)
     deliverTyping(); // pinned and up already: it may be now
 }
 
-void App::typingFolderKnown(HWND root, HWND tab, bool opus, std::uint64_t request, bool known, const QString& folder)
+void App::typingFolderKnown(HWND root, HWND tab, TypingIn in, std::uint64_t request, bool known, const QString& folder,
+    const RECT& list, bool notFileList)
 {
     if (!m_typing || !m_typing->pending(request))
         return;
@@ -3473,22 +3545,28 @@ void App::typingFolderKnown(HWND root, HWND tab, bool opus, std::uint64_t reques
             && searchtyping::focusOf(static_cast<unsigned>(focus.flags), true) == searchtyping::Focus::ItemsView;
         return items ? folderview::classify(focus.hwndFocus, {}).tab : nullptr;
     };
-    const bool sameFocus = ::GetForegroundWindow() == root && (opus ? folderview::opusTypingView(root) : explorerTab()) == tab;
-    if (!known || !(opus ? m_settings.opusTyping : m_settings.explorerTyping) || !m_window || !sameFocus) {
+    // OneCommander's focus inside its window was asked just now (folderTyped).
+    const bool sameFocus = ::GetForegroundWindow() == root
+        && (in == TypingIn::OneCommander ? root : in == TypingIn::Opus ? folderview::opusTypingView(root) : explorerTab()) == tab;
+    const bool on = in == TypingIn::OneCommander ? m_settings.oneCommanderTyping
+        : in == TypingIn::Opus                   ? m_settings.opusTyping
+                                                 : m_settings.explorerTyping;
+    if (!known || !on || !m_window || !sameFocus) {
         qInfo() << "Folder typing: no folder or focus changed; give back to the original view only";
-        m_typing->giveBack(request);
+        m_typing->giveBack(request, notFileList);
         return;
     }
     // The folder typed, the words to come after it (as Explorer's "search
     // here", GitHub #20); on the monitor of that window, which need not be
     // the mouse's. The keys follow once the launcher is ready for them.
-    beginHandoff(opus ? u"opus"_s : u"explorer"_s);
-    showFolderSearch(root, tab, opus, folder);
+    beginHandoff(in == TypingIn::OneCommander ? u"onecommander"_s : in == TypingIn::Opus ? u"opus"_s : u"explorer"_s);
+    showFolderSearch(root, tab, in, folder, list);
     deliverTyping(); // pinned and up already: it may be now
 }
 
-void App::showFolderSearch(HWND root, HWND tab, bool opus, const QString& folder)
+void App::showFolderSearch(HWND root, HWND tab, TypingIn in, const QString& folder, const RECT& oneCommanderList)
 {
+    const bool opus = in == TypingIn::Opus;
     // Typed in Opus, the box sits in the corner of its file list (as Listary's
     // does) rather than over it, and may search the whole PC (GitHub #82).
     // No folder there (This PC and the like): the whole PC too.
@@ -3497,7 +3575,11 @@ void App::showFolderSearch(HWND root, HWND tab, bool opus, const QString& folder
     // On the monitor of the list typed in (a lister over two may have the other on the other).
     // Folder typing uses a compact panel in the file list's bottom-right
     // corner, even when there is space beside the window (GitHub #234).
-    const RECT list = opus ? RECT {} : folderview::explorerTypingCorner(root, tab);
+    // OneCommander's: the file list typed in, as UI Automation told it (none:
+    // the window had the focus itself, the box goes beside the window).
+    const RECT list = opus ? RECT {}
+        : in == TypingIn::OneCommander ? oneCommanderList
+                                       : folderview::explorerTypingCorner(root, tab);
     // Pinned and up, or the panel: where it is (showLauncher).
     const QString kept = m_launcher->pinned() && launcherShown() ? u"pinned"_s : m_launcher->panel() ? u"panel"_s : QString();
     m_launcher->awaitTyping(prefix); // the key typed follows: nothing listed before it
@@ -3511,7 +3593,7 @@ void App::showFolderSearch(HWND root, HWND tab, bool opus, const QString& folder
     m_typedRows = m_launcherReveal.pending() ? TypedRows::FirstFrame : TypedRows::No;
     m_typedRowsClock.start();
     qInfo() << "Folder typing: the box is" << (m_typedRows == TypedRows::No ? "up already" : "kept from view for the key's rows");
-    m_typingOrigin = {root, tab, opus, folder}; // after showLauncher, which clears it
+    m_typingOrigin = {root, tab, in, folder}; // after showLauncher, which clears it
     // For the journal's typing-handoff: how it was placed, the window typed
     // in, its file list and the work area (screen pixels), the box where Qt
     // put it (its pixels on that screen). No titles, no folders.
@@ -3525,7 +3607,7 @@ void App::showFolderSearch(HWND root, HWND tab, bool opus, const QString& folder
     RECT bounds {};
     if (::GetWindowRect(root, &bounds))
         placed.insert(u"window"_s, rectOf(bounds));
-    if (!opus)
+    if (!opus && !::IsRectEmpty(&list))
         placed.insert(u"list"_s, rectOf(list));
     MONITORINFO monitor {sizeof monitor};
     if (::GetMonitorInfoW(::MonitorFromWindow(root, MONITOR_DEFAULTTONEAREST), &monitor))
@@ -3553,16 +3635,16 @@ void App::cancelTypingSelection()
 void App::followTypingSelection()
 {
     cancelTypingSelection();
-    if (m_typingOrigin.tab && !m_typingOrigin.opus)
+    if (m_typingOrigin.tab && m_typingOrigin.in == TypingIn::Explorer)
         m_typingSelectionTimer.start();
 }
 
 bool App::revealInTypingTab(const QString& path)
 {
-    // Opus keeps the originating pane. Explorer follows the chosen manager.
-    // A drive has nothing above it to select it in.
+    // Opus and OneCommander keep the originating pane. Explorer follows the
+    // chosen manager. A drive has nothing above it to select it in.
     const QFileInfo info(path);
-    if ((!m_typingOrigin.opus && shell::fileManager() != filemanager::Kind::Explorer) || info.isRoot())
+    if ((m_typingOrigin.in == TypingIn::Explorer && shell::fileManager() != filemanager::Kind::Explorer) || info.isRoot())
         return false;
     return openInTypingTab(QDir::toNativeSeparators(info.absolutePath()), QDir::toNativeSeparators(path));
 }
@@ -3585,7 +3667,21 @@ bool App::openInTypingTab(const QString& folder, const QString& select)
     ::SetForegroundWindow(root);
     if (!m_typingWorker)
         m_typingWorker = std::make_unique<ComWorker>();
-    if (from.opus) {
+    if (from.in == TypingIn::OneCommander) {
+        // Its active pane, the one typed in (its focus moved nowhere since:
+        // the launcher had it). A file is selected in its folder.
+        m_typingWorker->post([from, path = QDir::toNativeSeparators(folder), select] {
+            if (!filemanager::goToInOneCommanderWindow(from.root, (select.isEmpty() ? path : select).toStdWString())) {
+                qWarning() << "OneCommander typing: it did not go there; open through the chosen file manager";
+                if (select.isEmpty())
+                    shell::open(path);
+                else
+                    shell::reveal(select);
+            }
+        });
+        return true;
+    }
+    if (from.in == TypingIn::Opus) {
         m_typingWorker->post([from, path = QDir::toNativeSeparators(folder), select] {
             if (!filemanager::goToInOpusView(from.root, from.tab, path.toStdWString(), select.toStdWString())) {
                 qWarning()
@@ -3712,6 +3808,7 @@ void App::releaseWinChordsForExplorer()
         {kPanelHotkeyId, m_settings.panelHotkey},
         {kFolderMenuHotkeyId, m_settings.folderMenuHotkey},
         {kClipboardHotkeyId, m_settings.clipboardHotkey},
+        {kPastePlainHotkeyId, m_settings.pastePlainHotkey},
         {kWinVHotkeyId, u"Win+V"_s},
         {kWinSHotkeyId, u"Win+S"_s},
         {kScreenClipHotkeyId, u"Win+Shift+S"_s},
@@ -3748,6 +3845,7 @@ void App::applyWinKeyedHotkeys()
 {
     applyHotkey();
     applyFolderMenuHotkey();
+    applyPastePlainHotkey();
 }
 
 void App::explorerRestarted(bool back)
@@ -3855,6 +3953,7 @@ void App::showSettings(const std::function<void(QQuickWindow*)>& at)
         connect(editor, &SettingsEditor::recordingHotkeyChanged, this, &App::applyClipboardHotkeys);
         connect(editor, &SettingsEditor::recordingHotkeyChanged, this, &App::applyTaskbarHotkeys);
         connect(editor, &SettingsEditor::recordingHotkeyChanged, this, &App::applyFolderMenuHotkey);
+        connect(editor, &SettingsEditor::recordingHotkeyChanged, this, &App::applyPastePlainHotkey);
         connect(editor, &SettingsEditor::explorerRestartRequested, this, &App::restartExplorer);
         connect(editor, &SettingsEditor::giveBackRequested, this, &App::giveBackWinKey);
         connect(editor, &SettingsEditor::autostartRequested, this, &App::setAutostart);
@@ -4035,6 +4134,13 @@ void App::showSettings(const std::function<void(QQuickWindow*)>& at)
                         {u"type"_s, placement.seeks ? u"HDD-or-unknown"_s : u"SSD"_s}});
                 }
                 context[u"disks"_s] = disks;
+                // How the displays are set up, off the UI thread (the event log, the drivers' keys).
+                QJsonObject display = context[u"display"_s].toObject();
+                display[u"monitors"_s] = diagnostics::monitors();
+                display[u"graphics_settings"_s] = diagnostics::graphicsSettings();
+                display[u"driver_settings"_s] = diagnostics::driverSettings();
+                display[u"display_events"_s] = diagnostics::displayEvents();
+                context[u"display"_s] = display;
                 const auto exported = diagnostics::exportArchive(*log, dataFolder, serviceFolder, std::move(context));
                 QMetaObject::invokeMethod(this, [this, exported] {
                     m_diagnosticsExporting = false;
@@ -4077,6 +4183,7 @@ void App::showSettings(const std::function<void(QQuickWindow*)>& at)
         applyClipboardHotkeys(); // ... and where Win+V stands
         applyTaskbarHotkeys(); // ... and Win+S
         applyFolderMenuHotkey(); // ... and the folder menu's
+        applyPastePlainHotkey(); // ... and 粘贴为纯文本's
         editor->setSearchBoxShown(searchBoxHiddenName(m_searchBoxHidden));
         editor->setClassicTaskbar(m_classicTaskbar);
 
@@ -4108,6 +4215,8 @@ void App::showSettings(const std::function<void(QQuickWindow*)>& at)
             applyHotkey();
         if (!m_settingsEditor->folderMenuHotkeyError().isEmpty())
             applyFolderMenuHotkey();
+        if (!m_settingsEditor->pastePlainHotkeyError().isEmpty())
+            applyPastePlainHotkey();
         if (!m_settingsEditor->clipboardHotkeyError().isEmpty())
             applyClipboardHotkeys();
         // On the screen under the mouse again, at its user's size within it;
@@ -4615,7 +4724,10 @@ void App::dumpLauncher(const QString& file) const
     state[u"active"_s] = m_window && m_window->isActive();
     // Up from typing in a file manager: the original file display; "0" otherwise.
     state[u"typingTab"_s] = QString::number(reinterpret_cast<quintptr>(m_typingOrigin.tab), 16);
-    state[u"typingManager"_s] = m_typingOrigin.tab ? (m_typingOrigin.opus ? u"dopus"_s : u"explorer"_s) : QString();
+    state[u"typingManager"_s] = !m_typingOrigin.tab                        ? QString()
+        : m_typingOrigin.in == TypingIn::Opus         ? u"dopus"_s
+        : m_typingOrigin.in == TypingIn::OneCommander ? u"onecommander"_s
+                                                      : u"explorer"_s;
     state[u"doubleCtrlService"_s] = m_keyListener && m_keyListener->serviceActive();
     if (m_window) {
         const QRect g = m_window->geometry();
@@ -5121,7 +5233,7 @@ unsigned App::ownNumberDigits(const QString& keys) const
 {
     if (keys != u"ctrl" && keys != u"alt")
         return 0;
-    QStringList own {m_settings.hotkey, m_settings.panelHotkey, m_settings.clipboardHotkey, m_settings.folderMenuHotkey};
+    QStringList own = m_settings.globalHotkeys();
     for (const auto& [plugin, shortcuts] : m_pluginHotkeys) // the screenshot's, say
         own << shortcuts;
     const QString modifier = keys == u"ctrl" ? u"Ctrl"_s : u"Alt"_s;
@@ -7265,6 +7377,7 @@ void App::setPanel(bool on, bool opening)
         m_launcherOverBox = false;
         m_frame->setResizable(true);
         m_launcher->setPanel(true); // Main.qml lets go of the window's size and lays the panel out
+        applySearchShadow(); // the standard one
         m_placement->enterPanel(m_window->screen()); // one move and resize: the panel's size at its spot
         return;
     }
@@ -7288,6 +7401,7 @@ void App::setPanel(bool on, bool opening)
     m_placement->leavePanel();
     m_frame->setResizable(false);
     m_launcher->setPanel(false); // Main.qml: the box's size again, before it is placed
+    applySearchShadow();
     if (spot)
         m_placement->attachTaskbar(*spot);
     else

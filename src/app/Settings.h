@@ -146,6 +146,7 @@ struct Settings {
     // from before without the key keeps it off, so an upgrade changes nothing.
     bool explorerTyping = true;
     bool opusTyping = false; // opt in per manager: typing in an Opus file display (GitHub #82)
+    bool oneCommanderTyping = false; // ... in a OneCommander file list
     // Win顺 answers where programs look for Everything (GitHub #40: Directory
     // Opus, Total Commander, es.exe): platform/EverythingServer.
     bool everythingCompat = false;
@@ -307,6 +308,11 @@ struct Settings {
     // fades out (Placement::slideIn, slideOut); off: there and gone at once
     // (GitHub #365). Windows' own "animation effects" off: never animated.
     bool openAnimation = true;
+    // The shadow around the search box (GitHub #412): standard | light | none.
+    // light: smaller and paler, a popup's (Windows 11 with round corners; else
+    // none); none: no shadow, and square, as Windows rounds only the windows it
+    // shadows (win::setWindowShadow). Only the launcher's: the others keep theirs.
+    QString searchShadow = QStringLiteral("standard");
     // The settings window, the screenshot plugin's settings and picture text
     // search open at the size their user dragged them to, maximized if left
     // so, the next run too (SavedWindowSize, state.ini; GitHub #401). Off:
@@ -317,8 +323,9 @@ struct Settings {
     // author (DonateMoveDialog), put back by the arrow beside it there (GitHub #402).
     bool donateOnGleaningPage = false;
     // A tip comes up on the icon or button the mouse rests on: the kinds of
-    // file, the +, the row's buttons (HoverTip, SystemTheme::hoverTips); off,
-    // only an "i" still says its words (GitHub #368).
+    // file, the +, the row's buttons (HoverTip, SystemTheme::hoverTips), the
+    // full path on a folder menu's row (MenuPathTip, GitHub #413); off, only
+    // an "i" and a cut-off name still say their words (GitHub #368).
     bool hoverTips = true;
     // auto | builtin: what Alt+P on a row shows the file with. auto: QuickLook
     // or Seer when one is running in the background (FilePreview), else
@@ -373,6 +380,8 @@ struct Settings {
     // lower case, aliases folded ("Control" and "Meta" as ctrl and win); empty
     // for what is not a modifier or two and one key.
     static QString normalizedHotkey(const QString& shortcut);
+    // Win顺's own shortcuts that work anywhere (registered with Windows), set or not.
+    QStringList globalHotkeys() const { return {hotkey, panelHotkey, clipboardHotkey, folderMenuHotkey, pastePlainHotkey}; }
     // The rule for a shortcut a person (settings window) or AI sets: Ctrl, Alt
     // or Win held with its key, or a function key (F1 to F24) alone or with
     // Shift. A bare letter, Enter, Space, PrintScreen or Shift+letter would
@@ -479,6 +488,10 @@ struct Settings {
     bool clipboard = true; // keep a history of what is copied (Win+V page); at first as Windows' own clipboard history is
     bool clipboardWinV = false; // Win+V opens it, instead of Windows' clipboard history (see winv::)
     QString clipboardHotkey; // another shortcut for it; empty = none
+    // Anywhere: what the clipboard holds pasted as plain text into the window
+    // in front, as PureText (GitHub #408); the clipboard keeps the plain text.
+    // Works with the history off too. Empty = none (the default).
+    QString pastePlainHotkey;
     int clipboardMaxItems = 300; // entries kept outside groups, 0 = no limit
     int clipboardMaxDays = 30; // since last copied or pasted; 0 = no limit
     // keep | hide | clean: entries of copied files deleted or moved since,

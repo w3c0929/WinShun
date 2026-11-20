@@ -5,6 +5,8 @@
 #include "ForegroundUseProbe.h"
 #include "IdleOpenProbe.h"
 #include "ClipboardAnimationProbe.h"
+#include "SearchShadowProbe.h"
+#include "PastePlainProbe.h"
 #include "SettingsMotionProbe.h"
 #include "platform/AllocationTrace.h"
 #include "InteractionOptimizationProbe.h"
@@ -81,6 +83,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QJsonArray>
+#include <QBuffer>
 #include <QThread>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -6872,6 +6875,15 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
                 && !launcher.queryHistory().contains(u"hide p@ss"_s),
             "#395: a command with \"history\": false was kept in the search history");
         say(u"#395 search history after \"sum 3*7\" and \"hide p@ss\": %1"_s.arg(launcher.queryHistory().join(u" | "_s)));
+        // GitHub #411: the keyword and its words looked for as names instead (Shift+Tab).
+        query(u"sum 3*7"_s);
+        check(launcher.keyHints().value(u"tabKeys"_s).toString() == u"Shift+Tab", "#411: keyword mode did not offer Shift+Tab");
+        check(launcher.searchKeywordAsWords(), "#411: Shift+Tab was refused in keyword mode");
+        query(launcher.query());
+        check(launcher.query() == u"\"sum\" 3*7" && launcher.pluginKeyword().isEmpty() && launcher.queryError().isEmpty(),
+            "#411: Shift+Tab did not turn the keyword into a quoted word of the name search");
+        check(!launcher.searchKeywordAsWords(), "#411: Shift+Tab claimed a keyword with none there");
+        say(u"#411 Shift+Tab on \"sum 3*7\": the box reads %1, keyword \"%2\""_s.arg(launcher.query(), launcher.pluginKeyword()));
         query({});
         launcher.setPluginHost(nullptr);
     }
@@ -8034,6 +8046,287 @@ bool checkClipboardFilePreview(QQmlEngine* engine, const QDir& output)
     check(!watcher.running(), "fixture must never start the native clipboard writer");
     window->hide();
     say(u"clipboard file preview: a copied text file shows its lines beside the list, follows rows, closes with the window"_s);
+    return ok;
+}
+
+// --clipboard-picture-view (GitHub #414): a copied picture's words folded
+// under their heading until asked for (remembered); a click on the picture,
+// or Space with nothing typed, shows it large beside the window
+// (ClipPictureViewer), zoomed by the wheel; ↑ ↓ to a row without a picture,
+// Esc, the window put away close it. One copied picture file too, through
+// its file preview's pixels. A temporary history; the native clipboard untouched.
+// With --gallery-image <picture>: the poster, clipboard-picture.png.
+bool checkClipboardPictureView(QQmlEngine* engine, const QDir& output, const QString& galleryImage = {})
+{
+    QTemporaryDir temporary;
+    ClipStore store(temporary.filePath(u"history"_s));
+    bool ok = true;
+    const auto check = [&](bool condition, const char* reason) {
+        ok = condition && ok;
+        if (!condition) qWarning("clipboard picture view regression: %s", reason);
+    };
+    const auto waitFor = [](const auto& condition, int ms) {
+        QElapsedTimer timer;
+        timer.start();
+        while (!condition() && timer.elapsed() < ms)
+            pump(50);
+        return condition();
+    };
+    if (!store.open(QDateTime::currentMSecsSinceEpoch())) { check(false, "temporary history could not open"); return false; }
+    const auto drawn = [](QSize size, QColor a, QColor b) { // squares, so a zoom shows
+        QImage image(size, QImage::Format_RGB32);
+        QPainter painter(&image);
+        for (int y = 0; y < size.height(); y += 40)
+            for (int x = 0; x < size.width(); x += 40)
+                painter.fillRect(x, y, 40, 40, ((x + y) / 40) % 2 ? a : b);
+        painter.setPen(Qt::black);
+        painter.setFont(QFont(u"Microsoft YaHei UI"_s, 48));
+        painter.drawText(QRect(QPoint(), size), Qt::AlignCenter, u"Win顺 #414"_s);
+        return image;
+    };
+    const QString pictureFile = QDir::toNativeSeparators(temporary.filePath(u"截图.png"_s));
+    check(drawn({1200, 800}, QColor(0xd8, 0xe8, 0xfb), QColor(0xf4, 0xf8, 0xfe)).save(pictureFile),
+        "the picture file could not be written");
+    QByteArray png;
+    {
+        QBuffer buffer(&png);
+        check(buffer.open(QIODevice::WriteOnly) && drawn({2400, 1500}, QColor(0xfb, 0xe3, 0xc8), QColor(0xfe, 0xf6, 0xec))
+                                                       .save(&buffer, "PNG"),
+            "the picture could not be made");
+    }
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    store.add(ClipCapture {.kind = ClipKind::Files, .text = pictureFile, .source = u"资源管理器"_s}, now - 2000);
+    store.add(ClipCapture {.kind = ClipKind::Text, .text = u"一段文字"_s, .source = u"记事本"_s}, now - 1000);
+    ClipCapture picture;
+    picture.kind = ClipKind::Image;
+    picture.imageData = png;
+    picture.hash = "picture-view";
+    picture.width = 2400;
+    picture.height = 1500;
+    picture.source = u"PixPin"_s;
+    const qint64 pictureId = store.add(picture, now);
+    store.setPictureText(pictureId, u"Win顺 #414\n图里的第二行字"_s);
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    engine->addImageProvider(u"clippreview"_s, clipboard.filePreview()->imageProvider());
+    clipboard.setRowOptions(false, u"standard"_s, SystemTheme::uiSize());
+    clipboard.setActive(true);
+    clipboard.handleShown();
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Clipboard"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(engine, u"WinShun"_s, u"ClipboardWindow"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({{u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"placement"_s, QVariant::fromValue(&placement)}, {u"frame"_s, QVariant::fromValue(&frame)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { qWarning().noquote() << "clipboard picture view regression:" << component.errorString(); return false; }
+    window->create();
+    frame.setWindow(window);
+    placement.setWindow(window);
+    placement.enableWindowSizing();
+    showOffScreen(window);
+    clipboard.handlePlaced();
+    clipboard.setSeen(true);
+    settle(window);
+    auto* page = visualNamed(window->contentItem(), u"clipboardPage"_s);
+    auto* entries = visualNamed(window->contentItem(), u"clipboardEntries"_s);
+    if (!page || !entries) { check(false, "production clipboard page missing"); return false; }
+    const auto named = [&](const QString& name) { return visualNamed(window->contentItem(), name); };
+    const auto viewer = [&]() -> QQuickWindow* {
+        for (QWindow* shown : QGuiApplication::topLevelWindows())
+            if (shown->objectName() == u"clipboardPictureViewer"_s && shown->isVisible())
+                return qobject_cast<QQuickWindow*>(shown);
+        return nullptr;
+    };
+    const auto viewerItem = [&](const QString& name) { return viewer() ? visualNamed(viewer()->contentItem(), name) : nullptr; };
+    const auto press = [&](int code, const QString& text = {}) {
+        QKeyEvent down(QEvent::KeyPress, code, {}, text);
+        QKeyEvent up(QEvent::KeyRelease, code, {}, text);
+        QCoreApplication::sendEvent(window, &down);
+        QCoreApplication::sendEvent(window, &up);
+        pump(50);
+    };
+
+    // The picture's row in the preview: its words folded, then shown and remembered.
+    QMetaObject::invokeMethod(page, "togglePreview", Q_ARG(QVariant, QVariant(0)));
+    settle(window);
+    check(page->property("previewOpen").toBool() && entries->property("currentIndex").toInt() == 0,
+        "the picture's row did not open the preview");
+    auto* words = named(u"clipboardPictureWords"_s);
+    auto* heading = named(u"clipboardPictureWordsToggle"_s);
+    check(!clipboard.pictureWords() && heading && heading->isVisible() && words && !words->isVisible(),
+        "a picture's words are not folded at first");
+    check(saveGrab(window, output.filePath(u"clipboard-picture-folded.png"_s)), "the folded preview did not render");
+    QMetaObject::invokeMethod(page, "togglePreview", Q_ARG(QVariant, QVariant(0)));
+    settle(window);
+    clipboard.setPictureWords(true);
+    QMetaObject::invokeMethod(page, "togglePreview", Q_ARG(QVariant, QVariant(0)));
+    settle(window);
+    words = named(u"clipboardPictureWords"_s);
+    // (Read again by Windows' own OCR, the words given may become what it reads.)
+    check(words && words->isVisible() && !words->property("text").toString().isEmpty(),
+        "the words do not show once asked for");
+    check(store.value(u"pictureWords"_s) == u"shown"_s, "showing the words is not remembered");
+    check(saveGrab(window, output.filePath(u"clipboard-picture-words.png"_s)), "the preview with words did not render");
+    clipboard.setPictureWords(false);
+    settle(window);
+
+    // A click on the picture: large beside the window, fitted, then zoomed.
+    auto* zoom = named(u"clipboardPictureZoom"_s);
+    check(waitFor([&] { return zoom && zoom->property("enabled").toBool(); }, 5000), "the picture cannot be clicked");
+    if (zoom) {
+        const QPointF at = zoom->mapToScene(QPointF(zoom->width() / 2, zoom->height() / 2));
+        QMouseEvent move(QEvent::MouseMove, at, window->mapToGlobal(at), Qt::NoButton, {}, {});
+        QMouseEvent down(QEvent::MouseButtonPress, at, window->mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, {});
+        QMouseEvent up(QEvent::MouseButtonRelease, at, window->mapToGlobal(at), Qt::LeftButton, {}, {});
+        QCoreApplication::sendEvent(window, &move);
+        QCoreApplication::sendEvent(window, &down);
+        QCoreApplication::sendEvent(window, &up);
+    }
+    check(waitFor([&] { return viewer() != nullptr; }, 3000), "a click on the picture did not show it large");
+    auto* image = viewerItem(u"clipboardPictureViewerImage"_s);
+    check(waitFor([&] { image = viewerItem(u"clipboardPictureViewerImage"_s); return image && image->property("status").toInt() == 1; }, 5000),
+        "the large picture did not load");
+    if (QQuickWindow* large = viewer()) {
+        const QRect host = window->geometry();
+        const QRect area = large->screen()->availableGeometry();
+        check(area.contains(large->geometry()), "the large picture is not on the screen");
+        check(!large->geometry().intersects(host) || large->geometry().center().x() == area.center().x()
+                  || std::abs(large->geometry().center().x() - area.center().x()) <= 1,
+            "the large picture covers the window without being in the middle of the screen");
+        check(large->width() > zoom->width() && large->height() > zoom->height(), "the large picture is not larger");
+        settle(large);
+        check(saveGrab(large, output.filePath(u"clipboard-picture-viewer.png"_s)), "the large picture did not render");
+        auto* view = viewerItem(u"clipboardPictureViewerView"_s);
+        const qreal fitted = view ? view->property("scale").toReal() : 0;
+        check(view && QMetaObject::invokeMethod(view, "zoomAt", Q_ARG(QVariant, 3.0), Q_ARG(QVariant, view->width() / 2),
+                                                Q_ARG(QVariant, view->height() / 2))
+                  && std::abs(view->property("scale").toReal() - std::min(16.0, fitted * 3)) < 1e-6,
+            "the large picture does not zoom");
+        settle(large);
+        check(saveGrab(large, output.filePath(u"clipboard-picture-viewer-zoomed.png"_s)), "the zoomed picture did not render");
+    }
+    check(page->property("pictureViewOpen").toBool(), "the page does not know the picture is shown large");
+
+    // ↑ ↓ to a row without a picture: it goes.
+    entries->setProperty("currentIndex", 1);
+    settle(window);
+    check(waitFor([&] { return viewer() == nullptr && !page->property("pictureViewOpen").toBool(); }, 2000),
+        "the large picture stays over a text row");
+
+    // Space with nothing typed: on a text row it is typed; on the picture's row it shows it, Esc closes it.
+    QMetaObject::invokeMethod(page, "focusSearch");
+    press(Qt::Key_Space, u" "_s);
+    check(viewer() == nullptr && clipboard.query() == u" "_s, "Space on a text row was not typed");
+    press(Qt::Key_Backspace);
+    check(clipboard.query().isEmpty(), "the space typed did not go");
+    entries->setProperty("currentIndex", 0);
+    settle(window);
+    press(Qt::Key_Space, u" "_s);
+    check(waitFor([&] { return viewer() != nullptr; }, 3000) && clipboard.query().isEmpty(),
+        "Space with nothing typed did not show the picture large");
+    press(Qt::Key_Escape);
+    check(waitFor([&] { return viewer() == nullptr; }, 2000) && window->isVisible(),
+        "Esc did not close the large picture first");
+
+    // One copied picture file: through its file preview's pixels.
+    entries->setProperty("currentIndex", 2);
+    settle(window);
+    FilePreview* preview = clipboard.filePreview();
+    check(waitFor([&] { return preview->kind() == FilePreview::Picture; }, 5000), "the copied picture file is not shown");
+    settle(window);
+    auto* badge = named(u"clipboardFilePictureZoom"_s);
+    check(badge != nullptr, "the copied picture file has no way to be shown large");
+    bool opened = false;
+    QMetaObject::invokeMethod(page, "togglePictureView", Q_RETURN_ARG(bool, opened));
+    check(opened && waitFor([&] { return viewer() != nullptr; }, 3000), "the copied picture file did not show large");
+    check(waitFor([&] {
+        image = viewerItem(u"clipboardPictureViewerImage"_s);
+        return image && image->property("status").toInt() == 1
+            && image->property("source").toString().startsWith(u"image://clippreview/"_s);
+    }, 5000), "the copied picture file's pixels did not load large");
+    if (QQuickWindow* large = viewer()) {
+        settle(large);
+        check(saveGrab(large, output.filePath(u"clipboard-picture-file-viewer.png"_s)), "the large picture file did not render");
+    }
+
+    // The poster (--gallery-image): a day's copies, the picture's row open
+    // and large beside the window, the two windows side by side as on the
+    // screen (their grabs put together: off the screen they are nowhere near
+    // each other). Its words are left folded, as they come.
+    if (!galleryImage.isEmpty() && ok) {
+        bool closed = false;
+        if (page->property("pictureViewOpen").toBool())
+            QMetaObject::invokeMethod(page, "togglePictureView", Q_RETURN_ARG(bool, closed));
+        waitFor([&] { return viewer() == nullptr; }, 2000);
+        std::vector<qint64> ids;
+        for (const auto& clip : store.clips()) ids.push_back(clip.id);
+        store.remove(ids);
+        QFile file(galleryImage);
+        const QImage chart(galleryImage);
+        check(file.open(QIODevice::ReadOnly) && !chart.isNull(), "the gallery picture could not be read");
+        const qint64 at = QDateTime::currentMSecsSinceEpoch();
+        store.add(ClipCapture {.kind = ClipKind::Text,
+            .text = u"会议纪要：周五前确认年度报告，补齐销售图表和项目验收记录。"_s, .source = u"记事本"_s}, at - 240000);
+        store.add(ClipCapture {.kind = ClipKind::Link, .text = u"https://github.com/LingCore/WinShun"_s, .source = u"浏览器"_s},
+            at - 180000);
+        store.add(ClipCapture {.kind = ClipKind::Text, // the chart's own figures
+            .text = u"第三季度销售额：华东 402 万，华南 371 万，华北 279 万，西南 208 万。"_s, .source = u"Excel"_s}, at - 60000);
+        ClipCapture copied;
+        copied.kind = ClipKind::Image;
+        copied.imageData = file.readAll();
+        copied.hash = "picture-view-gallery";
+        copied.width = chart.width();
+        copied.height = chart.height();
+        copied.source = u"PixPin"_s;
+        store.setPictureText(store.add(copied, at), u"区域销售额\n华东 华南 西南 华北"_s);
+        clipboard.handleShown();
+        settle(window);
+        entries->setProperty("currentIndex", 0);
+        if (!page->property("previewOpen").toBool())
+            QMetaObject::invokeMethod(page, "togglePreview", Q_ARG(QVariant, QVariant(0)));
+        settle(window);
+        zoom = named(u"clipboardPictureZoom"_s);
+        check(waitFor([&] { return zoom && zoom->property("enabled").toBool(); }, 5000), "the gallery picture is not in the preview");
+        bool large = false;
+        QMetaObject::invokeMethod(page, "togglePictureView", Q_RETURN_ARG(bool, large));
+        check(large && waitFor([&] {
+            image = viewerItem(u"clipboardPictureViewerImage"_s);
+            return image && image->property("status").toInt() == 1;
+        }, 5000), "the gallery picture did not show large");
+        if (QQuickWindow* beside = viewer()) {
+            settle(beside);
+            settle(window);
+            QImage host = window->grabWindow(), shown = beside->grabWindow();
+            const qreal dpr = window->devicePixelRatio();
+            host.setDevicePixelRatio(1);
+            shown.setDevicePixelRatio(1);
+            const int gap = qRound(beside->property("gap").toReal() * dpr);
+            const bool leftOfIt = beside->x() < window->x();
+            const int hostY = std::max(0, (shown.height() - host.height()) / 2);
+            const int shownY = std::max(0, (host.height() - shown.height()) / 2); // centred on the window, as with room
+            QImage both(host.width() + gap + shown.width(), std::max(host.height(), shown.height()),
+                QImage::Format_ARGB32_Premultiplied);
+            both.fill(Qt::transparent);
+            QPainter painter(&both);
+            painter.drawImage(leftOfIt ? shown.width() + gap : 0, hostY, host);
+            painter.drawImage(leftOfIt ? 0 : host.width() + gap, shownY, shown);
+            painter.end();
+            const bool saved = !host.isNull() && !shown.isNull() && both.save(output.filePath(u"clipboard-picture.png"_s), "PNG");
+            say(u"%1 clipboard-picture.png %2x%3 (window %4x%5, picture %6x%7)"_s.arg(saved ? u"saved"_s : u"NOT saved"_s)
+                    .arg(both.width()).arg(both.height()).arg(host.width()).arg(host.height())
+                    .arg(shown.width()).arg(shown.height()));
+            check(saved, "the poster of the large picture did not render");
+        }
+    }
+
+    // The window put away: the large picture with it.
+    clipboard.setSeen(false);
+    window->hide();
+    QMetaObject::invokeMethod(page, "windowHidden");
+    check(waitFor([&] { return viewer() == nullptr; }, 2000), "the large picture stays with the window away");
+    check(!watcher.running(), "fixture must never start the native clipboard writer");
+    say(u"clipboard picture view: words folded and remembered, large on a click or Space, zoomed, closed by rows, Esc, the window: %1"_s
+            .arg(ok ? u"checked"_s : u"FAILED"_s));
     return ok;
 }
 
@@ -9262,6 +9555,8 @@ int runResults(const QStringList& args)
         return checkClipboardInteractions(&engine, out, {}, true) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--clipboard-file"_s))
         return checkClipboardFilePreview(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--clipboard-picture-view"_s))
+        return checkClipboardPictureView(&engine, out, valueAfter(args, u"--gallery-image")) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--clipboard-select"_s))
         return checkClipboardTextSelection(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--clipboard-crashed-reading"_s)) // its warning when it gives up is expected
@@ -9821,7 +10116,7 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
         return result;
     };
     ::SetForegroundWindow(root);
-    app.showFolderSearch(root, tab, false, folder);
+    app.showFolderSearch(root, tab, App::TypingIn::Explorer, folder);
     QQuickWindow* window = nullptr;
     Launcher* launcher = nullptr;
     for (auto* candidate : QGuiApplication::allWindows()) {
@@ -10094,7 +10389,7 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
     });
     shown = second.Get();
     ::SetForegroundWindow(root);
-    app.showFolderSearch(root, secondTab, false, folder);
+    app.showFolderSearch(root, secondTab, App::TypingIn::Explorer, folder);
     const bool again = search(u"follow_"_s, 3);
     check(again, "production search found the three children again for the second tab");
     if (!again)
@@ -10139,7 +10434,7 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
         (area.right - area.left) * 3 / 4, (area.bottom - area.top) * 3 / 4, SWP_NOZORDER | SWP_NOACTIVATE);
     pump(500);
     ::SetForegroundWindow(root);
-    app.showFolderSearch(root, secondTab, false, QString::fromStdWString(filemanager::explorerFolder(secondTab)));
+    app.showFolderSearch(root, secondTab, App::TypingIn::Explorer, QString::fromStdWString(filemanager::explorerFolder(secondTab)));
     pump(600);
     settle(window, 3);
     {
@@ -10236,7 +10531,7 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
         const bool both = !::IsRectEmpty(&bars.vertical) && !::IsRectEmpty(&bars.horizontal);
         check(both, "a folder of more rows and columns than fit: Explorer shows both scroll bars");
         ::SetForegroundWindow(root);
-        app.showFolderSearch(root, secondTab, false, folder);
+        app.showFolderSearch(root, secondTab, App::TypingIn::Explorer, folder);
         pump(600);
         settle(window, 3);
         RECT box {}, overlap {};
@@ -10272,7 +10567,7 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
             app.hideLauncher();
             pump(300);
             ::SetForegroundWindow(root);
-            app.showFolderSearch(root, secondTab, false, folder);
+            app.showFolderSearch(root, secondTab, App::TypingIn::Explorer, folder);
             const HWND own = reinterpret_cast<HWND>(window->winId());
             waiting.restart();
             while (window->height() == 0 && waiting.elapsed() < 200)
@@ -10345,7 +10640,7 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
     if (!list)
         return false;
     pump(300);
-    app.showFolderSearch(lister, list, true, folder);
+    app.showFolderSearch(lister, list, App::TypingIn::Opus, folder);
     pump(600);
     settle(window, 3);
     RECT listRect {}, boxRect {};
@@ -10377,7 +10672,7 @@ bool probeFolderTyping(App& app, const QDir& out, const QString& folder, QJsonOb
     app.hideLauncher();
     pump(300);
     ::MoveWindow(list, 700, 120, qRound(540 * scale), client.bottom - 140, TRUE);
-    app.showFolderSearch(lister, list, true, folder);
+    app.showFolderSearch(lister, list, App::TypingIn::Opus, folder);
     pump(600);
     settle(window, 3);
     ::GetWindowRect(list, &listRect);
@@ -12651,6 +12946,13 @@ int runRuntime(const QStringList& args)
     bool scopeRestoreOk = true;
     if (!scopeLeft.isEmpty() && args.contains(u"--clear-on-open"_s))
         settings.clearOnOpen = true;
+    if (args.contains(u"--paste-plain-check"_s)) { // GitHub #408: a chord nobody else has
+        if (!pastePlainChordFree()) {
+            qWarning("paste plain: %s is someone else's already", qPrintable(QString(kPastePlainProbeChord)));
+            return 4;
+        }
+        settings.pastePlainHotkey = QString(kPastePlainProbeChord);
+    }
     settings.save(); // prepared profiles normally skip onboarding
     if (!scopeLeft.isEmpty()) {
         QSettings state(Settings::dataDir() + u"/state.ini"_s, QSettings::IniFormat);
@@ -12744,7 +13046,8 @@ int runRuntime(const QStringList& args)
         const auto probeProfile = qScopeGuard([&args] {
             const QFileInfo profile(Settings::profile());
             if ((args.contains(u"--idle-open-check"_s) || args.contains(u"--foreground-use-check"_s) || args.contains(u"--live"_s)
-                    || args.contains(u"--clipboard-animation-check"_s) || args.contains(u"--settings-motion-check"_s))
+                    || args.contains(u"--clipboard-animation-check"_s) || args.contains(u"--settings-motion-check"_s)
+                    || args.contains(u"--search-shadow-check"_s) || args.contains(u"--paste-plain-check"_s))
                 && profile.fileName().startsWith(u"WinShun-preview-")
                 && QDir::cleanPath(profile.absolutePath()).compare(QDir::cleanPath(QDir::tempPath()), Qt::CaseInsensitive) == 0)
                 QDir(profile.absoluteFilePath()).removeRecursively();
@@ -12806,6 +13109,10 @@ int runRuntime(const QStringList& args)
             return checkForegroundUse(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--clipboard-animation-check"_s))
             return checkClipboardAnimation(app, args, out) ? 0 : 4; // its profile likewise
+        if (args.contains(u"--search-shadow-check"_s))
+            return checkSearchShadow(app, args, out) ? 0 : 4; // its profile likewise
+        if (args.contains(u"--paste-plain-check"_s))
+            return checkPastePlain(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--settings-reopen-check"_s))
             return probeSettingsReopen(app, args, out, report) ? 0 : 4;
         if (args.contains(u"--settings-motion-check"_s))
