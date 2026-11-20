@@ -624,6 +624,20 @@ endforeach()
 set_tests_properties(tst_dialogbarvisibility_gpu PROPERTIES ENVIRONMENT "QSG_RHI_BACKEND=d3d11;QT_QUICK_BACKEND=")
 set_tests_properties(tst_dialogbarvisibility_software PROPERTIES ENVIRONMENT "QT_QUICK_BACKEND=software")
 
+# The launcher pinned: a window of the desktop (taskbar button, Alt+Tab,
+# minimize) rather than a tool window, by the native styles alone.
+qt_add_executable(tst_taskbarwindow tst_taskbarwindow.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/platform/WindowEffects.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/platform/Foreground.cpp)
+target_include_directories(tst_taskbarwindow PRIVATE ${PROJECT_SOURCE_DIR}/src/app ${PROJECT_SOURCE_DIR}/src/core)
+target_link_libraries(tst_taskbarwindow PRIVATE winshun_options Qt6::Quick Qt6::Test comctl32 gdi32 dwmapi ole32 shell32 user32)
+set_target_properties(tst_taskbarwindow PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+add_test(NAME tst_taskbarwindow COMMAND tst_taskbarwindow -o -,txt)
+set_tests_properties(tst_taskbarwindow PROPERTIES
+    RUN_SERIAL TRUE
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+set_tests_properties(tst_taskbarwindow PROPERTIES ENVIRONMENT "QT_QUICK_BACKEND=software")
+
 # Shared by the launcher and clipboard: only a current opening's fresh
 # frame may reveal it, and a stale frame cannot cancel its fallback.
 qt_add_executable(tst_framereveal tst_framereveal.cpp ${PROJECT_SOURCE_DIR}/src/app/FrameReveal.cpp)

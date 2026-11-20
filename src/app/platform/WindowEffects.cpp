@@ -605,6 +605,32 @@ Front bringToFront(QWindow* window, ShellFlyout flyout)
     return Front::Refused;
 }
 
+void setTaskbarWindow(QWindow* window, bool on)
+{
+    const HWND hwnd = handleOf(window);
+    if (!hwnd)
+        return;
+    const LONG_PTR exStyle = ::GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    const LONG_PTR style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+    // The taskbar and Alt+Tab take the window as the styles say: a tool
+    // window's WS_EX_TOOLWINDOW hides it from both, WS_EX_APPWINDOW shows
+    // it. WS_MINIMIZEBOX and the system menu give the taskbar button its
+    // minimize and its menu; Qt's frameless style keeps WS_CAPTION (the
+    // nativeFrameProc subclass), which the system menu needs.
+    const LONG_PTR wantedEx = on ? (exStyle & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+                                 : (exStyle & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
+    const LONG_PTR wantedStyle = on ? style | WS_MINIMIZEBOX | WS_SYSMENU
+                                    : style & ~(WS_MINIMIZEBOX | WS_SYSMENU);
+    if (wantedEx == exStyle && wantedStyle == style)
+        return;
+    if (wantedEx != exStyle)
+        ::SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wantedEx);
+    if (wantedStyle != style)
+        ::SetWindowLongPtrW(hwnd, GWL_STYLE, wantedStyle);
+    ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+        SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
+}
+
 void setMenuTheme(bool dark)
 {
     // uxtheme exports these by ordinal only (stable since Windows 10 1903).

@@ -219,7 +219,8 @@ public:
     // panel): the window stays where it stands, a window of its own now.
     void launcherPinnedChanged();
     // Over every window (its WindowStaysOnTopHint), but not while pinned
-    // with Settings::pinnedOnTop off.
+    // with Settings::pinnedOnTop off. Pinned, also a window of the desktop:
+    // a taskbar button, Alt+Tab, minimize and restore (win::setTaskbarWindow).
     void applyLauncherTopmost();
     // --dump <file> from another copy (tests): the launcher's state and rows as JSON.
     void dumpLauncher(const QString& file) const;

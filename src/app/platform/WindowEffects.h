@@ -150,6 +150,15 @@ enum class ShellFlyout { Dismiss, Preserve };
 // an explicit foreground activation may still dismiss a system popup itself.
 Front bringToFront(QWindow* window, ShellFlyout flyout = ShellFlyout::Dismiss);
 
+// The launcher kept shown (Launcher::pinned): a window of the desktop's own,
+// with a taskbar button, Alt+Tab and minimize/restore, rather than the tool
+// window it is otherwise (no taskbar trace, out of Alt+Tab). Windows picks
+// those from the native styles alone (WS_EX_TOOLWINDOW / WS_EX_APPWINDOW,
+// WS_MINIMIZEBOX); Qt sets them for Qt::Tool at creation and does not ask
+// again, so switching them here leaves the window, its frame and its focus
+// as they are, where changing the Qt window flags would recreate the HWND.
+void setTaskbarWindow(QWindow* window, bool on);
+
 // Makes native popup menus (tray, context menu) follow the dark theme.
 void setMenuTheme(bool dark);
 

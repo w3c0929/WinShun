@@ -7338,6 +7338,10 @@ void App::applyLauncherTopmost()
     const bool topmost = !m_launcher->pinned() || m_settings.pinnedOnTop;
     ::SetWindowPos(reinterpret_cast<HWND>(m_window->winId()), topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    // Pinned, the window is the desktop's own: a taskbar button, Alt+Tab,
+    // minimize and restore, so it is found among the other windows while it
+    // stays. Unpinned, a tool window again, its trace gone from both.
+    win::setTaskbarWindow(m_window, m_launcher->pinned());
 }
 
 void App::launcherPinnedChanged()
