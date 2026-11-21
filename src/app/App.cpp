@@ -7473,7 +7473,8 @@ void App::applyLauncherPin()
     win::setTaskbarWindow(m_window, m_launcher->pinned() && !m_prewarming.load());
     const bool topmost = !m_launcher->pinned() || m_settings.pinnedOnTop;
     ::SetWindowPos(reinterpret_cast<HWND>(m_window->winId()), topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);}
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+}
 
 void App::launcherPinnedChanged()
 {
