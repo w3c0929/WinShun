@@ -72,9 +72,14 @@ Item {
     Component.onDestruction: dropTip()
 
     readonly property bool current: ListView.isCurrentItem
+    // The pointer moved last (DialogBarWindow): the row under it wears the
+    // face; the keys moved last: the keyboard's row does, wherever it rests.
+    property bool pointerMode: true
 
     signal clicked(int index)
     signal menuRequested(int index, point globalPos)
+    signal hoverChanged(int index, bool hovered, point globalPos) // the pointer came onto this row, or left it
+    signal pointerMoved(point globalPos) // the pointer moved over this row
 
     Accessible.role: Accessible.ListItem
     Accessible.name: tag.length > 0 ? name + ", " + folder + ", " + tag : name + ", " + folder
@@ -96,10 +101,18 @@ Item {
         anchors.rightMargin: Theme.rowInset
         anchors.topMargin: Theme.edge(row.dpr)
         anchors.bottomMargin: Theme.edge(row.dpr)
-        visible: !row.current && area.containsMouse
+        visible: !row.current && (area.containsMouse && row.pointerMode)
         lazy: true
         part: Theme.rowHighlight
-        hovered: true
+        hovered: area.containsMouse && row.pointerMode
+        // Under the pointer it wears the current row's face too: the raised
+        // face, the border and the bar (brand's) that say where the keys are,
+        // there where the mouse is. The list's own highlight steps aside while
+        // it does (DialogBarWindow); with the keys moved last, its row's alone.
+        // It draws under the row's own words and icons (its first child), so
+        // the face hides none of them.
+        current: area.containsMouse && row.pointerMode
+        selected: area.containsMouse && row.pointerMode
         role: "list"
         dpr: row.dpr
     }
@@ -228,6 +241,7 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onContainsMouseChanged: row.hoverChanged(row.index, area.containsMouse, area.mapToGlobal(area.mouseX, area.mouseY))
         onPressed: {
             if (row.nameTip)
                 row.nameTip.dismiss()
@@ -241,7 +255,12 @@ Item {
             rowTip.dismiss()
             wheel.accepted = false
         }
-        onPositionChanged: if (!pressed) row.offerTip() // moved: a tip dismissed (a key, a scroll) may come again
+        onPositionChanged: if (!pressed) {
+            // Every move goes on: the window weighs its place, so one a scroll
+            // brings with the pointer where it was is no move at all.
+            row.pointerMoved(area.mapToGlobal(mouse.x, mouse.y))
+            row.offerTip() // moved: a tip dismissed (a key, a scroll) may come again
+        }
         onClicked: (mouse) => {
             if (mouse.button === Qt.RightButton)
                 row.menuRequested(row.index, area.mapToGlobal(mouse.x, mouse.y))

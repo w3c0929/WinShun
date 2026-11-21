@@ -538,7 +538,14 @@ Window {
             else if (view.count > 0)
                 view.currentIndex = view.count - 1 // onCurrentIndexChanged leaves the hints
         } else if (view.count > 0) {
-            const next = view.currentIndex + delta
+            // The keys move from where the face is: the row under the pointer
+            // when it moved last (its place read at the key, before
+            // keyboardMoved), else the keyboard's own. A press always moves.
+            const from = (!panel && !appsMode && pointedRowAtKeys >= 0 && pointedRowAtKeys < view.count
+                          && !isTileRow(pointedRowAtKeys)) ? pointedRowAtKeys : view.currentIndex
+            window.pointerMode = false
+            pointedRowAtKeys = -1
+            const next = from + delta
             if (delta === 1 && next >= view.count && showHints)
                 enterHints() // ↓ past the last row
             else
@@ -560,6 +567,30 @@ Window {
     // the rows from the anchor (where the range started) to here.
     property int selectionAnchor: -1
     readonly property int selectedCount: launcher.results.selectedCount
+    // The row under the pointer, -1 for none. It wears the current row's face
+    // (ResultRow's own hook), the list's highlight steps aside while it does,
+    // and the arrows go from it rather than from the row they were left on.
+    property int hoveredRow: -1
+    // Whose face is on the rows: the pointer's (it moved last: the row under
+    // it wears it) or the keyboard's (the keys moved last: its row does,
+    // wherever the pointer rests). Only one of them at a time.
+    property bool pointerMode: true
+    // The row under the pointer when the arrows were last pressed, read before
+    // keyboardMoved(): -1 when the pointer has not moved since they did.
+    property int pointedRowAtKeys: -1
+    // The row the pointer is over, if the pointer itself moved since the keys
+    // last did (Launcher.pointerIfMoved); -1 elsewhere, none, or otherwise.
+    function pointerRow() {
+        if (panel || appsMode || boxList.count === 0)
+            return -1
+        const pointer = launcher.pointerIfMoved()
+        if (pointer === undefined)
+            return -1
+        const p = boxList.mapFromGlobal(pointer.x, pointer.y)
+        if (p.x < 0 || p.y < 0 || p.x >= boxList.width || p.y >= boxList.height)
+            return -1
+        return boxList.indexAt(p.x + boxList.contentX, p.y + boxList.contentY)
+    }
     // The favorites drawn as tiles (Settings::favoriteTiles): the list's first
     // rows, left out of it here; the tiles over it are those rows.
     readonly property int tileRows: panel || appsMode ? 0 : launcher.tileRows
@@ -1030,6 +1061,9 @@ Window {
             }
         }
         if (key === Qt.Key_Down || key === Qt.Key_Up || key === Qt.Key_PageDown || key === Qt.Key_PageUp) {
+            // Before keyboardMoved, which forgets where the pointer was: the
+            // row it is on now, when it moved since the keys last did.
+            window.pointedRowAtKeys = window.pointerRow()
             window.launcher.keyboardMoved() // Alt+P is for this row now, not the one under a pointer left where it was
             if (((panel && launcher.gallery) || appsMode) && searchBar.composition.length === 0)
                 galleryNavigation = true
@@ -1458,6 +1492,7 @@ Window {
         if (globalPos.x === previewHoverPos.x && globalPos.y === previewHoverPos.y)
             return
         previewHoverPos = globalPos
+        pointerMode = true // the pointer itself moved: the row under it wears the face again
         if (Qt.application.keyboardModifiers & (Qt.ControlModifier | Qt.ShiftModifier))
             return
         if (index === previewHoverRow && previewHoverTimer.running)
@@ -1753,7 +1788,14 @@ Window {
                 highlight: Item {
                     id: currentHighlight
                     width: boxList.width
-                    visible: boxList.currentItem !== null && !window.isTileRow(boxList.currentIndex) // a tile shows itself
+                    // Under the rows' own words and icons: the style's raised
+                    // face must never hide them (its white covers a whole row).
+                    z: -1
+                    // Under the pointer on another row, that row wears the face
+                    // instead (ResultRow's hook): the keyboard's keeps none.
+                    // With the keys moved last, its row's alone (pointerMode).
+                    visible: boxList.currentItem !== null && !window.isTileRow(boxList.currentIndex)
+                             && (!window.pointerMode || window.hoveredRow < 0 || window.hoveredRow === boxList.currentIndex)
                     transform: ScrollPixelAlignment { // on whole device pixels, as the rows
                         view: boxList
                         viewY: layout.y + listArea.y + boxList.y
@@ -1952,6 +1994,17 @@ Window {
                     }
                     onClicked: (index, modifiers) => window.rowClicked(index, modifiers)
                     onDoubleClicked: (index, modifiers) => window.rowDoubleClicked(index, modifiers)
+                    onHoverChanged: (index, hovered) => {
+                        // Only the row's place; the face stays the keyboard's
+                        // unless the pointer itself moved since (see
+                        // rowHoverMoved) — a delegate made or moved under a
+                        // still pointer reports a hover too.
+                        if (hovered)
+                            window.hoveredRow = index
+                        else if (window.hoveredRow === index)
+                            window.hoveredRow = -1
+                    }
+                    pointerMode: window.pointerMode
                     onSwitchClicked: (index) => window.rowSwitchClicked(index)
                     onActionRequested: (index, action) => {
                         boxList.currentIndex = index
@@ -2168,6 +2221,10 @@ Window {
     function startRename(index) {
         if (index < 0 || index >= view.count || !window.launcher.beginRename(index))
             return
+        if (window.launcher.renameName().length === 0) { // nothing to type over: no empty box
+            window.launcher.cancelRename()
+            return
+        }
         view.currentIndex = index
         view.positionViewAtIndex(index, ListView.Contain)
         const item = isTileRow(index) ? favoriteTiles.tileAt(index) : view.currentItem // under a tile's name, as under a row's
