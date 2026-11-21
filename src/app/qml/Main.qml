@@ -135,16 +135,19 @@ Window {
     // (again once laid out: contentHeight); where there is none, counted.
     function rowAtY(y, after) {
         const h = viewRowHeight
-        if (panel || elsewhereRow < 0 || boxList.contentHeight <= 0)
-            return Math.floor(y / h) + tileRows // the tiles' rows take no room in the list
+        if (h <= 0)
+            return tileRows
+        const origin = view.originY
+        if (panel || appsMode || elsewhereRow < 0 || boxList.contentHeight <= 0)
+            return Math.floor((y - origin) / h) + tileRows // the tiles' rows take no room in the list
         const at = boxList.indexAt(boxList.contentX + 1, y)
         if (at >= 0)
             return at
         const under = boxList.itemAtIndex(elsewhereRow)
-        const top = under ? under.y - captionHeight : elsewhereRow * h
+        const top = under ? under.y - captionHeight : origin + elsewhereRow * h
         if (y >= top && y < top + captionHeight)
             return after ? elsewhereRow : elsewhereRow - 1
-        return Math.floor((y < top ? y : y - captionHeight) / h)
+        return Math.floor(((y < top ? y : y - captionHeight) - origin) / h)
     }
     readonly property bool contentMode: launcher.scope === Launcher.Content
     readonly property string trimmedQuery: launcher.query.trim()
@@ -338,7 +341,7 @@ Window {
                 readonly property bool current: window.hintIndex === index || (window.hintIndex < 0 && index === 0)
 
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: hintLine.width + 24
+                width: Math.min(parent.width, hintLine.implicitWidth + 24)
                 height: Theme.labelRowHeight
                 Accessible.role: Accessible.Button
                 Accessible.name: modelData.text + " " + modelData.action
@@ -358,25 +361,34 @@ Window {
 
                     Text {
                         text: emptyHint.modelData.text
+                        textFormat: Text.PlainText
                         color: Theme.faint
                         font.pixelSize: Theme.uiBody
+                        elide: Text.ElideRight
+                        width: Math.min(implicitWidth, Math.max(0, emptyHint.parent.width - 24
+                            - hintSep.implicitWidth - hintAct.implicitWidth
+                            - (hintAct2.visible ? hintGap.implicitWidth + hintAct2.implicitWidth : 0)))
                     }
                     Text {
+                        id: hintSep
                         text: " · "
                         color: Theme.faint
                         font.pixelSize: Theme.uiBody
                     }
                     Text { // the action: accent words on the plain background, as a link
+                        id: hintAct
                         text: emptyHint.modelData.action
                         color: Theme.accent
                         font.pixelSize: Theme.uiBody
                     }
                     Text {
+                        id: hintGap
                         visible: !!emptyHint.modelData.action2
                         text: "  "
                         font.pixelSize: Theme.uiBody
                     }
                     Text { // a second link on the row
+                        id: hintAct2
                         visible: !!emptyHint.modelData.action2
                         text: emptyHint.modelData.action2
                         color: Theme.accent
@@ -550,7 +562,7 @@ Window {
     readonly property int selectedCount: launcher.results.selectedCount
     // The favorites drawn as tiles (Settings::favoriteTiles): the list's first
     // rows, left out of it here; the tiles over it are those rows.
-    readonly property int tileRows: panel ? 0 : launcher.tileRows
+    readonly property int tileRows: panel || appsMode ? 0 : launcher.tileRows
     function isTileRow(index) { return index >= 0 && index < tileRows }
     function toggleRow(index) {
         window.launcher.toggleSelected(index)
@@ -584,10 +596,38 @@ Window {
     // (numberkeys::Hook, GitHub #175).
     readonly property int numberKey: launcher.numberKeys === "ctrl" ? Qt.Key_Control
                                    : launcher.numberKeys === "alt" ? Qt.Key_Alt : -1
-    readonly property int firstShownRow: Math.max(0, rowAtY(view.contentY + viewRowHeight / 2, true) * gridColumns)
-    readonly property int lastShownRow: Math.min(view.count - 1, firstShownRow + 8,
-                                                 rowAtY(view.contentY + view.height - viewRowHeight / 2, false) * gridColumns + gridColumns - 1)
+    readonly property int firstShownRow: Math.max(tileRows, rowAtY(view.contentY + view.topMargin + viewRowHeight / 2, true) * gridColumns)
+    readonly property int lastRowInView: Math.min(view.count - 1,
+                                                  rowAtY(view.contentY + view.height - view.bottomMargin - viewRowHeight / 2, false) * gridColumns + gridColumns - 1)
+    readonly property int lastShownRow: Math.min(firstShownRow + 8, lastRowInView)
     readonly property string numberModifier: numberKey === Qt.Key_Alt ? "Alt" : "Ctrl"
+    // Keep the left 1–9 (and letter) shortcut column visually pinned to the
+    // visible row slots during smooth wheel scrolling on whole-row popup lists,
+    // so shortcut hints never slide, clip, or strobe every half-row.
+    readonly property real hintOffsetY: {
+        if (panel || appsMode || elsewhereRow >= 0 || rowHeight <= 0 || !wheelScroll.running)
+            return 0
+        const innerHeight = boxList.height - boxList.topMargin - boxList.bottomMargin
+        if (innerHeight <= 0)
+            return 0
+        const rem = innerHeight % rowHeight
+        if (Math.min(rem, rowHeight - rem) >= 1)
+            return 0
+        const scroll = boxList.contentY + boxList.topMargin - boxList.originY
+        return scroll - (firstShownRow - tileRows) * rowHeight
+    }
+    // Scrolled past the top of the popup list: show the visible range in the
+    // footer so the user keeps their bearings while 1–9 stay shortcut keys.
+    readonly property string scrollPositionText: {
+        if (panel || view.count <= tileRows || firstShownRow <= tileRows)
+            return ""
+        const listCount = view.count - tileRows
+        const from = Math.min(listCount, Math.max(1, firstShownRow - tileRows + 1))
+        const to = Math.min(listCount, Math.max(from, lastRowInView - tileRows + 1))
+        const knownTotal = tileRows > 0 ? listCount : Math.max(listCount, launcher.totalMatches)
+        const total = launcher.moreAvailable && knownTotal <= listCount ? knownTotal + "+" : String(knownTotal)
+        return from === to ? from + " / " + total : from + "–" + to + " / " + total
+    }
     NumberHints {
         id: numberHints
         mode: window.launcher.numberHints
@@ -602,7 +642,7 @@ Window {
     }
     // The rows the letters are on: from the first at least half in view to the last, one letter each.
     readonly property int lastLetterRow: Math.min(view.count - 1, firstShownRow + numberHints.letters.length - 1,
-                                                  rowAtY(view.contentY + view.height - viewRowHeight / 2, false))
+                                                  rowAtY(view.contentY + view.height - view.bottomMargin - viewRowHeight / 2, false))
     function letterOf(index) {
         return numberHints.jumping && index >= firstShownRow && index <= lastLetterRow
             ? numberHints.letterOf(index - firstShownRow) : ""
@@ -623,7 +663,7 @@ Window {
             numberHints.leave()
             if (offset < 0)
                 return event.key === Qt.Key_Escape
-            if (!event.isAutoRepeat && bar !== null && bar.clickLettered(offset)
+            if (!event.isAutoRepeat && bar !== null && bar.clickLettered(offset, event.modifiers & Qt.ShiftModifier)
                     && view.currentItem && view.currentItem.deleteArmed)
                 numberHints.pick() // delete armed: its letter again deletes
             return true
@@ -1742,6 +1782,7 @@ Window {
                 }
                 ListWheelScroll {
                     id: wheelScroll
+                    objectName: "boxWheelScroll"
                     view: boxList
                     animate: SystemTheme.animations
                     snapRows: true
@@ -1887,13 +1928,11 @@ Window {
                     hintLetter: window.letterOf(index)
                     actionLetters: numberHints.picking && index === view.currentIndex ? numberHints.letters : ""
                     reserveHintSpace: (window.numberKey >= 0 && window.launcher.numberHints !== "off") || window.launcher.letterJump
-                    // With more rows in the list than number keys (also when the window shows fewer:
-                    // scrolled, some rows in view have a number and some none), or letters for every row,
-                    // each row keeps the room, so their left edges stay in one line.
-                    alignWithNumbered: window.listRows > 9 || view.count > 9 || window.launcher.letterJump
                     hintOpacity: numberHints.hintOpacity
+                    hintOffsetY: window.hintOffsetY
                     hintModifier: window.numberModifier
                     hintTaken: resultRow.hint > 0 && !window.numberUsable(resultRow.hint)
+                    z: window.hintOffsetY !== 0 && (resultRow.hint > 0 || resultRow.hintLetter.length > 0) ? 1 : 0
                     nameTip: nameTip
                     dpr: window.dpr
                     actionsPool: resultActions
@@ -2072,6 +2111,7 @@ Window {
             launcher: window.launcher
             frame: window.frame
             dpr: window.dpr
+            positionText: window.scrollPositionText
         }
     }
 

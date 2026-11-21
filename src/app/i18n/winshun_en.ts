@@ -194,6 +194,10 @@
 <context>
     <name>AiClientsSection</name>
     <message>
+        <source>去启用命令行</source>
+        <translation>Enable command line</translation>
+    </message>
+    <message>
         <source>没找到 WinShunMcp.exe，重新安装 Win顺 就有了。</source>
         <translation>WinShunMcp.exe is missing; reinstalling WinShun brings it back.</translation>
     </message>
@@ -561,6 +565,46 @@
     <message>
         <source>在开始菜单里打字，也用 Win顺 搜索</source>
         <translation>Typing in the Start menu searches with WinShun</translation>
+    </message>
+    <message>
+        <source>直接打开搜索面板</source>
+        <translation>Open the full search panel</translation>
+    </message>
+    <message>
+        <source>打开设置</source>
+        <translation>Open Settings</translation>
+    </message>
+    <message>
+        <source>左键单击托盘图标</source>
+        <translation>Left-click tray icon</translation>
+    </message>
+    <message>
+        <source>中键单击托盘图标</source>
+        <translation>Middle-click tray icon</translation>
+    </message>
+    <message>
+        <source>打开搜索框</source>
+        <translation>Open search box</translation>
+    </message>
+    <message>
+        <source>打开完整搜索面板</source>
+        <translation>Open full search panel</translation>
+    </message>
+    <message>
+        <source>打开剪贴板</source>
+        <translation>Open clipboard</translation>
+    </message>
+    <message>
+        <source>打开截图历史</source>
+        <translation>Open screenshot history</translation>
+    </message>
+    <message>
+        <source>暂停 / 恢复记录剪贴板</source>
+        <translation>Pause / resume clipboard recording</translation>
+    </message>
+    <message>
+        <source>无操作</source>
+        <translation>Do nothing</translation>
     </message>
     <message>
         <source>用哪个文件管理器打开文件夹</source>
@@ -1149,6 +1193,18 @@
     <message>
         <source>记录图片</source>
         <translation>Keep pictures</translation>
+    </message>
+    <message>
+        <source>记录截图</source>
+        <translation>Keep screenshots</translation>
+    </message>
+    <message>
+        <source>仅复制时</source>
+        <translation>Copied only</translation>
+    </message>
+    <message>
+        <source>不记录</source>
+        <translation>Off</translation>
     </message>
     <message>
         <source>单击粘贴</source>
@@ -1777,6 +1833,10 @@
         <source>%1 是你给 Win顺 设的快捷键，在这里按也是那个快捷键。可在设置里改用 %2</source>
         <translation>%1 is the shortcut you set for WinShun; pressing it here does the same. You can use %2 instead in Settings</translation>
     </message>
+    <message>
+        <source>粘贴这一条</source>
+        <translation>Paste this item</translation>
+    </message>
 </context>
 <context>
     <name>ClipTabs</name>
@@ -2216,7 +2276,34 @@
     </message>
 </context>
 <context>
+    <name>DialogBarRow</name>
+    <message>
+        <source>%1 是你给 Win顺 设的快捷键，在这里按也是那个快捷键。可在设置的“结果列表”里改用 %2</source>
+        <translation>%1 is the shortcut you set for WinShun; pressing it here does the same. You can use %2 instead under Result list in Settings</translation>
+    </message>
+    <message>
+        <source>复制这一行路径</source>
+        <translation>Copy this path</translation>
+    </message>
+    <message>
+        <source>打开这一行</source>
+        <translation>Open this row</translation>
+    </message>
+    <message>
+        <source>转到这一行</source>
+        <translation>Go to this row</translation>
+    </message>
+</context>
+<context>
     <name>DialogBarWindow</name>
+    <message>
+        <source>第 %1 项，共 %2 项</source>
+        <translation>Item %1 of %2</translation>
+    </message>
+    <message>
+        <source>第 %1 到 %2 项，共 %3 项</source>
+        <translation>Items %1 to %2 of %3</translation>
+    </message>
     <message>
         <source>Win顺</source>
         <translation>WinShun</translation>
@@ -2559,8 +2646,100 @@
 <context>
     <name>FavoritesSection</name>
     <message>
-        <source>什么都不输入时，收藏排在最前；只输入关键词再按 Enter 就打开。在搜索结果上右键可以加入收藏，也可以把文件或文件夹拖到这里。Tab 默认切换范围；在“结果列表”的“显示与预览”中可改为进入选中的收藏文件夹。</source>
-        <translation>Favorites come first when nothing is typed. Type a keyword and press Enter to open it. Right-click a search result to add it, or drop files and folders here. Tab switches scopes by default; to browse a selected favorite folder instead, change its behavior in Result list &gt; Display and preview.</translation>
+        <source>什么都不输入时，收藏排在最前；只输入关键词再按 Enter 就打开。在搜索结果上右键可以加入收藏，也可以把文件或文件夹拖到这里。</source>
+        <translation>Favorites come first when nothing is typed. Type a keyword and press Enter to open it. Right-click a search result to add it, or drop files and folders here.</translation>
+    </message>
+    <message>
+        <source>文件夹快捷菜单中的收藏</source>
+        <translation>Favorites in the folder menu</translation>
+    </message>
+    <message>
+        <source>文件夹快捷菜单未开启；开启后在资源管理器或桌面空白处弹出</source>
+        <translation>Folder menu is off; turn it on to open it from blank space in Explorer or on the desktop</translation>
+    </message>
+    <message>
+        <source>菜单里未勾选“收藏夹”；可在此设置显示类型、展开方式与菜单操作</source>
+        <translation>“Favorites” is not included in the menu; choose types, layout and actions there</translation>
+    </message>
+    <message>
+        <source>二级菜单</source>
+        <translation>Submenu</translation>
+    </message>
+    <message>
+        <source>顶层显示全部</source>
+        <translation>All at top level</translation>
+    </message>
+    <message>
+        <source>顶层显示前 %1 个</source>
+        <translation>First %1 at top level</translation>
+    </message>
+    <message>
+        <source>文件夹</source>
+        <translation>Folders</translation>
+    </message>
+    <message>
+        <source>文件</source>
+        <translation>Files</translation>
+    </message>
+    <message>
+        <source>应用</source>
+        <translation>Apps</translation>
+    </message>
+    <message>
+        <source>系统设置</source>
+        <translation>System settings</translation>
+    </message>
+    <message>
+        <source>自定义命令</source>
+        <translation>Custom commands</translation>
+    </message>
+    <message>
+        <source>全部类型</source>
+        <translation>All types</translation>
+    </message>
+    <message>
+        <source>、</source>
+        <translation>, </translation>
+    </message>
+    <message>
+        <source>%1 · 显示：%2</source>
+        <translation>%1 · Shown: %2</translation>
+    </message>
+    <message>
+        <source>系统整合 › 文件夹菜单</source>
+        <translation>Integration › Folder menu</translation>
+    </message>
+    <message>
+        <source>搜索框中的收藏显示</source>
+        <translation>Favorites in the search bar</translation>
+    </message>
+    <message>
+        <source>不输入时以%1显示 · 选中收藏文件夹按 Tab %2</source>
+        <translation>Shown as %1 when empty · Tab on a favorite folder: %2</translation>
+    </message>
+    <message>
+        <source>图标样式</source>
+        <translation>icons</translation>
+    </message>
+    <message>
+        <source>列表样式</source>
+        <translation>list</translation>
+    </message>
+    <message>
+        <source>进入文件夹</source>
+        <translation>open folder</translation>
+    </message>
+    <message>
+        <source>切换范围</source>
+        <translation>switch scope</translation>
+    </message>
+    <message>
+        <source>不输入时不显示收藏；仍可用名称或关键词搜到</source>
+        <translation>Hidden when empty; still searchable by name or keyword</translation>
+    </message>
+    <message>
+        <source>结果列表 › 显示与预览</source>
+        <translation>Result list › Display &amp; preview</translation>
     </message>
     <message>
         <source>收藏</source>
@@ -5033,6 +5212,10 @@ Send suggestions and problems on our website</translation>
         <translation>Open in Terminal</translation>
     </message>
     <message>
+        <source>在终端中打开（Shift+点击以管理员身份）</source>
+        <translation>Open in Terminal (Shift+click as administrator)</translation>
+    </message>
+    <message>
         <source>最近</source>
         <translation>Recent</translation>
     </message>
@@ -5107,6 +5290,10 @@ Send suggestions and problems on our website</translation>
     <message>
         <source>%1 是你给 Win顺 设的快捷键，在这里按也是那个快捷键。可在设置的“结果列表”里改用 %2</source>
         <translation>%1 is the shortcut you set for WinShun; pressing it here does the same. You can use %2 instead under Result list in Settings</translation>
+    </message>
+    <message>
+        <source>打开这一行</source>
+        <translation>Open this row</translation>
     </message>
     <message>
         <source>确认删除 %1 项</source>
@@ -5410,7 +5597,142 @@ Double-click grip: expand/collapse search panel</translation>
     </message>
 </context>
 <context>
+    <name>EdgeScrollHint</name>
+    <message>
+        <source>继续向下滚动，切到「%1」</source>
+        <translation>Keep scrolling down for %1</translation>
+    </message>
+    <message>
+        <source>继续向上滚动，切到「%1」</source>
+        <translation>Keep scrolling up for %1</translation>
+    </message>
+</context>
+<context>
     <name>SettingsWindow</name>
+    <message>
+        <source>搜索“%1”</source>
+        <translation>Search “%1”</translation>
+    </message>
+    <message>
+        <source>返回「%1」</source>
+        <translation>Back to %1</translation>
+    </message>
+    <message>
+        <source>后退</source>
+        <translation>Back</translation>
+    </message>
+    <message>
+        <source>前进到「%1」</source>
+        <translation>Forward to %1</translation>
+    </message>
+    <message>
+        <source>前进</source>
+        <translation>Forward</translation>
+    </message>
+    <message>
+        <source>文件夹菜单</source>
+        <translation>Folder menu</translation>
+    </message>
+    <message>
+        <source>管理收藏夹</source>
+        <translation>Manage favorites</translation>
+    </message>
+    <message>
+        <source>自定义命令</source>
+        <translation>Custom commands</translation>
+    </message>
+    <message>
+        <source>其他功能的快捷键</source>
+        <translation>Other feature shortcuts</translation>
+    </message>
+    <message>
+        <source>剪贴板快捷键</source>
+        <translation>Clipboard shortcuts</translation>
+    </message>
+    <message>
+        <source>打开剪贴板：%1 · 粘贴为纯文本：%2</source>
+        <translation>Open clipboard: %1 · Paste as plain text: %2</translation>
+    </message>
+    <message>
+        <source>打开剪贴板：%1 · 可另设粘贴为纯文本和数字键粘贴</source>
+        <translation>Open clipboard: %1 · Plain-text paste and number keys can also be set</translation>
+    </message>
+    <message>
+        <source>粘贴为纯文本：%1 · 尚未设置剪贴板呼出键</source>
+        <translation>Paste as plain text: %1 · Clipboard hotkey not set</translation>
+    </message>
+    <message>
+        <source>可开启 Win+V、另设组合键，或配置粘贴为纯文本与数字键</source>
+        <translation>Enable Win+V, set a custom hotkey, or configure plain-text and number-key paste</translation>
+    </message>
+    <message>
+        <source>剪贴板 › 快捷键</source>
+        <translation>Clipboard › Shortcuts</translation>
+    </message>
+    <message>
+        <source>文件夹菜单快捷键</source>
+        <translation>Folder menu shortcut</translation>
+    </message>
+    <message>
+        <source>当前为 %1 · 在文件管理器或对话框中弹出常用文件夹菜单</source>
+        <translation>Set to %1 · Opens the folder menu in file managers or dialogs</translation>
+    </message>
+    <message>
+        <source>未设置；也可在资源管理器或桌面空白处双击或按中键弹出</source>
+        <translation>Not set; can also open by double-clicking or middle-clicking blank space</translation>
+    </message>
+    <message>
+        <source>系统整合 › 文件夹菜单</source>
+        <translation>Integration › Folder menu</translation>
+    </message>
+    <message>
+        <source>已开启 · 用 Win+S 代替 Windows 自带搜索</source>
+        <translation>On · Replaces Windows Search on Win+S</translation>
+    </message>
+    <message>
+        <source>未开启 · 也可在开始菜单里直接打字搜索</source>
+        <translation>Off · Start menu type-to-search is also available there</translation>
+    </message>
+    <message>
+        <source>系统整合 › 任务栏</source>
+        <translation>Integration › Taskbar</translation>
+    </message>
+    <message>
+        <source>剪贴板可单独设置大小</source>
+        <translation>Clipboard size can be set separately</translation>
+    </message>
+    <message>
+        <source>当前：%1</source>
+        <translation>Current: %1</translation>
+    </message>
+    <message>
+        <source>剪贴板 › 剪贴板大小</source>
+        <translation>Clipboard › Size</translation>
+    </message>
+    <message>
+        <source>当前 %1 · %2</source>
+        <translation>Current %1 · %2</translation>
+    </message>
+    <message>
+        <source>常规 › 存储</source>
+        <translation>General › Storage</translation>
+    </message>
+    <message>
+        <source>未开启 · 轻按修饰键后按字母直接粘贴（含第九条以后），启动器和剪贴板共用</source>
+        <translation>Off · Tap a modifier key to paste any row by letter (including past row 9); shared with launcher</translation>
+    </message>
+    <message>
+        <source>跟随数字键</source>
+        <translation>Same as number keys</translation>
+    </message>
+    <message>
+        <source>已开启（%1）· 启动器和剪贴板共用</source>
+        <translation>On (%1) · Shared with launcher</translation>
+    </message>
+    <message>
+        <source>结果列表 › 操作习惯</source>
+        <translation>Result list › Behavior</translation>
+    </message>
     <message>
         <source>程序自己的选文件窗口</source>
         <translation>Programs’ own file windows</translation>
@@ -6686,6 +7008,18 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Keep pictures</translation>
     </message>
     <message>
+        <source>记录截图</source>
+        <translation>Keep screenshots</translation>
+    </message>
+    <message>
+        <source>仅复制时</source>
+        <translation>Copied only</translation>
+    </message>
+    <message>
+        <source>不记录</source>
+        <translation>Off</translation>
+    </message>
+    <message>
         <source>截图;图片;照片;image</source>
         <translation>screenshot;picture;photo;image</translation>
     </message>
@@ -7269,6 +7603,10 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Type “%1” and a space in the search box to list your screenshots, then words to filter by the text recognized in them; Enter copies and pastes, Ctrl+Enter pins to the screen, Delete removes</translation>
     </message>
     <message>
+        <source>在搜索框输入“%1”加空格，列出已有截图（“记录截图”已关闭，新截图不再加入）；Enter 复制并粘贴，Ctrl+Enter 贴到屏幕，Delete 删除</source>
+        <translation>Type “%1” and a space in the search box to list existing screenshots (“Keep screenshots” is off, so new ones are not added); Enter copies and pastes, Ctrl+Enter pins to the screen, Delete removes</translation>
+    </message>
+    <message>
         <source>单击粘贴</source>
         <translation>Click to paste</translation>
     </message>
@@ -7795,8 +8133,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Added from the search bar’s “More” menu</translation>
     </message>
     <message>
-        <source>密码;隐私;排除;程序;exe;KeePass</source>
-        <translation>password;privacy;exclude;programs;exe;KeePass</translation>
+        <source>密码;隐私;排除;程序;截图;exe;KeePass</source>
+        <translation>password;privacy;exclude;programs;screenshot;exe;KeePass</translation>
     </message>
     <message>
         <source>对话框</source>
@@ -7826,6 +8164,26 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>截图和复制的图片也记下来</source>
         <translation>Screenshots and copied pictures too</translation>
+    </message>
+    <message>
+        <source>复制的图片也记下来；Win顺 截图在下方单独控制</source>
+        <translation>Copied pictures too; WinShun screenshots are controlled separately below</translation>
+    </message>
+    <message>
+        <source>截图;截屏;贴图;保存;复制;历史;screenshot;pin</source>
+        <translation>screenshot;capture;pin;save;copy;history</translation>
+    </message>
+    <message>
+        <source>复制、贴图、保存的 Win顺 截图都记进剪贴板历史</source>
+        <translation>WinShun screenshots copied, pinned, or saved all go into clipboard history</translation>
+    </message>
+    <message>
+        <source>只有点“复制”的 Win顺 截图记进剪贴板历史，只贴图或保存的不记</source>
+        <translation>Only WinShun screenshots you copy go into clipboard history; pinning or saving alone is not recorded</translation>
+    </message>
+    <message>
+        <source>Win顺 截图不记进剪贴板历史；复制仍写入系统剪贴板，可直接粘贴</source>
+        <translation>WinShun screenshots are not kept in clipboard history; copying still puts them on the clipboard to paste</translation>
     </message>
     <message>
         <source>所有设置回到刚安装时的样子</source>
@@ -7916,8 +8274,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>system folders;Program Files;AppData;Windows;node_modules</translation>
     </message>
     <message>
-        <source>给密码管理器等再加一层保险</source>
-        <translation>An extra safeguard for password managers and the like</translation>
+        <source>给密码管理器、外部截图工具等再加一层保险</source>
+        <translation>An extra safeguard for password managers, external screenshot tools, and the like</translation>
     </message>
     <message>
         <source>补上 U 盘等非 NTFS 磁盘在 Win顺 关闭期间的改动</source>
@@ -7948,8 +8306,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Nothing inside these folders shows up in results. With “Let other programs search WinShun as Everything” on they are still indexed, so other programs can find them (Total Commander&apos;s folder sizes, say)</translation>
     </message>
     <message>
-        <source>按 %1+1 打开第一行，依此类推到第九行</source>
-        <translation>%1+1 opens the first row, up to the ninth</translation>
+        <source>按 %1+1 打开当前可见的第 1 行，依此类推到第 9 行（随列表滚动更新）</source>
+        <translation>%1+1 opens the first visible row, up to the ninth (follows scrolling)</translation>
     </message>
     <message>
         <source>序号提示</source>
@@ -7964,8 +8322,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>shortcut;letter;one hand;vim;vi;hint;jump</translation>
     </message>
     <message>
-        <source>启动器和剪贴板共用；隐藏提示不影响数字快捷键</source>
-        <translation>Shared by the launcher and clipboard; shortcuts still work when hints are hidden</translation>
+        <source>启动器、剪贴板和对话框搜索栏共用；隐藏提示不影响数字快捷键</source>
+        <translation>Shared by the launcher, clipboard, and dialog search bar; shortcuts still work when hints are hidden</translation>
     </message>
     <message>
         <source>快捷键;数字键;图标;按住;显示;隐藏</source>
@@ -8163,8 +8521,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Needs the “GPU” drawing method under General</translation>
     </message>
     <message>
-        <source>搜索框、剪贴板和对话框旁搜索框的文字和行高；设置窗口不变。密集是每条结果一行的小字。剪贴板可在“剪贴板”页单独设置</source>
-        <translation>Text size and line height of the search bar, the clipboard and the search bar by file dialogs; the Settings window is unchanged. Dense is one small line per result. The clipboard can be set separately on the Clipboard page</translation>
+        <source>搜索框、剪贴板和对话框旁搜索框的文字和行高；设置窗口不变。密集是每条结果一行的小字</source>
+        <translation>Text size and line height of the search bar, the clipboard and the search bar by file dialogs; the Settings window is unchanged. Dense is one small line per result</translation>
     </message>
     <message>
         <source>记住窗口大小</source>
@@ -8534,8 +8892,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Number keys inside the panel</translation>
     </message>
     <message>
-        <source>打开剪贴板面板后，按 %1+1 粘贴第一条，依此类推到第九条；加按 Shift 粘贴为纯文本</source>
-        <translation>With the clipboard panel open, press %1+1 to paste the first entry, through 9 for the ninth. Add Shift to paste as plain text.</translation>
+        <source>打开剪贴板面板后，按 %1+1 粘贴当前可见的第 1 条，依此类推到第 9 条（随列表滚动更新）；加按 Shift 粘贴为纯文本</source>
+        <translation>With the clipboard panel open, press %1+1 to paste the first visible entry, through 9 for the ninth (follows scrolling). Add Shift to paste as plain text.</translation>
     </message>
     <message>
         <source>不打开面板直接粘贴</source>
@@ -9162,6 +9520,50 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>full window;panel;global;shortcut;full search;hotkey</translation>
     </message>
     <message>
+        <source>打开设置</source>
+        <translation>Open Settings</translation>
+    </message>
+    <message>
+        <source>一个组合键打开 Win顺 设置，再次按下可关闭，例如 Alt+X</source>
+        <translation>Open WinShun Settings with one shortcut and press again to close it, such as Alt+X.</translation>
+    </message>
+    <message>
+        <source>设置;偏好;全局;热键;快捷键;settings;preferences;hotkey</source>
+        <translation>settings;preferences;global;shortcut;hotkey</translation>
+    </message>
+    <message>
+        <source>托盘图标</source>
+        <translation>Tray icon</translation>
+    </message>
+    <message>
+        <source>右键托盘图标始终打开托盘菜单；可为左键和中键分别指定快捷动作。</source>
+        <translation>Right-clicking always opens the tray menu; choose quick actions for left and middle clicks.</translation>
+    </message>
+    <message>
+        <source>左键单击托盘图标</source>
+        <translation>Left-click tray icon</translation>
+    </message>
+    <message>
+        <source>托盘;通知区域;左键;单击;点击;图标;tray;left click</source>
+        <translation>tray;notification area;left click;icon</translation>
+    </message>
+    <message>
+        <source>默认打开搜索框；也可设为完整搜索面板、剪贴板、设置或已启用插件的动作</source>
+        <translation>Opens the search box by default; can also open the full panel, clipboard, Settings, or an enabled plugin action.</translation>
+    </message>
+    <message>
+        <source>中键单击托盘图标</source>
+        <translation>Middle-click tray icon</translation>
+    </message>
+    <message>
+        <source>托盘;通知区域;中键;滚轮;单击;点击;设置;截图历史;tray;middle click</source>
+        <translation>tray;notification area;middle click;settings;screenshot history</translation>
+    </message>
+    <message>
+        <source>默认直接打开设置；安装截图插件后也可选打开截图历史或触发插件动作</source>
+        <translation>Opens Settings by default; with the screenshot plugin enabled, can also open screenshot history or trigger a plugin action.</translation>
+    </message>
+    <message>
         <source>收藏夹里显示的类型</source>
         <translation>Favorite types shown</translation>
     </message>
@@ -9532,6 +9934,10 @@ Double-click grip: expand/collapse search panel</translation>
 </context>
 <context>
     <name>Shortcuts</name>
+    <message>
+        <source>弹出文件夹快捷菜单</source>
+        <translation>Open the folder menu</translation>
+    </message>
     <message>
         <source>打开选中的结果，和 Enter 一样</source>
         <translation>Open the selected result, as Enter does</translation>
@@ -10963,6 +11369,46 @@ Double-click grip: expand/collapse search panel</translation>
         <source>双击动作暂不可用</source>
         <translation>Double-tap action unavailable</translation>
     </message>
+    <message>
+        <source>截图历史暂不可用</source>
+        <translation>Screenshot history unavailable</translation>
+    </message>
+    <message>
+        <source>请启用截图插件，并在“剪贴板”中确认截图历史关键词。</source>
+        <translation>Enable the Screenshot plugin and check the screenshot history keyword under Clipboard.</translation>
+    </message>
+    <message>
+        <source>剪贴板历史未开启</source>
+        <translation>Clipboard history is off</translation>
+    </message>
+    <message>
+        <source>可在“剪贴板”设置中开启记录剪贴板历史。</source>
+        <translation>Turn on clipboard history recording under Clipboard settings.</translation>
+    </message>
+    <message>
+        <source>已暂停记录剪贴板</source>
+        <translation>Clipboard recording paused</translation>
+    </message>
+    <message>
+        <source>已恢复记录剪贴板</source>
+        <translation>Clipboard recording resumed</translation>
+    </message>
+    <message>
+        <source>再次点击托盘图标或从托盘菜单可恢复记录。</source>
+        <translation>Click the tray icon again or use the tray menu to resume recording.</translation>
+    </message>
+    <message>
+        <source>复制的内容会重新记入剪贴板历史。</source>
+        <translation>Copied items will be saved to clipboard history again.</translation>
+    </message>
+    <message>
+        <source>托盘图标动作暂不可用</source>
+        <translation>Tray icon action unavailable</translation>
+    </message>
+    <message>
+        <source>请启用对应插件，并在“系统整合 › 任务栏”中重新选择托盘点击操作。</source>
+        <translation>Enable the plugin and re-select the tray click action under System integration › Taskbar.</translation>
+    </message>
 </context>
 <context>
     <name>ws::BackgroundStatus</name>
@@ -12080,6 +12526,10 @@ Content index: %5</translation>
         <translation>Favorite</translation>
     </message>
     <message>
+        <source>收藏 · %1</source>
+        <translation>Favorite · %1</translation>
+    </message>
+    <message>
         <source>剪贴板</source>
         <translation>Clipboard</translation>
     </message>
@@ -12954,6 +13404,10 @@ Content index: %5</translation>
         <translation>Open in Terminal</translation>
     </message>
     <message>
+        <source>以管理员身份在终端中打开</source>
+        <translation>Open in Terminal as administrator</translation>
+    </message>
+    <message>
         <source>更多选项</source>
         <translation>More options</translation>
     </message>
@@ -13090,6 +13544,116 @@ Content index: %5</translation>
     <message>
         <source>这个文件夹不在索引范围内</source>
         <translation>This folder is not in the index</translation>
+    </message>
+    <message>
+        <source>正在读取排除目录里的结果…</source>
+        <translation>Loading results in excluded folders…</translation>
+    </message>
+    <message>
+        <source>正在读取已跳过的文件…</source>
+        <translation>Loading skipped files…</translation>
+    </message>
+    <message numerus="yes">
+        <source>正在搜排除目录… 已看 %Ln 项</source>
+        <translation>
+            <numerusform>Searching excluded folders… %Ln item looked at</numerusform>
+            <numerusform>Searching excluded folders… %Ln items looked at</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>排除目录里有 %Ln 项</source>
+        <translation>
+            <numerusform>%Ln item in excluded folders</numerusform>
+            <numerusform>%Ln items in excluded folders</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>排除目录里另有 %Ln 项</source>
+        <translation>
+            <numerusform>%Ln more item in excluded folders</numerusform>
+            <numerusform>%Ln more items in excluded folders</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>这次也显示</source>
+        <translation>Show this time</translation>
+    </message>
+    <message>
+        <source>排除设置…</source>
+        <translation>Exclusions…</translation>
+    </message>
+    <message numerus="yes">
+        <source>已跳过的文件里有 %Ln 项</source>
+        <translation>
+            <numerusform>%Ln skipped file matched</numerusform>
+            <numerusform>%Ln skipped files matched</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>已跳过的文件里另有 %Ln 项</source>
+        <translation>
+            <numerusform>%Ln more skipped file matched</numerusform>
+            <numerusform>%Ln more skipped files matched</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>这个文件夹在排除目录里，未建索引</source>
+        <translation>This folder is excluded from the index</translation>
+    </message>
+    <message>
+        <source>这个磁盘不在索引范围内</source>
+        <translation>This drive is not in the index</translation>
+    </message>
+    <message>
+        <source>搜索范围…</source>
+        <translation>Search scope…</translation>
+    </message>
+    <message>
+        <source>排除目录 %1 没搜</source>
+        <translation>Excluded folder %1 was skipped</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 等 %Ln 个排除目录没搜</source>
+        <translation>
+            <numerusform>%Ln excluded folder (incl. %1) skipped</numerusform>
+            <numerusform>%Ln excluded folders (incl. %1) skipped</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>另有 %Ln 个排除目录没搜</source>
+        <translation>
+            <numerusform>%Ln excluded folder was skipped</numerusform>
+            <numerusform>%Ln excluded folders were skipped</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>排除目录里显示了 %Ln 项</source>
+        <translation>
+            <numerusform>Shown %Ln item from excluded folders</numerusform>
+            <numerusform>Shown %Ln items from excluded folders</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>排除目录里也没有</source>
+        <translation>Not found in excluded folders</translation>
+    </message>
+    <message numerus="yes">
+        <source>已跳过的文件里显示了 %Ln 项</source>
+        <translation>
+            <numerusform>Shown %Ln skipped file</numerusform>
+            <numerusform>Shown %Ln skipped files</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>已跳过的文件里也没有</source>
+        <translation>Not found in skipped files</translation>
+    </message>
+    <message numerus="yes">
+        <source>排除目录里找到 %Ln 项</source>
+        <translation>
+            <numerusform>Found %Ln item in excluded folders</numerusform>
+            <numerusform>Found %Ln items in excluded folders</numerusform>
+        </translation>
     </message>
     <message>
         <source>加入索引</source>
@@ -16145,6 +16709,38 @@ Content index: %5</translation>
     <message>
         <source>暂不可用：%1 · %2</source>
         <translation>Unavailable: %1 · %2</translation>
+    </message>
+    <message>
+        <source>打开搜索框</source>
+        <translation>Open search box</translation>
+    </message>
+    <message>
+        <source>打开完整搜索面板</source>
+        <translation>Open full search panel</translation>
+    </message>
+    <message>
+        <source>打开剪贴板</source>
+        <translation>Open clipboard</translation>
+    </message>
+    <message>
+        <source>打开设置</source>
+        <translation>Open Settings</translation>
+    </message>
+    <message>
+        <source>打开截图历史</source>
+        <translation>Open screenshot history</translation>
+    </message>
+    <message>
+        <source>暂停 / 恢复记录剪贴板</source>
+        <translation>Pause / resume clipboard recording</translation>
+    </message>
+    <message>
+        <source>无操作</source>
+        <translation>Do nothing</translation>
+    </message>
+    <message>
+        <source>暂不可用：打开截图历史</source>
+        <translation>Unavailable: Open screenshot history</translation>
     </message>
 </context>
 <context>

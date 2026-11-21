@@ -96,12 +96,11 @@ Item {
     readonly property bool sizeShown: showSize && size.length > 0
     readonly property bool modifiedShown: showModified && modified.length > 0
     property int hint: 0 // its number for the number keys (Ctrl+1…); 0 for none
-    property bool reserveHintSpace: false // a numbered row keeps the number's room, also while the hint is faded out; a row without a number sits flush left
-    // A list that shows more rows than there are number keys (搜索框显示行数 over 9): its rows without a number keep that room too, in line with the numbered ones.
-    property bool alignWithNumbered: false
+    property bool reserveHintSpace: false // keep one shared left gutter across every row, as ClipRow and DialogBarRow do
     property string hintModifier: "Ctrl" // ... with this held
     property bool hintTaken: false // one of Win顺's own shortcuts has that chord: shown struck through
     property real hintOpacity: 1
+    property real hintOffsetY: 0 // counter-scrolls numberSlot during smooth wheel gliding so 1–9 stay visually steady
     // 字母直达: the letter that opens (pastes) this row while the letters show, in the number's place; "" for none.
     property string hintLetter
     // 字母直达 (GitHub #357): the letters for its buttons, the first visible one's first; "" none.
@@ -303,7 +302,7 @@ Item {
         id: iconSlot
         objectName: "resultIcon"
         opacity: row.offline || row.missing ? 0.6 : 1
-        x: Theme.iconInset + (row.reserveHintSpace && (row.hint > 0 || row.alignWithNumbered) ? 28 : 0)
+        x: Theme.iconInset + (row.reserveHintSpace ? 28 : 0)
         anchors.verticalCenter: parent.verticalCenter
         width: row.compact || row.dense ? 24 : 32 // 48 device pixels at 150 %, 64 at 200 %: sizes icons are drawn for
         height: width
@@ -586,6 +585,7 @@ Item {
         visible: row.reserveHintSpace && (row.hint > 0 || row.hintLetter.length > 0)
         opacity: row.hintLetter.length > 0 ? 1 : row.hintOpacity
         x: row.onPixel(Theme.tok("hintX", 14)) // centred between the style's mark (or card edge) and the icon
+        y: row.hintOffsetY !== 0 ? -Math.round(-row.hintOffsetY * row.dpr) / row.dpr : 0
         width: 24
         height: row.height
 
@@ -706,19 +706,24 @@ Item {
     // One tip for all the buttons: it glides from one to the next. The date
     // has one too: the time in full.
     HoverTip {
+        id: rowTip
+        objectName: "resultRowTip"
+        dpr: row.dpr
         readonly property RowAction hovered: row.actions !== null ? row.actions.hovered : null
         // Hover handlers on items under the row's mouse area get no hover: asked of the area instead.
         function under(item: Item): bool {
-            return area.containsMouse && item.contains(item.mapFromItem(area, area.mouseX, area.mouseY))
+            return area.containsMouse && !area.pressed && item.contains(item.mapFromItem(area, area.mouseX, area.mouseY))
         }
         readonly property bool onDate: !hovered && date.visible && under(date)
         readonly property bool onKeys: !hovered && !onDate && numberSlot.visible && numberSlot.opacity > 0
-                                      && row.hintTaken && under(numberSlot)
+                                      && row.hint > 0 && row.hintLetter.length === 0 && under(numberSlot)
         target: hovered ? hovered : onDate ? date : onKeys ? numberSlot : null
         text: hovered ? hovered.tip : onDate ? row.modifiedFull
-            : onKeys ? qsTr("%1 是你给 Win顺 设的快捷键，在这里按也是那个快捷键。可在设置的“结果列表”里改用 %2")
-                       .arg(row.hintModifier + "+" + row.hint).arg(row.hintModifier === "Alt" ? "Ctrl" : "Alt")
-            : ""
-        shortcut: hovered ? hovered.tipShortcut : ""
+            : !onKeys ? ""
+            : row.hintTaken ? qsTr("%1 是你给 Win顺 设的快捷键，在这里按也是那个快捷键。可在设置的“结果列表”里改用 %2")
+                              .arg(row.hintModifier + "+" + row.hint).arg(row.hintModifier === "Alt" ? "Ctrl" : "Alt")
+            : qsTr("打开这一行")
+        shortcut: hovered ? hovered.tipShortcut
+                : onKeys && !row.hintTaken ? row.hintModifier + "+" + row.hint : ""
     }
 }

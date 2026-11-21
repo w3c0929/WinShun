@@ -1,5 +1,6 @@
 #include "App.h"
 #include "DoubleTapAction.h"
+#include "TrayAction.h"
 #include "UiFont.h"
 #include "AdminDialogHint.h"
 #include "AdminTapHint.h"
@@ -176,6 +177,7 @@ constexpr int kScreenClipHotkeyId = 6; // Win+Shift+S, which Explorer gives up w
 constexpr int kFolderMenuHotkeyId = 7; // the folder menu in the window in front (GitHub #25)
 constexpr int kPanelHotkeyId = 8; // directly open the full search panel (#206)
 constexpr int kPastePlainHotkeyId = 9; // the clipboard pasted as plain text into the window in front (#408)
+constexpr int kSettingsHotkeyId = 10; // directly open or toggle the settings window
 constexpr int kQuickPasteHotkeyId = 20; // + 1…9: paste without opening the clipboard
 // For another program to tell where its text caret is: longer, and the
 // clipboard would open late; it opens by the mouse pointer then.
@@ -489,8 +491,8 @@ App::~App()
     m_launcherRouting.router.reset();
     m_numberKeyHook.reset();
     m_drainingNumberKeyHook.reset();
-    m_drainingRouter.reset();
-    m_launcherRouting.draining.reset();
+    m_drainingRouters.clear();
+    m_launcherRouting.draining.clear();
     m_holdWatch.reset();
     m_drainingWatch.reset();
     m_keyListenerMode = -1; // recorder teardown must not recreate input listeners
@@ -800,6 +802,8 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
     connect(m_launcher.get(), &Launcher::shortcutSettingsRequested, this, &App::showShortcutSettings);
     // Only the chosen folders are indexed (GitHub #52): the notes under the results.
     connect(m_launcher.get(), &Launcher::folderSettingsRequested, this, [this] { showSettingsFor(u"Index/Folders"_s); });
+    connect(m_launcher.get(), &Launcher::excludedSettingsRequested, this, [this] { showSettingsFor(u"Index/ExcludedPaths"_s); });
+    connect(m_launcher.get(), &Launcher::excludedFilesSettingsRequested, this, [this] { showSettingsFor(u"Index/ExcludedTypes"_s); });
     // Not a setting the AI settings know of: the section, by its row's title (SettingsWindow.qml).
     connect(m_launcher.get(), &Launcher::shareSettingsRequested, this, [this] {
         showSettings([](QQuickWindow* window) {
@@ -1051,9 +1055,10 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
 
     MessageWindow::Callbacks callbacks;
     callbacks.trayActivated = [this](std::uint32_t time) {
-        const std::uint64_t pressedAt = tickTime(time, ::GetTickCount64());
-        beginTrigger(TriggerSource::Tray, pressedAt);
-        toggleLauncher(false, pressedAt);
+        runTrayAction(m_settings.trayLeftAction, tickTime(time, ::GetTickCount64()));
+    };
+    callbacks.trayMiddleClicked = [this](std::uint32_t time) {
+        runTrayAction(m_settings.trayMiddleAction, tickTime(time, ::GetTickCount64()));
     };
     callbacks.trayMenuRequested = [this] { showTrayMenu(); };
     callbacks.trayMenuSoon = [this] { prefetchTrayMenus(); };
@@ -1096,6 +1101,8 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
             beginTrigger(TriggerSource::Hotkey, pressedAt);
             panelHotkey(pressedAt);
         }
+        else if (id == kSettingsHotkeyId)
+            settingsHotkey();
         else if (id != kDialogJumpHotkeyId) {
             beginTrigger(TriggerSource::Hotkey, pressedAt);
             toggleLauncher(true, pressedAt);
@@ -2104,18 +2111,26 @@ void App::applyHotkey()
 {
     m_messages->unregisterHotkey(kHotkeyId);
     m_messages->unregisterHotkey(kPanelHotkeyId);
+    m_messages->unregisterHotkey(kSettingsHotkeyId);
     if (m_settingsEditor && m_settingsEditor->recordingHotkey())
         return; // the keys being pressed must reach the settings window
+    const auto registerChord = [this](int id, const QString& raw, const QString& settingKey) {
+        const QString chord = raw.trimmed();
+        QString error;
+        if (!chord.isEmpty() && !m_messages->registerHotkey(id, chord)) {
+            UINT modifiers = 0;
+            UINT vk = 0;
+            error = MessageWindow::parseHotkey(chord, &modifiers, &vk)
+                ? tr("“%1” 已被其他程序或系统占用，请换一个。").arg(chord)
+                : tr("无法识别“%1”，请重新设置。").arg(chord);
+        }
+        noteApplyProblem(settingKey, error);
+        if (!settingsShown() && !error.isEmpty() && !m_aiApplying)
+            m_messages->showNotification(tr("快捷键不可用"), error);
+        return error;
+    };
     const QString hotkey = m_settings.hotkey.trimmed();
-    QString hotkeyError;
-    if (!hotkey.isEmpty() && !m_messages->registerHotkey(kHotkeyId, hotkey)) {
-        UINT modifiers = 0;
-        UINT vk = 0;
-        hotkeyError = MessageWindow::parseHotkey(hotkey, &modifiers, &vk)
-            ? tr("“%1” 已被其他程序或系统占用，请换一个。").arg(hotkey)
-            : tr("无法识别“%1”，请重新设置。").arg(hotkey);
-    }
-    noteApplyProblem(u"Launcher/Hotkey"_s, hotkeyError);
+    const QString hotkeyError = registerChord(kHotkeyId, hotkey, u"Launcher/Hotkey"_s);
     // Over a program run as administrator only a hotkey with a modifier
     // comes (docs/pitfalls.md): the one AdminTapHint names.
     UINT hotkeyModifiers = 0;
@@ -2123,24 +2138,13 @@ void App::applyHotkey()
     m_hotkeyOverAdmin = !hotkey.isEmpty() && hotkeyError.isEmpty()
         && MessageWindow::parseHotkey(hotkey, &hotkeyModifiers, &hotkeyKey)
         && (hotkeyModifiers & (MOD_ALT | MOD_CONTROL | MOD_SHIFT | MOD_WIN)) != 0;
-    if (m_settingsEditor)
+    const QString panelError = registerChord(kPanelHotkeyId, m_settings.panelHotkey, u"Launcher/PanelHotkey"_s);
+    const QString settingsError = registerChord(kSettingsHotkeyId, m_settings.settingsHotkey, u"Launcher/SettingsHotkey"_s);
+    if (m_settingsEditor) {
         m_settingsEditor->setHotkeyError(hotkeyError); // shown next to the shortcut
-    if (!settingsShown() && !hotkeyError.isEmpty() && !m_aiApplying)
-        m_messages->showNotification(tr("快捷键不可用"), hotkeyError);
-    const QString panelKey = m_settings.panelHotkey.trimmed();
-    QString panelError;
-    if (!panelKey.isEmpty() && !m_messages->registerHotkey(kPanelHotkeyId, panelKey)) {
-        UINT modifiers = 0;
-        UINT vk = 0;
-        panelError = MessageWindow::parseHotkey(panelKey, &modifiers, &vk)
-            ? tr("“%1” 已被其他程序或系统占用，请换一个。").arg(panelKey)
-            : tr("无法识别“%1”，请重新设置。").arg(panelKey);
-    }
-    noteApplyProblem(u"Launcher/PanelHotkey"_s, panelError);
-    if (m_settingsEditor)
         m_settingsEditor->setPanelHotkeyError(panelError);
-    if (!settingsShown() && !panelError.isEmpty() && !m_aiApplying)
-        m_messages->showNotification(tr("快捷键不可用"), panelError);
+        m_settingsEditor->setSettingsHotkeyError(settingsError);
+    }
 }
 
 // The folder menu's hotkey (GitHub #25). Over the launcher itself, the
@@ -2542,8 +2546,9 @@ void App::setUpAppTools()
     // A picture into the clipboard history: the plugin's file in its own
     // data folder (and the annotations beside it), read off the GUI thread
     // and deleted. `copy`: onto the clipboard too (else recorded only, as
-    // Ctrl+S and F3 do); `screenshot`: for 截图历史. Nothing kept while the
-    // history or its pictures are off, or paused, as the clipboard's own.
+    // Ctrl+S and F3 do); `screenshot`: for 截图历史, gated by
+    // Clipboard/Screenshots ("all", "copied", "off") independently of
+    // Clipboard/Images. Nothing kept while the history is off or paused.
     tools.push_back({u"clipboard_add_image"_s, plugin::Permission::ClipboardWrite,
         [this](const QString&, const QString& dataDir, const QJsonObject& arguments, std::function<void(mcp::ToolResult)> done) {
             const QString file = arguments.value(u"file"_s).toString();
@@ -2560,6 +2565,20 @@ void App::setUpAppTools()
                 return;
             }
             QPointer<App> self(this);
+            // Record-only handoff that settings will not keep: remove temp files without decoding pixels.
+            if (!copy && !m_settings.shouldRecordClipboardImage(false, screenshot, m_clipboardPaused)) {
+                std::thread([self, file, project, done = std::move(done)]() mutable {
+                    QFile::remove(file);
+                    if (!project.isEmpty())
+                        QFile::remove(project);
+                    QMetaObject::invokeMethod(qApp, [self, done = std::move(done)]() mutable {
+                        if (!self)
+                            return;
+                        done({{{u"kept"_s, false}}});
+                    }, Qt::QueuedConnection);
+                }).detach();
+                return;
+            }
             std::thread([self, file, project, copy, screenshot, imageOrigin, done = std::move(done)]() mutable {
                 QImage image = readHandedPicture(file);
                 QByteArray bytes;
@@ -2579,11 +2598,11 @@ void App::setUpAppTools()
                         done(toolError(u"Not a picture Win顺 can read"_s));
                         return;
                     }
-                    const bool remember = self->m_settings.clipboard && self->m_settings.clipboardImages && !self->m_clipboardPaused;
+                    const bool remember = self->m_settings.shouldRecordClipboardImage(copy, screenshot, self->m_clipboardPaused);
                     if (copy)
                         self->m_clipboard->copyImage(image, remember, screenshot, std::move(bytes), imageOrigin);
                     else if (remember)
-                        self->m_clipboard->recordImage(image, std::move(bytes));
+                        self->m_clipboard->recordImage(image, std::move(bytes), screenshot);
                     done({{{u"kept"_s, remember}}});
                 }, Qt::QueuedConnection);
             }).detach();
@@ -3829,6 +3848,7 @@ void App::releaseWinChordsForExplorer()
     const std::pair<int, QString> ours[] = {
         {kHotkeyId, m_settings.hotkey},
         {kPanelHotkeyId, m_settings.panelHotkey},
+        {kSettingsHotkeyId, m_settings.settingsHotkey},
         {kFolderMenuHotkeyId, m_settings.folderMenuHotkey},
         {kClipboardHotkeyId, m_settings.clipboardHotkey},
         {kPastePlainHotkeyId, m_settings.pastePlainHotkey},
@@ -4251,7 +4271,8 @@ void App::showSettingsNow(const std::function<void(QQuickWindow*)>& at)
     } else if (opening) {
         // Shown again. A hotkey another program held may be free now: tried
         // again where one did not work (working ones are left registered).
-        if (!m_settingsEditor->hotkeyError().isEmpty())
+        if (!m_settingsEditor->hotkeyError().isEmpty() || !m_settingsEditor->panelHotkeyError().isEmpty()
+            || !m_settingsEditor->settingsHotkeyError().isEmpty())
             applyHotkey();
         if (!m_settingsEditor->folderMenuHotkeyError().isEmpty())
             applyFolderMenuHotkey();
@@ -5352,6 +5373,69 @@ void App::updateDoubleTapActions()
     m_settingsEditor->setDoubleTapPluginActions(actions);
 }
 
+bool App::invokePluginAction(QStringView encoded)
+{
+    const auto action = doubletap::decode(encoded);
+    if (action.plugin.isEmpty())
+        return false;
+    const auto found = m_pluginTapActions.find(action.plugin);
+    return m_pluginHost && found != m_pluginTapActions.end() && found->second.contains(action.key)
+        && m_pluginHost->notify(action.plugin, u"hotkey"_s, {{u"key"_s, action.key}}, true);
+}
+
+void App::runTrayAction(const QString& action, std::uint64_t pressedAt)
+{
+    if (action == trayaction::kNone)
+        return;
+    if (action == trayaction::kLauncher) {
+        beginTrigger(TriggerSource::Tray, pressedAt);
+        toggleLauncher(false, pressedAt);
+        return;
+    }
+    if (action == trayaction::kPanel) {
+        beginTrigger(TriggerSource::Tray, pressedAt);
+        panelHotkey(pressedAt);
+        return;
+    }
+    if (action == trayaction::kClipboard) {
+        beginTrigger(TriggerSource::Tray, pressedAt);
+        toggleClipboard(pressedAt);
+        return;
+    }
+    if (action == trayaction::kSettings) {
+        showSettings();
+        return;
+    }
+    if (action == trayaction::kScreenshots) {
+        const QString keyword = screenshotKeyword();
+        if (keyword.isEmpty()) {
+            m_messages->showNotification(tr("截图历史暂不可用"),
+                tr("请启用截图插件，并在“剪贴板”中确认截图历史关键词。"));
+            return;
+        }
+        m_launcher->setScope(Launcher::All);
+        showLauncher(keyword + u' ');
+        return;
+    }
+    if (action == trayaction::kPauseClipboard) {
+        if (!m_settings.clipboard) {
+            m_messages->showNotification(tr("剪贴板历史未开启"),
+                tr("可在“剪贴板”设置中开启记录剪贴板历史。"));
+            return;
+        }
+        setClipboardPaused(!m_clipboardPaused);
+        m_messages->showNotification(
+            m_clipboardPaused ? tr("已暂停记录剪贴板") : tr("已恢复记录剪贴板"),
+            m_clipboardPaused ? tr("再次点击托盘图标或从托盘菜单可恢复记录。")
+                              : tr("复制的内容会重新记入剪贴板历史。"));
+        return;
+    }
+    if (!invokePluginAction(action)) {
+        m_messages->showNotification(tr("托盘图标动作暂不可用"),
+            tr("请启用对应插件，并在“系统整合 › 任务栏”中重新选择托盘点击操作。"));
+    }
+}
+
 void App::onDoubleCtrl(const KeyListener::Tap& tap)
 {
     const std::uint64_t now = ::GetTickCount64();
@@ -5377,10 +5461,7 @@ void App::onDoubleCtrl(const KeyListener::Tap& tap)
         }
         if (m_settings.doubleTapAction != u"launcher") {
             m_triggers->decided("plugin-action");
-            const auto action = doubletap::decode(m_settings.doubleTapAction);
-            const auto found = m_pluginTapActions.find(action.plugin);
-            if (!m_pluginHost || found == m_pluginTapActions.end() || !found->second.contains(action.key)
-                || !m_pluginHost->notify(action.plugin, u"hotkey"_s, {{u"key"_s, action.key}}, true)) {
+            if (!invokePluginAction(m_settings.doubleTapAction)) {
                 m_messages->showNotification(tr("双击动作暂不可用"),
                     tr("请启用对应插件，并在“快捷键”的双击设置中重新选择动作。"));
             }
@@ -6078,11 +6159,8 @@ bool App::startKeyRouting(HWND target)
     };
     callbacks.foregroundChanged = [this, post](HWND window) { post([this, window] { routedForeground(window); }); };
     callbacks.shiftTapped = [this, post] { post([this] { clipboardShiftTapped(); }); };
-    callbacks.drained = [this, run] {
-        QMetaObject::invokeMethod(this, [this, run] {
-            if (m_drainingRun == run)
-                m_drainingRouter.reset();
-        }, Qt::QueuedConnection);
+    callbacks.drained = [this] {
+        QMetaObject::invokeMethod(this, [this] { reapDrainingRouters(); }, Qt::QueuedConnection);
     };
     const Qt::KeyboardModifier numberKeys = m_settings.clipboardNumberKeys == u"ctrl" ? Qt::ControlModifier
         : m_settings.clipboardNumberKeys == u"off"                                    ? Qt::NoModifier
@@ -6096,6 +6174,8 @@ bool App::startKeyRouting(HWND target)
         qWarning() << "Clipboard: keyboard routing is unavailable";
         return false;
     }
+    if (m_keyRouter)
+        stopKeyRouting();
     m_keyRouter = std::move(router);
     m_keyRouterTarget = target;
     if (m_typing)
@@ -6112,24 +6192,33 @@ void App::stopKeyRouting()
         endClipboardHold("unrouted");
     if (m_keyRouter) {
         // No key is taken any more; the releases of those it took still are
-        // its own, for a moment.
+        // its own, for a moment. The router sheds mouse/foreground hooks and
+        // exits on its own thread before callbacks.drained asks to reap it,
+        // so the GUI thread (and the paste timer right after) never stalls.
         m_keyRouter->drain();
         diagnostics::record(u"clipboard-key-routing-stop"_s,
             {{u"session"_s, static_cast<qint64>(m_keyRouterRun)}, {u"router"_s, m_keyRouter->diagnosticStatus()}});
-        m_drainingRouter = std::move(m_keyRouter);
-        m_drainingRun = m_keyRouterRun;
+        m_drainingRouters.push_back(std::move(m_keyRouter));
+        reapDrainingRouters();
         if (m_typing)
             m_typing->setRouted(TypeToSearch::Router::Clipboard, false);
-        QTimer::singleShot(2s, this, [this, run = m_drainingRun] {
-            if (m_drainingRun == run)
-                m_drainingRouter.reset(); // a key held that long is the program's again
-        });
     }
     m_keyRouterTarget = nullptr;
     if (!m_clipboard->keysRouted())
         return;
     m_clipFrame->setNoActivate(false);
     m_clipboard->setKeysRouted(false);
+}
+
+void App::reapDrainingRouters()
+{
+    const auto reap = [](std::vector<std::unique_ptr<KeyRouter>>& routers) {
+        std::erase_if(routers, [](const std::unique_ptr<KeyRouter>& router) {
+            return !router || router->isFinished();
+        });
+    };
+    reap(m_drainingRouters);
+    reap(m_launcherRouting.draining);
 }
 
 // What the window's own focus would do with the key: to the item that has
@@ -6237,11 +6326,8 @@ bool App::startLauncherRouting()
     callbacks.key = [this, post](const KeyRouter::Key& key) { post([this, key] { launcherRoutedKey(key); }); };
     callbacks.clickedAway = [this, post](HWND) { post([this] { launcherClickedAway(); }); };
     callbacks.foregroundChanged = [this, post](HWND) { post([this] { launcherRoutedForeground(); }); };
-    callbacks.drained = [this, run] {
-        QMetaObject::invokeMethod(this, [this, run] {
-            if (m_launcherRouting.drainingRun == run)
-                m_launcherRouting.draining.reset();
-        }, Qt::QueuedConnection);
+    callbacks.drained = [this] {
+        QMetaObject::invokeMethod(this, [this] { reapDrainingRouters(); }, Qt::QueuedConnection);
     };
     const Qt::KeyboardModifier numberKeys = m_settings.numberKeys == u"ctrl" ? Qt::ControlModifier
         : m_settings.numberKeys == u"alt"                                     ? Qt::AltModifier
@@ -6278,12 +6364,8 @@ void App::stopLauncherRouting()
     diagnostics::record(u"launcher-key-routing-stop"_s,
         {{u"session"_s, static_cast<qint64>(m_launcherRouting.run)},
             {u"router"_s, m_launcherRouting.router->diagnosticStatus()}});
-    m_launcherRouting.draining = std::move(m_launcherRouting.router);
-    m_launcherRouting.drainingRun = m_launcherRouting.run;
-    QTimer::singleShot(2s, this, [this, run = m_launcherRouting.drainingRun] {
-        if (m_launcherRouting.drainingRun == run)
-            m_launcherRouting.draining.reset(); // a key held that long is the program's again
-    });
+    m_launcherRouting.draining.push_back(std::move(m_launcherRouting.router));
+    reapDrainingRouters();
     m_launcher->setKeysRouted(false);
 }
 
@@ -7460,6 +7542,17 @@ void App::panelHotkey(std::optional<std::uint64_t> pressedAt)
     showSearchPanel();
 }
 
+void App::settingsHotkey()
+{
+    if (m_settingsWindow && m_settingsWindow->isVisible()
+        && !(m_settingsWindow->windowState() & Qt::WindowMinimized)
+        && m_settingsWindow->isActive()) {
+        m_settingsWindow->close();
+        return;
+    }
+    showSettings();
+}
+
 void App::togglePanel()
 {
     if (m_window && m_window->isVisible() && !m_launcherClosing)
@@ -8082,6 +8175,8 @@ void App::tellLauncherFolders()
     for (const std::wstring& path : m_settings.indexFolderPaths())
         chosen.push_back(QString::fromStdWString(path));
     m_launcher->setChosenFolders(m_foldersInEffect, chosen, m_settings.folderHintDismissed);
+    m_launcher->setExcludedFolders(
+        m_settings.excludedPaths, m_settings.excludedNames, m_settings.everythingCompat, m_settings.selectedDrives);
 }
 
 void App::addFolderFromLauncher(const QString& path)

@@ -93,6 +93,7 @@ struct Settings {
     QStringList doubleCtrlExcludedApps; // program files ("TheFinals.exe") in front of which double Ctrl does nothing
     QString hotkey; // e.g. "Alt+Space"; empty = none
     QString panelHotkey; // opens the full search panel directly; empty = none
+    QString settingsHotkey; // opens or toggles the settings window directly; empty = none
     // The programs run as administrator that were told of, once each, that
     // a double tap cannot be heard over them (AdminTapHint), lower case.
     QStringList adminTapHinted;
@@ -412,7 +413,7 @@ struct Settings {
     // for what is not a modifier or two and one key.
     static QString normalizedHotkey(const QString& shortcut);
     // Win顺's own shortcuts that work anywhere (registered with Windows), set or not.
-    QStringList globalHotkeys() const { return {hotkey, panelHotkey, clipboardHotkey, folderMenuHotkey, pastePlainHotkey}; }
+    QStringList globalHotkeys() const { return {hotkey, panelHotkey, settingsHotkey, clipboardHotkey, folderMenuHotkey, pastePlainHotkey}; }
     // The rule for a shortcut a person (settings window) or AI sets: Ctrl, Alt
     // or Win held with its key, or a function key (F1 to F24) alone or with
     // Shift. A bare letter, Enter, Space, PrintScreen or Shift+letter would
@@ -529,6 +530,10 @@ struct Settings {
     // left as they are, hidden from the list, or cleaned out (MissingFiles, GitHub #54)
     QString clipboardMissingFiles = QStringLiteral("keep");
     bool clipboardImages = true;
+    // Win顺 screenshots handed over via clipboard_add_image (winshun.capture):
+    // "all" (copy, pin and save), "copied" (only screenshots explicitly copied),
+    // or "off" (never recorded into clipboard history; copying still writes the system clipboard).
+    QString clipboardScreenshots = QStringLiteral("all");
     QStringList clipboardExcludedApps; // program files whose copies are not kept, "KeePass.exe"
     QString clipboardNumberKeys = QStringLiteral("alt"); // alt | ctrl | off: Alt+1…9 pastes the nth row
     QString clipboardQuickPaste = QStringLiteral("off"); // off | ctrl | alt: the first nine of All, without opening the window
@@ -573,6 +578,9 @@ struct Settings {
     bool taskbarSearchBox = false; // Win顺's own search box on the taskbar (taskbar::SearchBox)
     QString taskbarSearchBoxStyle = QStringLiteral("box"); // box | label | icon: the widest form it takes, as Windows' own
     QString taskbarSearchBoxSide = QStringLiteral("auto"); // auto | tray: where on the taskbar (taskbar::Side, GitHub #271)
+    // Notification-area icon clicks (TrayAction.h): built-in action id or plugin:<id>/<key>.
+    QString trayLeftAction = QStringLiteral("launcher");
+    QString trayMiddleAction = QStringLiteral("settings");
 
     // [Capture]: the screenshot is a plugin of the plugin library since
     // 0.17 (winshun.capture, GitHub #138), with its settings in its own
@@ -731,6 +739,22 @@ struct Settings {
     static std::vector<KnownFolder> knownFolders();
     // A share's place, not one of this PC's disks: "\\host\..." or on a mapped drive.
     static bool isNetworkPath(const QString& path);
+
+    // Whether a picture handed to clipboard_add_image goes into the clipboard history.
+    // Non-screenshot pictures follow clipboardImages; Win顺 screenshots follow
+    // clipboardScreenshots ("all", "copied", "off") independently.
+    bool shouldRecordClipboardImage(bool copy, bool screenshot, bool paused = false) const noexcept
+    {
+        if (!clipboard || paused)
+            return false;
+        if (!screenshot)
+            return clipboardImages;
+        if (clipboardScreenshots == QLatin1StringView("all"))
+            return true;
+        if (clipboardScreenshots == QLatin1StringView("copied"))
+            return copy;
+        return false;
+    }
 
     static QString filePath();
     static QString storedRenderer(); // just [Launcher] Renderer; works before QGuiApplication exists

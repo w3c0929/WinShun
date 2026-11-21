@@ -659,11 +659,25 @@ private slots:
         QVERIFY(!makePlan(scoped, adding(u"Index/Folders"_s, u"E:\\"_s), env).result.settings.indexFoldersChosen);
         QVERIFY(makePlan(scoped, one(u"Index/Scope"_s, u"folders"_s), env).askAlways()); // every change
         QVERIFY(!makePlan(scoped, one(u"Index/FolderVerifyHours"_s, 4), env).askAlways());
+        // Clipboard/Screenshots widens when moving from narrower to broader (off -> copied -> all).
+        State shots = state;
+        shots.settings.clipboardScreenshots = u"off"_s;
+        QVERIFY(makePlan(shots, one(u"Clipboard/Screenshots"_s, u"copied"_s), env).askAlways());
+        QVERIFY(makePlan(shots, one(u"Clipboard/Screenshots"_s, u"all"_s), env).askAlways());
+        QVERIFY(!makePlan(shots, one(u"Clipboard/Screenshots"_s, u"off"_s), env).askAlways());
+        shots.settings.clipboardScreenshots = u"copied"_s;
+        QVERIFY(makePlan(shots, one(u"Clipboard/Screenshots"_s, u"all"_s), env).askAlways());
+        QVERIFY(!makePlan(shots, one(u"Clipboard/Screenshots"_s, u"off"_s), env).askAlways());
+        shots.settings.clipboardScreenshots = u"all"_s;
+        QVERIFY(!makePlan(shots, one(u"Clipboard/Screenshots"_s, u"copied"_s), env).askAlways());
+        QVERIFY(!makePlan(shots, one(u"Clipboard/Screenshots"_s, u"off"_s), env).askAlways());
         // A switch that shows nothing more is not asked.
         QVERIFY(!makePlan(state, one(u"Clipboard/ClickToPaste"_s, !state.settings.clipboardClickToPaste), env).askAlways());
         // The model is told which ones ask.
         Query q;
         q.keys = {u"Clipboard/Enabled"_s};
+        QVERIFY(describe(state, q).value(u"settings"_s).toArray().first().toObject().contains(u"ask_always"_s));
+        q.keys = {u"Clipboard/Screenshots"_s};
         QVERIFY(describe(state, q).value(u"settings"_s).toArray().first().toObject().contains(u"ask_always"_s));
     }
 
@@ -952,6 +966,23 @@ private slots:
         for (const Item& item : plan.items)
             restore(*item.entry, back, item.oldValue);
         QCOMPARE(back, state);
+    }
+
+    // 系统整合 tabs: 0 任务栏, 1 文件管理器, 2 文件夹菜单, 3 对话框.
+    void integrationTabsMatchLayout()
+    {
+        for (const aisettings::Entry& e : catalog()) {
+            if (e.section == u"taskbar") {
+                QCOMPARE(e.tab, 0);
+            } else if (e.section == u"files_and_dialogs") {
+                if (e.key.startsWith(u"Launcher/FolderMenu"))
+                    QCOMPARE(e.tab, 2);
+                else if (e.key.startsWith(u"Launcher/Dialog"))
+                    QCOMPARE(e.tab, 3);
+                else
+                    QCOMPARE(e.tab, 1);
+            }
+        }
     }
 };
 

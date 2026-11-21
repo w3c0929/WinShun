@@ -231,6 +231,10 @@ add_test(NAME tst_settingscapturehotkey COMMAND $<TARGET_FILE:WinShun>
     --preview-settings "${CMAKE_CURRENT_BINARY_DIR}/settings-capture-hotkey" --capture-hotkey --scale 1.5)
 set_tests_properties(tst_settingscapturehotkey PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+add_test(NAME tst_settingsclipboardscreenshots COMMAND $<TARGET_FILE:WinShun>
+    --preview-settings "${CMAKE_CURRENT_BINARY_DIR}/settings-clipboard-screenshots" --clipboard-screenshots --scale 1.5)
+set_tests_properties(tst_settingsclipboardscreenshots PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 # The settings window is kept once made: closed, it hides and comes back as new
 # (first page, no search, no dialogs, no recording, nothing running while
@@ -378,6 +382,13 @@ set_tests_properties(tst_foregroundpreload PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
 add_test(NAME tst_searchworkload COMMAND $<TARGET_FILE:WinShun>
     --preview-results "${CMAKE_CURRENT_BINARY_DIR}/search-workload" --search-workload --renderer d3d11)
 set_tests_properties(tst_searchworkload PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# Excluded-folder / skipped-file recovery hints, one-off walks, everythingCompat
+# hidden reveals, and typed excluded paths in real Main.qml / Panel.qml / Launcher.
+add_test(NAME tst_excludedrecovery COMMAND $<TARGET_FILE:WinShun>
+    --preview-results "${CMAKE_CURRENT_BINARY_DIR}/excluded-recovery" --excluded-recovery --renderer d3d11)
+set_tests_properties(tst_excludedrecovery PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 # First-run gating and draft/commit behavior in the real App and QML, with
@@ -596,9 +607,12 @@ set_tests_properties(tst_windowvisibility PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 # The launcher pinned as a window of its own (GitHub #418): real windows.
+# Embeds app.rc (IDI_ICON1) so taskbar/frameless window icon wiring is tested
+# against the real executable resource, just like WinShun.exe and plugin hosts.
 qt_add_executable(tst_taskbarwindow tst_taskbarwindow.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/WindowEffects.cpp
-    ${PROJECT_SOURCE_DIR}/src/app/platform/Foreground.cpp)
+    ${PROJECT_SOURCE_DIR}/src/app/platform/Foreground.cpp
+    ${PROJECT_SOURCE_DIR}/resources/app.rc)
 target_include_directories(tst_taskbarwindow PRIVATE ${PROJECT_SOURCE_DIR}/src/app ${PROJECT_SOURCE_DIR}/src/core)
 target_link_libraries(tst_taskbarwindow PRIVATE winshun_options Qt6::Gui Qt6::Test comctl32 gdi32 dwmapi ole32 shell32 user32)
 set_target_properties(tst_taskbarwindow PROPERTIES WIN32_EXECUTABLE FALSE)
@@ -1797,3 +1811,19 @@ set_target_properties(tst_printscreen PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_printscreen COMMAND tst_printscreen -o -,txt)
 set_tests_properties(tst_printscreen PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# Browser-like Back/Forward history, WindowFrame XButton/WM_APPCOMMAND routing,
+# and boundary-overscroll tab switching (src/app/SettingsNavigation.*).
+qt_add_executable(tst_settingsnav tst_settingsnav.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/SettingsNavigation.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/WindowFrame.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/platform/WindowEffects.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/platform/Foreground.cpp)
+target_include_directories(tst_settingsnav PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
+target_compile_definitions(tst_settingsnav PRIVATE WINSHUN_QML_DIR="${PROJECT_SOURCE_DIR}/src/app/qml")
+target_link_libraries(tst_settingsnav PRIVATE wscore winshun_options Qt6::Quick Qt6::Test comctl32 dwmapi gdi32 ole32 shell32 user32)
+set_target_properties(tst_settingsnav PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+add_test(NAME tst_settingsnav COMMAND tst_settingsnav -o -,txt)
+set_tests_properties(tst_settingsnav PROPERTIES
+    ENVIRONMENT "QT_QUICK_BACKEND=software"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_PLUGIN_PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>/../plugins")

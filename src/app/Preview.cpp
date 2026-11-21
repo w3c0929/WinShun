@@ -2629,6 +2629,72 @@ int runSettings(const QStringList& args)
         return finish(window, ok);
     }
 
+    if (args.contains(u"--clipboard-screenshots"_s)) {
+        bool ok = true;
+        const auto check = [&](bool condition, const char* message) {
+            if (!condition) {
+                qWarning("clipboard screenshots: %s", message);
+                ok = false;
+            }
+        };
+        window->resize(QSize(920, 720));
+        QMetaObject::invokeMethod(window, "showPage", Q_ARG(QVariant, window->property("clipboardPage")), Q_ARG(QVariant, QVariant(0)));
+        settle(window, 3);
+        auto* row = visualNamed(window->contentItem(), u"clipboardScreenshotsRow"_s);
+        auto* tabs = visualNamed(window->contentItem(), u"clipboardScreenshotsTabs"_s);
+        check(row && tabs, "clipboardScreenshotsRow or clipboardScreenshotsTabs not found");
+        if (!row || !tabs)
+            return finish(window, false);
+
+        // Hidden while the screenshot plugin is off.
+        editor->setScreenshotPlugin(true, false, {});
+        settle(window, 3);
+        check(!row->isVisible(), "row should stay hidden when screenshot plugin is off");
+
+        // Shown once the screenshot plugin is on; clicking each segment updates state and persists.
+        editor->setScreenshotPlugin(true, true, {u"F1"_s});
+        settle(window, 3);
+        check(row->isVisible(), "row should be visible when screenshot plugin is on");
+        check(editor->clipboardScreenshots() == u"all"_s, "initial mode should be all");
+        check(tabs->property("current").toInt() == 0, "initial tab should be 0");
+        ok = saveGrab(window, out.filePath(u"clipboard-screenshots-all.png"_s)) && ok;
+
+        const auto clickTab = [&](int index) {
+            const QPointF center = tabs->mapToScene(QPointF(tabs->width() * (index + 0.5) / 3.0, tabs->height() * 0.5));
+            QMouseEvent press(QEvent::MouseButtonPress, center, center, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QMouseEvent release(QEvent::MouseButtonRelease, center, center, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &press);
+            QCoreApplication::sendEvent(window, &release);
+            settle(window, 3);
+        };
+
+        clickTab(1);
+        check(editor->clipboardScreenshots() == u"copied"_s, "clicking second tab should select copied");
+        check(tabs->property("current").toInt() == 1, "tab index should be 1");
+        {
+            Settings persisted;
+            persisted.load();
+            check(persisted.clipboardScreenshots == u"copied"_s, "copied mode should persist to Settings");
+        }
+        ok = saveGrab(window, out.filePath(u"clipboard-screenshots-copied.png"_s)) && ok;
+
+        clickTab(2);
+        check(editor->clipboardScreenshots() == u"off"_s, "clicking third tab should select off");
+        check(tabs->property("current").toInt() == 2, "tab index should be 2");
+        {
+            Settings persisted;
+            persisted.load();
+            check(persisted.clipboardScreenshots == u"off"_s, "off mode should persist to Settings");
+        }
+        ok = saveGrab(window, out.filePath(u"clipboard-screenshots-off.png"_s)) && ok;
+
+        // Invalid setter value is ignored.
+        editor->setClipboardScreenshots(u"invalid"_s);
+        check(editor->clipboardScreenshots() == u"off"_s, "invalid mode should be ignored");
+
+        return finish(window, ok);
+    }
+
     if (args.contains(u"--backup-settings"_s)) {
         bool ok = true;
         const auto check = [&](bool condition, const char* message) {
@@ -3507,10 +3573,12 @@ int runSettings(const QStringList& args)
         {PluginSettings::tr("API 密钥"), pluginsPage, 0}, // a plugin's own setting
         {QCoreApplication::translate("PasteFileCard", "粘贴为文件"), pluginsPage, 0}, // a built-in card
         // Shown as 内置功能 cards too, the rows of their own page first (open_settings searches them by title).
-        {QCoreApplication::translate("SettingsWindow", "在资源管理器或桌面弹出文件夹快捷菜单"), integrationPage, 1}, // 文件管理器
-        {QCoreApplication::translate("SettingsWindow", "菜单里列出的内容"), integrationPage, 1},
-        {QCoreApplication::translate("SettingsWindow", "文件夹的子列也列出文件"), integrationPage, 1}, // GitHub #384
-        {QCoreApplication::translate("SettingsWindow", "对话框旁的搜索框"), integrationPage, 2}, // 对话框
+        {QCoreApplication::translate("SettingsWindow", "在资源管理器或桌面弹出文件夹快捷菜单"), integrationPage, 2}, // 文件夹菜单
+        {QCoreApplication::translate("SettingsWindow", "菜单里列出的内容"), integrationPage, 2},
+        {QCoreApplication::translate("SettingsWindow", "收藏夹里显示的类型"), integrationPage, 2},
+        {QCoreApplication::translate("SettingsWindow", "收藏夹显示方式"), integrationPage, 2},
+        {QCoreApplication::translate("SettingsWindow", "文件夹的子列也列出文件"), integrationPage, 2}, // GitHub #384
+        {QCoreApplication::translate("SettingsWindow", "对话框旁的搜索框"), integrationPage, 3}, // 对话框
         {QCoreApplication::translate("SettingsWindow", "在 Directory Opus 里直接打字搜索"), integrationPage, 1},
         {u"AI"_s, aiPage, 0},
         {u"命令行"_s, aiPage, 0},
@@ -3561,6 +3629,87 @@ int runSettings(const QStringList& args)
             qWarning("preview: still searching after Enter on '%s'", qUtf8Printable(probe.word));
         input->setProperty("text", QString());
         settle(window, 2);
+    }
+
+    // Cross-page SettingsLinkRow jumps and 快捷键 › 按键一览: every jump lands on
+    // the expected page and tab, scrolls its target into view, and restores cleanly.
+    if (!onePage) {
+        const int generalPage = window->property("generalPage").toInt();
+        const int keysPage = window->property("keysPage").toInt();
+        const int appearancePage = window->property("appearancePage").toInt();
+        const int clipboardPage = window->property("clipboardPage").toInt();
+        struct LinkCheck {
+            int fromPage;
+            int fromTab;
+            const char* objectName;
+            const char* method;
+            int expectedPage;
+            int expectedTab;
+        };
+        const LinkCheck links[] = {
+            {favoritesPage, 0, "favoritesFolderMenuLink", "trigger", integrationPage, 2},
+            {favoritesPage, 0, "favoritesLauncherLink", "trigger", resultsPage, 1},
+            {integrationPage, 2, "folderMenuManageFavoritesButton", "clicked", favoritesPage, 0},
+            {keysPage, 0, "keysClipboardLink", "trigger", clipboardPage, 1},
+            {keysPage, 0, "keysFolderMenuLink", "trigger", integrationPage, 2},
+            {keysPage, 0, "keysWinSLink", "trigger", integrationPage, 0},
+            {appearancePage, 0, "appearanceClipboardSizeLink", "trigger", clipboardPage, 0},
+            {scopePage, 2, "scopeIndexFolderLink", "trigger", generalPage, 0},
+            {clipboardPage, 1, "clipboardLetterJumpLink", "trigger", resultsPage, 2},
+        };
+        for (const LinkCheck& link : links) {
+            QMetaObject::invokeMethod(window, "showPage", Q_ARG(QVariant, QVariant(link.fromPage)), Q_ARG(QVariant, QVariant(link.fromTab)));
+            settle(window, 2);
+            QQuickItem* control = visualNamed(window->contentItem(), QString::fromLatin1(link.objectName));
+            if (!control) {
+                qWarning("preview: link '%s' missing on page %d tab %d", link.objectName, link.fromPage, link.fromTab);
+                continue;
+            }
+            if (!QMetaObject::invokeMethod(control, link.method))
+                qWarning("preview: link '%s' could not invoke %s", link.objectName, link.method);
+            settle(window, 3);
+            const int landedPage = window->property("currentPage").toInt();
+            const int landedTab = window->property("currentTab").toInt();
+            if (landedPage != link.expectedPage || landedTab != link.expectedTab)
+                qWarning("preview: link '%s' went to page %d tab %d, expected %d/%d",
+                    link.objectName, landedPage, landedTab, link.expectedPage, link.expectedTab);
+        }
+        // Smart contextual target from 收藏夹 when folder menu is turned off: lands on the main switch.
+        const bool menuWasOn = editor->folderMenu();
+        editor->setFolderMenu(false);
+        QMetaObject::invokeMethod(window, "showPage", Q_ARG(QVariant, QVariant(favoritesPage)), Q_ARG(QVariant, QVariant(0)));
+        settle(window, 2);
+        if (QQuickItem* link = visualNamed(window->contentItem(), u"favoritesFolderMenuLink"_s)) {
+            if (link->property("targetPart").toString() != u"folderMenuRow"_s)
+                qWarning("preview: favoritesFolderMenuLink targetPart when off was '%s'",
+                    qUtf8Printable(link->property("targetPart").toString()));
+        }
+        editor->setFolderMenu(menuWasOn);
+        // 按键一览 reflects Win+V, Win+S, and folderMenuHotkey.
+        const bool winVBefore = editor->clipboardWinV();
+        const bool winSBefore = editor->taskbarWinS();
+        const QString fmKeyBefore = editor->folderMenuHotkey();
+        editor->setClipboardWinV(true);
+        editor->setTaskbarWinS(true);
+        editor->setFolderMenuHotkey(u"Ctrl+Alt+D"_s);
+        settle(window, 2);
+        const QVariantList sections = window->property("shortcutSections").toList();
+        bool sawWinS = false, sawWinV = false, sawFolderMenu = false;
+        for (const QVariant& secVar : sections) {
+            for (const QVariant& rowVar : secVar.toMap().value(u"rows"_s).toList()) {
+                const QString keys = rowVar.toMap().value(u"keys"_s).toString();
+                if (keys.contains(u"Win+S"_s)) sawWinS = true;
+                if (keys.contains(u"Win+V"_s)) sawWinV = true;
+                if (keys == u"Ctrl+Alt+D"_s) sawFolderMenu = true;
+            }
+        }
+        if (!sawWinS || !sawWinV || !sawFolderMenu)
+            qWarning("preview: shortcutSections missing global keys (Win+S=%d Win+V=%d folderMenu=%d)",
+                int(sawWinS), int(sawWinV), int(sawFolderMenu));
+        editor->setClipboardWinV(winVBefore);
+        editor->setTaskbarWinS(winSBefore);
+        editor->setFolderMenuHotkey(fmKeyBefore);
+        say(u"cross-page settings links & global shortcuts list checked"_s);
     }
     return finish(window, saved);
 }
@@ -4137,7 +4286,8 @@ void checkDialogSearchKeys(IndexService& index, QQmlEngine* engine, const QDir& 
     places.setPlaces(std::make_shared<const PlaceList>());
     SearchEngine search(&index, &apps, &places);
     History history(temporary.filePath(u"history.tsv"_s));
-    DialogBar bar(&search, &history, nullptr, {});
+    Favorites favorites(temporary.filePath(u"favorites.json"_s));
+    DialogBar bar(&search, &history, &favorites, {});
     QQmlComponent component(engine, u"WinShun"_s, u"DialogBarWindow"_s);
     std::unique_ptr<QObject> object(component.createWithInitialProperties({{u"bar"_s, QVariant::fromValue(&bar)}}));
     auto* window = qobject_cast<QQuickWindow*>(object.get());
@@ -4238,6 +4388,83 @@ void checkDialogSearchKeys(IndexService& index, QQmlEngine* engine, const QDir& 
         };
         auto* number = visualNamed(list, u"dialogResultNumber"_s);
         check(hints && number && number->isVisible() && number->x() < 30, u"dialog rows keep their number on the left"_s);
+        // Position indicator, scroll-bar wake-up and shortcut HoverTip:
+        // left 1–9 stay viewport-relative shortcuts while the bar shows where
+        // the viewport sits in the list and the scroll bar wakes on scroll.
+        auto* posLabel = visualNamed(window->contentItem(), u"dialogPositionLabel"_s);
+        auto* scrollBar = visualNamed(window->contentItem(), u"dialogListScrollBar"_s);
+        check(posLabel && posLabel->isVisible() && posLabel->property("text").toString() == u"1–5 / 18",
+            u"dialog position label shows the visible range at the top"_s);
+        check(scrollBar && scrollBar->isVisible() && !scrollBar->property("scrolling").toBool(),
+            u"dialog scroll bar is visible on an overflowing list and calm at rest"_s);
+        list->setProperty("contentY", 7.0 * bar.rowHeight());
+        check(scrollBar && scrollBar->property("scrolling").toBool(),
+            u"dialog scroll bar wakes up while scrolling"_s);
+        settle(window, 1);
+        QVariant firstNumberAfterScroll;
+        QMetaObject::invokeMethod(window, "numberOf", Q_RETURN_ARG(QVariant, firstNumberAfterScroll), Q_ARG(QVariant, 7));
+        check(firstNumberAfterScroll.toInt() == 1, u"dialog shortcut numbers stay viewport-relative when scrolled"_s);
+        check(posLabel && posLabel->isVisible() && posLabel->property("text").toString() == u"8–12 / 18",
+            u"dialog position label tracks the scrolled range"_s);
+        check(saveGrab(window, output.filePath(u"dialog-scrolled-position.png"_s)), u"render the scrolled dialog list with position label"_s);
+        pump(1000);
+        check(scrollBar && !scrollBar->property("scrolling").toBool(),
+            u"dialog scroll bar relaxes after scrolling stops"_s);
+        // Shrinking the list while scrolled shifts ListView.originY; shortcut
+        // numbering and the range label must stay anchored to originY.
+        if (const SearchResult* firstItem = bar.results()->at(0)) {
+            bar.setQuery(firstItem->name);
+            timeout.restart();
+            while (bar.results()->count() >= 5 && timeout.elapsed() < 2000) pump(10);
+            settle(window, 2);
+            QVariant num0;
+            QMetaObject::invokeMethod(window, "numberOf", Q_RETURN_ARG(QVariant, num0), Q_ARG(QVariant, 0));
+            check(window->property("firstShownRow").toInt() == 0 && num0.toInt() == 1,
+                u"shrinking a scrolled dialog list keeps shortcut 1 on row 0 despite originY"_s);
+            bar.setQuery(originalQuery);
+            timeout.restart();
+            while (bar.results()->count() != 18 && timeout.elapsed() < 2000) pump(10);
+            settle(window, 2);
+            QMetaObject::invokeMethod(window, "numberOf", Q_RETURN_ARG(QVariant, num0), Q_ARG(QVariant, 0));
+            check(window->property("firstShownRow").toInt() == 0 && num0.toInt() == 1
+                    && posLabel && posLabel->property("text").toString() == u"1–5 / 18",
+                u"re-querying after a scrolled shrink keeps row 0 numbered 1 and resets range"_s);
+        }
+        // Non-overflowing list: neither scroll bar nor position range shows.
+        list->setProperty("contentY", list->property("originY").toDouble() - 4.0);
+        list->setHeight(20 * bar.rowHeight());
+        settle(window);
+        check(scrollBar && !scrollBar->isVisible(), u"dialog scroll bar hides when all rows fit"_s);
+        check(posLabel && !posLabel->isVisible(), u"dialog position label hides when all rows fit"_s);
+        list->setHeight(5 * bar.rowHeight());
+        list->setProperty("contentY", list->property("originY").toDouble() - 4.0);
+        settle(window);
+        // Hovering a left shortcut number explains the shortcut (and any conflict).
+        auto* topNumber = visualNamed(list, u"dialogResultNumber"_s);
+        auto* rowTip = topNumber && topNumber->parentItem() ? topNumber->parentItem()->findChild<QObject*>(u"dialogRowTip"_s) : nullptr;
+        if (topNumber && rowTip) {
+            const QPointF at = topNumber->mapToScene(QPointF(topNumber->width() / 2, topNumber->height() / 2));
+            QMouseEvent move(QEvent::MouseMove, at, window->mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &move);
+            settle(window);
+            check(rowTip->property("target").value<QObject*>() == topNumber
+                    && rowTip->property("shortcut").toString() == u"Ctrl+1"
+                    && !rowTip->property("text").toString().isEmpty(),
+                u"hovering a dialog shortcut number explains the Ctrl+1 shortcut"_s);
+            bar.setNumberKeysLeft(1u << 1);
+            settle(window);
+            check(rowTip->property("target").value<QObject*>() == topNumber
+                    && rowTip->property("shortcut").toString().isEmpty()
+                    && rowTip->property("text").toString().contains(u"Ctrl+1"_s),
+                u"hovering a taken dialog shortcut number explains the conflict"_s);
+            bar.setNumberKeysLeft(0);
+            QMouseEvent away(QEvent::MouseMove, QPointF(window->width() - 4, 4), window->mapToGlobal(QPointF(window->width() - 4, 4)),
+                Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &away);
+            settle(window);
+        } else {
+            check(false, u"dialog shortcut HoverTip missing"_s);
+        }
         if (hints) {
             hints->setProperty("jumping", true);
             settle(window);
@@ -4299,10 +4526,28 @@ void checkDialogSearchKeys(IndexService& index, QQmlEngine* engine, const QDir& 
             key(Qt::Key_O, Qt::ControlModifier);
             check(!menuOpen(), u"a hidden dialog list opens no result menu"_s);
         }
+        // Favorite keyword tag matches the launcher's "收藏 · <keyword>", and
+        // typing the keyword in DialogBar brings that favorite to the top.
+        if (const SearchResult* firstItem = bar.results()->at(0)) {
+            Favorite fav;
+            fav.kind = firstItem->isDir ? Favorite::Kind::Folder : Favorite::Kind::File;
+            fav.path = firstItem->path;
+            fav.name = firstItem->name;
+            fav.keyword = u"zp"_s;
+            favorites.add(fav);
+            bar.setQuery(u"zp"_s);
+            timeout.restart();
+            while ((bar.tags().isEmpty() || !bar.tags().first().contains(u"zp"_s)) && timeout.elapsed() < 2000) pump(10);
+            check(!bar.tags().isEmpty() && bar.tags().first() == DialogBar::tr("收藏 · %1").arg(u"zp"_s),
+                u"dialog favorite rows display their keyword tag"_s);
+        }
     }
     QFile report(output.filePath(u"dialog-navigation.json"_s));
     check(report.open(QIODevice::WriteOnly), u"write the dialog regression report"_s);
-    if (report.isOpen()) report.write(QJsonDocument(QJsonObject {{u"passed"_s, passed}, {u"checks"_s, checks}}).toJson());
+    if (report.isOpen()) {
+        report.write(QJsonDocument(QJsonObject {{u"passed"_s, passed}, {u"checks"_s, checks}}).toJson());
+        report.close();
+    }
     say(u"dialog search navigation: %1 checks, production DialogBarWindow/DialogBar, local Qt input, %2"_s
         .arg(checks.size()).arg(passed ? u"passed" : u"FAILED"));
     if (!passed)
@@ -8701,6 +8946,7 @@ bool checkNumberColumn(QQmlEngine* qmlEngine, const QDir& output, int width)
     launcher.setResultOptions(KindOrder::FilesFirst, true, false, false, u"ctrl"_s);
     launcher.setNumberHints(u"always"_s);
     launcher.setNumberKeysLeft(0);
+    EntryId firstFolderId = kNoEntry;
     {
         const auto files = index.index();
         const auto lock = files->writeLock();
@@ -8708,7 +8954,9 @@ bool checkNumberColumn(QQmlEngine* qmlEngine, const QDir& output, int width)
         for (int i = 1; i <= 24; ++i) {
             const QString name = u"编号_%1"_s.arg(i, 2, 10, QLatin1Char('0'));
             check(QDir(temporary.path()).mkdir(name), "could not create isolated folder");
-            files->add(root, name.toStdString(), EntryFlag::Directory);
+            const EntryId id = files->add(root, name.toStdString(), EntryFlag::Directory);
+            if (i == 1)
+                firstFolderId = id;
         }
     }
     ClipStore store(temporary.filePath(u"clipboard"_s));
@@ -8759,12 +9007,41 @@ bool checkNumberColumn(QQmlEngine* qmlEngine, const QDir& output, int width)
         }
     };
     verifyRows();
+    auto* footerStatus = visualNamed(window->contentItem(), u"footerStatus"_s);
+    check(footerStatus && footerStatus->property("text").toString().isEmpty(),
+        "launcher footer stays quiet at the top of the list");
     check(saveGrab(window, output.filePath(u"number-column-main.png"_s)), "main did not render");
     auto* firstRow = visualNamed(window->contentItem(), u"resultRow-0"_s);
     auto* icon = firstRow ? visualNamed(firstRow, u"resultIcon"_s) : nullptr;
     auto* text = firstRow ? visualNamed(firstRow, u"resultText"_s) : nullptr;
     if (!icon || !text || !view)
         return false;
+    // Hovering a left shortcut number explains the shortcut (and conflict when taken).
+    auto* firstSlot = visualNamed(firstRow, u"resultNumberSlot"_s);
+    auto* firstTip = firstRow->findChild<QObject*>(u"resultRowTip"_s);
+    if (firstSlot && firstTip) {
+        const QPointF at = firstSlot->mapToScene(QPointF(firstSlot->width() / 2, firstSlot->height() / 2));
+        QMouseEvent move(QEvent::MouseMove, at, window->mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &move);
+        settle(window);
+        check(firstTip->property("target").value<QObject*>() == firstSlot
+                && firstTip->property("shortcut").toString() == u"Ctrl+1"
+                && !firstTip->property("text").toString().isEmpty(),
+            "hovering a launcher shortcut number explains Ctrl+1");
+        launcher.setNumberKeysLeft(1u << 1);
+        settle(window);
+        check(firstTip->property("target").value<QObject*>() == firstSlot
+                && firstTip->property("shortcut").toString().isEmpty()
+                && firstTip->property("text").toString().contains(u"Ctrl+1"_s),
+            "hovering a taken launcher shortcut number explains the conflict");
+        launcher.setNumberKeysLeft(0);
+        QMouseEvent away(QEvent::MouseMove, QPointF(window->width() - 4, 4), window->mapToGlobal(QPointF(window->width() - 4, 4)),
+            Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &away);
+        settle(window);
+    } else {
+        check(false, "launcher shortcut HoverTip missing");
+    }
     const qreal iconX = icon->x();
     const qreal textX = text->x();
     launcher.setNumberHints(u"held"_s);
@@ -8794,12 +9071,41 @@ bool checkNumberColumn(QQmlEngine* qmlEngine, const QDir& output, int width)
     const QString expected = launcher.results()->at(2)->path;
     press(3, Qt::ControlModifier);
     check(opened == expected, "Ctrl+3 did not open the numbered result");
+    // Smooth wheel gliding keeps the left 1–9 slots visually steady via hintOffsetY
+    // instead of sliding and snapping every half-row, then returns hintOffsetY to 0.
+    if (auto* wheelScroll = window->contentItem()->findChild<QObject*>(u"boxWheelScroll"_s)) {
+        const auto* topRow = visualNamed(window->contentItem(), u"resultRow-0"_s);
+        const auto* topSlot = topRow ? visualNamed(const_cast<QQuickItem*>(topRow), u"resultNumberSlot"_s) : nullptr;
+        const qreal restingSlotY = topSlot ? topSlot->mapToScene(QPointF(0, 0)).y() : -1;
+        wheelScroll->setProperty("animate", true);
+        QMetaObject::invokeMethod(wheelScroll, "wheel", Q_ARG(QVariant, -240));
+        pump(60); // mid-glide
+        if (wheelScroll->property("running").toBool()) {
+            const int midFirst = window->property("firstShownRow").toInt();
+            auto* midRow = visualNamed(window->contentItem(), u"resultRow-%1"_s.arg(midFirst));
+            auto* midSlot = midRow ? visualNamed(midRow, u"resultNumberSlot"_s) : nullptr;
+            if (midSlot && restingSlotY >= 0) {
+                const qreal midY = midSlot->mapToScene(QPointF(0, 0)).y();
+                check(std::abs(midY - restingSlotY) <= 1.5,
+                    "shortcut number 1 drifted vertically during smooth wheel scroll");
+            }
+        }
+        pump(300); // settle after 200ms glide
+        settle(window, 2);
+        check(qFuzzyIsNull(window->property("hintOffsetY").toDouble()),
+            "hintOffsetY did not return to 0 after wheel scroll settled");
+        verifyRows();
+    }
     const double rowHeight = window->property("rowHeight").toDouble();
     view->setProperty("contentY", 11.25 * rowHeight);
     settle(window, 3);
     verifyRows();
     const int first = window->property("firstShownRow").toInt();
+    const int lastInView = window->property("lastRowInView").toInt();
     check(first > 0, "list did not scroll");
+    const QString expectedRange = u"%1–%2 / 24"_s.arg(first + 1).arg(lastInView + 1);
+    check(footerStatus && footerStatus->property("text").toString() == expectedRange,
+        "launcher footer shows the scrolled range while 1-9 stay shortcuts");
     opened.clear();
     const auto* target = launcher.results()->at(first + 1);
     const QString scrolled = target ? target->path : QString();
@@ -8807,17 +9113,120 @@ bool checkNumberColumn(QQmlEngine* qmlEngine, const QDir& output, int width)
     press(2, Qt::AltModifier);
     check(!scrolled.isEmpty() && opened == scrolled, "Alt+2 did not follow the scrolled numbering");
     check(saveGrab(window, output.filePath(u"number-column-scrolled.png"_s)), "scrolled results did not render");
-    query(u"编号_0"_s);
-    check(launcher.results()->count() > 0 && launcher.results()->count() < 24, "query did not replace the result set");
+    // Reproduces scrolling past page 1 and then replacing with a short list
+    // (e.g. Ctrl+A, Ctrl+X -> recent rows): Qt ListView retains a non-zero
+    // originY, which must never hide or offset the 1–9 hints or shortcuts.
+    query(u"编号_01"_s);
+    check(launcher.results()->count() == 1, "single-result query did not replace the scrolled result set");
     verifyRows();
-    // A programmatic refresh may retain the viewport. Its visible "1"
-    // still means that first visible result, rather than absolute row 1.
-    const int refreshedFirst = window->property("firstShownRow").toInt();
-    const auto* refreshed = launcher.results()->at(refreshedFirst);
-    const QString refreshedPath = refreshed ? refreshed->path : QString();
+    check(window->property("firstShownRow").toInt() == 0,
+        "shrinking a scrolled launcher list lost firstShownRow == 0 (originY drift)");
+    check(footerStatus && footerStatus->property("text").toString().isEmpty(),
+        "launcher footer stayed non-empty after returning to the top");
     opened.clear();
     press(1, Qt::AltModifier);
-    check(!refreshedPath.isEmpty() && opened == refreshedPath, "refreshed numbering did not match Alt+1");
+    check(opened == launcher.results()->at(0)->path, "Alt+1 failed after shrinking a scrolled list");
+    // Re-searching after an originY shift must keep row 0 numbered 1 (no blank leading rows).
+    query(u"编号"_s);
+    check(launcher.results()->count() == 24, "re-query did not restore 24 results");
+    verifyRows();
+    check(window->property("firstShownRow").toInt() == 0,
+        "re-query after scrolled shrink left leading rows unnumbered");
+    opened.clear();
+    press(1, Qt::AltModifier);
+    check(opened == launcher.results()->at(0)->path, "Alt+1 did not open row 0 after re-query");
+    // Scrolling a 6–9 row list in a 5-row viewport keeps every row's icon aligned.
+    // GitHub #425: Open in Terminal as administrator from context menu and Shift+click on the row's terminal button.
+    {
+        QString termFolder;
+        bool termAdmin = false;
+        int termCalls = 0;
+        launcher.setTerminalOpener([&](const QString& folder, bool asAdmin) {
+            termFolder = folder;
+            termAdmin = asAdmin;
+            ++termCalls;
+            return true;
+        });
+        const QVariantList menu = launcher.menuItems(0);
+        int idxTerminal = -1, idxTerminalAdmin = -1;
+        for (int i = 0; i < menu.size(); ++i) {
+            const int act = menu[i].toMap().value(u"action"_s, -1).toInt();
+            if (act == Launcher::OpenTerminal)
+                idxTerminal = i;
+            else if (act == Launcher::OpenTerminalAdmin)
+                idxTerminalAdmin = i;
+        }
+        check(idxTerminal >= 0 && idxTerminalAdmin == idxTerminal + 1,
+            "context menu offers Open in Terminal as administrator right below Open in Terminal");
+        const QString row0Path = launcher.results()->at(0)->path;
+        launcher.trigger(0, Launcher::OpenTerminal);
+        check(termCalls == 1 && termFolder == row0Path && !termAdmin,
+            "OpenTerminal opens the folder with normal rights");
+        launcher.trigger(0, Launcher::OpenTerminalAdmin);
+        check(termCalls == 2 && termFolder == row0Path && termAdmin,
+            "OpenTerminalAdmin opens the folder as administrator");
+        if (auto* row0 = visualNamed(window->contentItem(), u"resultRow-0"_s)) {
+            if (auto* termBtn = visualNamed(row0, u"terminalAction"_s)) {
+                const QPointF center = termBtn->mapToScene(QPointF(termBtn->width() / 2, termBtn->height() / 2));
+                const QPointF global = window->mapToGlobal(center);
+                auto clickBtn = [&](Qt::KeyboardModifiers mods) {
+                    QMouseEvent down(QEvent::MouseButtonPress, center, global, Qt::LeftButton, Qt::LeftButton, mods);
+                    QMouseEvent up(QEvent::MouseButtonRelease, center, global, Qt::LeftButton, Qt::NoButton, mods);
+                    QCoreApplication::sendEvent(window, &down);
+                    QCoreApplication::sendEvent(window, &up);
+                    settle(window);
+                };
+                clickBtn(Qt::NoModifier);
+                check(termCalls == 3 && termFolder == row0Path && !termAdmin,
+                    "clicking the terminal button opens normally");
+                clickBtn(Qt::ShiftModifier);
+                check(termCalls == 4 && termFolder == row0Path && termAdmin,
+                    "Shift+clicking the terminal button opens as administrator");
+            } else {
+                check(false, "terminalAction button missing on row 0");
+            }
+        }
+        // On a file inside a folder, OpenTerminalAdmin opens the file's parent folder as admin.
+        const QString folder1Path = QDir(temporary.path()).filePath(u"编号_01"_s);
+        const QString subFile = QDir(folder1Path).filePath(u"readme.txt"_s);
+        {
+            QFile f(subFile);
+            check(f.open(QIODevice::WriteOnly), "could not create fixture file for terminal admin check");
+            if (f.isOpen()) f.write("ok");
+        }
+        {
+            const auto files = index.index();
+            const auto lock = files->writeLock();
+            if (firstFolderId != kNoEntry)
+                files->add(firstFolderId, "readme.txt", 0);
+        }
+        launcher.setScope(Launcher::All);
+        query(u"readme.txt"_s);
+        check(launcher.results()->count() >= 1 && !launcher.results()->at(0)->isDir,
+            "fixture file not found for OpenTerminalAdmin parent-folder check");
+        if (launcher.results()->count() >= 1) {
+            launcher.trigger(0, Launcher::OpenTerminalAdmin);
+            check(termCalls == 5 && termAdmin
+                    && QDir::toNativeSeparators(termFolder).compare(QDir::toNativeSeparators(folder1Path), Qt::CaseInsensitive) == 0,
+                "OpenTerminalAdmin on a file opens its parent folder as administrator");
+        }
+        launcher.setScope(Launcher::Folders);
+        query(u"编号"_s);
+    }
+    launcher.setMaxRows(5);
+    query(u"编号_0"_s);
+    check(launcher.results()->count() == 9, "expected 9 results for 5-row alignment check");
+    view->setProperty("contentY", view->property("originY").toDouble() + 2.0 * rowHeight);
+    settle(window, 3);
+    verifyRows();
+    if (auto* row1 = visualNamed(window->contentItem(), u"resultRow-1"_s)) {
+        auto* row2 = visualNamed(window->contentItem(), u"resultRow-2"_s);
+        auto* icon1 = visualNamed(row1, u"resultIcon"_s);
+        auto* icon2 = row2 ? visualNamed(row2, u"resultIcon"_s) : nullptr;
+        check(icon1 && icon2 && icon1->x() == icon2->x(),
+            "scrolling a <=9-row list shifted unnumbered rows horizontally");
+    }
+    launcher.setMaxRows(8);
     query(u"没有这个结果145"_s);
     opened.clear();
     press(1, Qt::AltModifier);
@@ -9078,6 +9487,220 @@ bool checkSearchWorkload(QQmlEngine* qml, const QDir& output)
     window->hide();
     report.insert(u"passed"_s, passed);
     QFile result(output.filePath(u"search-workload.json"_s));
+    if (!result.open(QIODevice::WriteOnly) || result.write(QJsonDocument(report).toJson()) < 0) return false;
+    return passed;
+}
+
+// --excluded-recovery: production Main.qml/Panel.qml/Launcher/SearchEngine
+// covering excluded-folder discovery & one-off walk, everythingCompat hidden
+// matches, skipped file reveal / auto-unhide, and typed excluded paths.
+bool checkExcludedRecovery(QQmlEngine* qml, const QDir& output)
+{
+    QTemporaryDir temporary;
+    if (!temporary.isValid()) return false;
+    const QString excludedRoot = QDir::toNativeSeparators(temporary.filePath(u"excluded_temp"_s));
+    const QString otherExcluded = QDir::toNativeSeparators(temporary.filePath(u"excluded_other"_s));
+    const QString targetFile = QDir::toNativeSeparators(
+        temporary.filePath(u"excluded_temp/claude/f3848bdcdc85cc89/ac8bbb5d/scratchpad/members-agy.png"_s));
+    const QString indexedBak = QDir::toNativeSeparators(temporary.filePath(u"indexed/report.bak"_s));
+    const QString indexedDoc = QDir::toNativeSeparators(temporary.filePath(u"indexed/notes.txt"_s));
+    QDir().mkpath(QFileInfo(targetFile).absolutePath());
+    QDir().mkpath(otherExcluded);
+    QDir().mkpath(QFileInfo(indexedBak).absolutePath());
+    for (const QString& p : {targetFile, indexedBak, indexedDoc}) {
+        QFile f(p);
+        if (!f.open(QIODevice::WriteOnly) || f.write("fixture\n") < 0) return false;
+    }
+
+    const auto ensureFolder = [](FileIndex& files, const QString& nativePath) {
+        const QStringList parts = QDir::toNativeSeparators(nativePath).split(u'\\', Qt::SkipEmptyParts);
+        if (parts.isEmpty()) return kNoEntry;
+        EntryId cur = kNoEntry;
+        const std::string rootName = parts.first().toUtf8().toStdString();
+        for (const EntryId r : files.roots()) {
+            if (files.name(r) == rootName) {
+                cur = r;
+                break;
+            }
+        }
+        if (cur == kNoEntry)
+            cur = files.addRoot(rootName);
+        for (qsizetype i = 1; i < parts.size(); ++i) {
+            const std::string seg = parts[i].toUtf8().toStdString();
+            EntryId child = files.findChild(cur, seg);
+            if (child == kNoEntry)
+                child = files.add(cur, seg, EntryFlag::Directory);
+            cur = child;
+        }
+        return cur;
+    };
+
+    IndexService::Options opts;
+    opts.content.enabled = false;
+    IndexService index(temporary.filePath(u"index"_s), opts);
+    {
+        const auto files = index.index();
+        const auto lock = files->writeLock();
+        const EntryId indexedDir = ensureFolder(*files, temporary.filePath(u"indexed"_s));
+        files->add(indexedDir, "report.bak", 0);
+        files->add(indexedDir, "notes.txt", 0);
+    }
+
+    AppCatalog apps;
+    SystemCatalog places;
+    apps.setApps(std::make_shared<const AppList>());
+    places.setPlaces(std::make_shared<const PlaceList>());
+    History history(temporary.filePath(u"history.tsv"_s));
+    SearchEngine search(&index, &apps, &places);
+    Launcher launcher(&index, &apps, &places, &search, &history);
+    launcher.setContentOptions(false, {u"txt"_s}, ContentSizeLimits{}, false, false);
+    launcher.setExcludedFolders({excludedRoot, otherExcluded}, {u"node_modules"_s}, false);
+    launcher.setExcludedFiles({u"bak"_s}, {u"~$*"_s});
+
+    int excludedSettingsCalls = 0;
+    QObject::connect(&launcher, &Launcher::excludedSettingsRequested, &launcher, [&] { ++excludedSettingsCalls; });
+
+    ClipStore store(temporary.filePath(u"clipboard"_s));
+    if (!store.open(QDateTime::currentMSecsSinceEpoch())) return false;
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Launcher"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(qml, u"WinShun"_s, u"Main"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {u"launcher"_s, QVariant::fromValue(&launcher)}, {u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"frame"_s, QVariant::fromValue(&frame)}, {u"placement"_s, QVariant::fromValue(&placement)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { say(component.errorString()); return false; }
+    window->create();
+    launcher.setWindow(window);
+    frame.setWindow(window);
+    placement.setWindow(window);
+    showOffScreen(window);
+
+    const auto wait = [](int ms) {
+        QEventLoop loop;
+        QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+        loop.exec();
+    };
+    const auto waitFor = [&](const auto& ready) {
+        QElapsedTimer timer;
+        timer.start();
+        while (!ready() && timer.elapsed() < 15000) wait(10);
+        return ready();
+    };
+    const auto findHint = [&](const QString& kind) -> QVariantMap {
+        for (const QVariant& h : launcher.leftOutHints()) {
+            const QVariantMap m = h.toMap();
+            if (m.value(u"kind"_s).toString() == kind) return m;
+        }
+        return {};
+    };
+    const auto hasPath = [&](const QString& path) {
+        return launcher.results()->indexOf(path) >= 0;
+    };
+
+    QJsonObject report;
+    bool passed = true;
+    const auto check = [&](const QString& name, bool okay) {
+        report.insert(name, okay);
+        passed = passed && okay;
+        if (!okay) say(u"excluded recovery failed: "_s + name);
+    };
+
+    // 1. Default mode: searching members-agy.png gives 0 rows + excluded-folders hint #0.
+    launcher.setScope(Launcher::All);
+    launcher.setQuery(u"members-agy.png"_s);
+    check(u"empty_search_settled"_s, waitFor([&] {
+        return !launcher.searching() && window->property("showEmptyState").toBool() && !launcher.leftOutHints().isEmpty();
+    }));
+    const QVariantList emptyHints = launcher.leftOutHints();
+    check(u"empty_zero_rows"_s, launcher.results()->count() == 0);
+    check(u"excluded_hint_first"_s, !emptyHints.isEmpty() && emptyHints.first().toMap().value(u"kind"_s) == u"excluded-folders"_s);
+    check(u"excluded_hint_has_settings"_s, !emptyHints.isEmpty() && emptyHints.first().toMap().value(u"kind2"_s) == u"excluded-settings"_s);
+    wait(60);
+    check(u"empty_screenshot"_s, saveGrab(window, output.filePath(u"excluded-empty.png"_s)));
+
+    // Clicking settings link opens ExcludedPaths settings.
+    launcher.searchLeftOut(u"excluded-settings"_s);
+    check(u"settings_link_fires"_s, excludedSettingsCalls == 1);
+
+    // Taking the excluded-folders hint walks disk and finds members-agy.png.
+    launcher.searchLeftOut(u"excluded-folders"_s);
+    check(u"walk_finds_target"_s, waitFor([&] {
+        return !launcher.busy() && hasPath(targetFile);
+    }));
+    wait(60);
+    check(u"found_screenshot"_s, saveGrab(window, output.filePath(u"excluded-found.png"_s)));
+
+    // 2. Typing an excluded folder path directly offers walking that folder + settings.
+    launcher.setQuery(excludedRoot + u"\\members-agy.png"_s);
+    check(u"typed_excluded_settled"_s, waitFor([&] {
+        return !launcher.searching() && !findHint(u"folder:"_s + excludedRoot).isEmpty();
+    }));
+    const QVariantMap folderHint = findHint(u"folder:"_s + excludedRoot);
+    check(u"typed_excluded_hint_settings"_s, folderHint.value(u"kind2"_s) == u"excluded-settings"_s);
+    launcher.searchLeftOut(u"folder:"_s + excludedRoot);
+    check(u"typed_excluded_walk_finds"_s, waitFor([&] { return !launcher.busy() && hasPath(targetFile); }));
+
+    // 3. Skipped extension: typing report.bak auto-unhides; typing report offers excluded-files reveal.
+    launcher.setQuery(u"report.bak"_s);
+    check(u"typed_skipped_ext_found"_s, waitFor([&] { return !launcher.searching() && hasPath(indexedBak); }));
+    launcher.setQuery(u"report"_s);
+    check(u"skipped_files_hint_offered"_s, waitFor([&] {
+        return !launcher.searching() && !findHint(u"excluded-files"_s).isEmpty();
+    }));
+    check(u"skipped_files_hidden_initially"_s, !hasPath(indexedBak));
+    launcher.searchLeftOut(u"excluded-files"_s);
+    check(u"skipped_files_revealed"_s, waitFor([&] { return !launcher.busy() && hasPath(indexedBak); }));
+
+    // 4. Panel empty state shows recovery hint cleanly.
+    launcher.setPanel(true);
+    window->resize(760, 500);
+    launcher.setQuery(u"members-agy.png"_s);
+    check(u"panel_empty_hint"_s, waitFor([&] {
+        return !launcher.searching() && launcher.results()->count() == 0 && !findHint(u"excluded-folders"_s).isEmpty();
+    }));
+    wait(60);
+    check(u"panel_screenshot"_s, saveGrab(window, output.filePath(u"excluded-panel-empty.png"_s)));
+    // Panel folder filter inside an excluded subtree also offers walking that subtree directly.
+    const QString excludedSub = QDir::toNativeSeparators(temporary.filePath(u"excluded_temp/claude"_s));
+    launcher.setFolderFilter(excludedSub);
+    check(u"panel_excluded_sub_hint"_s, waitFor([&] {
+        return !launcher.searching() && !findHint(u"folder:"_s + excludedSub).isEmpty();
+    }));
+    launcher.searchLeftOut(u"folder:"_s + excludedSub);
+    check(u"panel_excluded_sub_walk_finds"_s, waitFor([&] { return !launcher.busy() && hasPath(targetFile); }));
+    launcher.setFolderFilter({});
+    launcher.setPanel(false);
+
+    // 5. everythingCompat = true: in-memory HiddenFolders count + instant reveal + typed-path auto-unhide.
+    const QString fullExcluded = QString::fromStdWString(Settings::excludedCompareKey(excludedRoot));
+    {
+        IndexService::Options compatOpts;
+        compatOpts.content.enabled = false;
+        compatOpts.hidden.excludedPaths = {Settings::excludedCompareKey(excludedRoot)};
+        index.setOptions(compatOpts);
+        const auto files = index.index();
+        const auto lock = files->writeLock();
+        const EntryId sp = ensureFolder(*files, fullExcluded + u"\\claude\\f3848bdcdc85cc89\\ac8bbb5d\\scratchpad"_s);
+        files->add(sp, "members-agy.png", 0);
+    }
+    const QString fullTarget = QString::fromStdWString(Settings::excludedCompareKey(targetFile));
+    launcher.setQuery({});
+    launcher.setExcludedFolders({excludedRoot, otherExcluded}, {u"node_modules"_s}, true);
+    launcher.setQuery(u"members-agy.png"_s);
+    check(u"compat_hidden_hint_offered"_s, waitFor([&] {
+        return !launcher.searching() && launcher.results()->count() == 0 && !findHint(u"hidden-folders"_s).isEmpty();
+    }));
+    launcher.searchLeftOut(u"hidden-folders"_s);
+    check(u"compat_hidden_revealed"_s, waitFor([&] { return !launcher.busy() && hasPath(fullTarget); }));
+    launcher.setQuery(fullExcluded + u"\\members-agy.png"_s);
+    check(u"compat_typed_path_auto_unhides"_s, waitFor([&] { return !launcher.searching() && hasPath(fullTarget); }));
+
+    window->hide();
+    report.insert(u"passed"_s, passed);
+    QFile result(output.filePath(u"excluded-recovery.json"_s));
     if (!result.open(QIODevice::WriteOnly) || result.write(QJsonDocument(report).toJson()) < 0) return false;
     return passed;
 }
@@ -9642,12 +10265,15 @@ int runResults(const QStringList& args)
     if (args.contains(u"--clipboard-crashed-reading"_s)) // its warning when it gives up is expected
         return checkClipboardCrashedReading() ? 0 : 4;
     if (const qsizetype at = args.indexOf(u"--terminal-launch"_s); at >= 0 && at + 2 < args.size()) {
-        // 在终端中打开 for real (GitHub #386): <id> <folder> [command]. Only
+        // 在终端中打开 for real (GitHub #386, #425): <id> <folder> [command] [--admin]. Only
         // started here; the script that runs it finds the new shell, checks
         // its folder and closes it.
-        const QString id = args[at + 1], folder = args[at + 2], command = args.value(at + 3);
+        const bool asAdmin = args.contains(u"--admin"_s);
+        const QString id = args[at + 1], folder = args[at + 2];
+        const QString candidate = args.value(at + 3);
+        const QString command = candidate == u"--admin"_s ? QString() : candidate;
         auto result = std::make_shared<std::atomic<int>>(-1);
-        shell::openTerminalIn(id, command, folder, [result](bool ok) { *result = ok ? 1 : 0; });
+        shell::openTerminalIn(id, command, folder, [result](bool ok) { *result = ok ? 1 : 0; }, asAdmin);
         QElapsedTimer waited;
         waited.start();
         while (*result < 0 && waited.elapsed() < 10000)
@@ -9676,6 +10302,10 @@ int runResults(const QStringList& args)
     if (args.contains(u"--search-workload"_s)) {
         engine.addImageProvider(u"thumbnail"_s, new ThumbnailProvider);
         return checkSearchWorkload(&engine, out) ? std::min(g_warnings, 100) : 4;
+    }
+    if (args.contains(u"--excluded-recovery"_s)) {
+        engine.addImageProvider(u"thumbnail"_s, new ThumbnailProvider);
+        return checkExcludedRecovery(&engine, out) ? std::min(g_warnings, 100) : 4;
     }
     ResultModel results;
     results.setThumbnails(false); // synthetic paths: no thumbnail handler or real file access
