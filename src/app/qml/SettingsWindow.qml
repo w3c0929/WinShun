@@ -2854,15 +2854,15 @@ Window {
                     }
 
                     title: qsTr("索引的文件夹")
-                    keywords: qsTr("文件夹;添加文件夹;工作文件夹;桌面;文档;下载;立即核对;folders").split(";")
+                    keywords: qsTr("文件夹;添加文件夹;手动输入;环境变量;工作文件夹;桌面;文档;下载;立即核对;folders").split(";")
                     values: window.editor.folders.map(folder => folder.path)
                     description: window.editor.foldersInEffect
-                                 ? qsTr("只有这些文件夹里的文件能搜到；也可以从资源管理器把文件夹拖到这里")
+                                 ? qsTr("只有这些文件夹里的文件能搜到；可手动输入（支持 %USERPROFILE% 等环境变量）或拖入文件夹")
                                  : qsTr("普通文件夹已包含在整盘索引中；mklink 创建的链接文件夹可在这里额外添加，管理员和索引服务模式也能用。")
 
                     FlatButton {
                         dpr: window.dpr
-                        text: qsTr("添加文件夹…")
+                        text: qsTr("选择文件夹…")
                         glyph: "" // Add
                         onClicked: {
                             const path = window.editor.pickFolder(qsTr("选择要索引的文件夹"))
@@ -2872,6 +2872,27 @@ Window {
                     }
 
                     body: [
+                        Row {
+                            width: parent.width
+                            spacing: 8
+
+                            InputBox {
+                                id: indexFolderInput
+                                objectName: "indexFolderInput"
+                                dpr: window.dpr
+                                width: parent.width - addIndexFolderButton.width - 8
+                                placeholder: qsTr("输入或粘贴文件夹路径，例如 D:\\Work 或 %USERPROFILE%\\Documents")
+                                onTextChanged: if (foldersRow.problem.length > 0) { foldersRow.problem = ""; foldersRow.networkPath = "" }
+                                onAccepted: if (foldersRow.add(text)) clear()
+                            }
+                            FlatButton {
+                                id: addIndexFolderButton
+                                dpr: window.dpr
+                                text: qsTr("添加")
+                                enabled: indexFolderInput.text.trim().length > 0
+                                onClicked: if (foldersRow.add(indexFolderInput.text)) indexFolderInput.clear()
+                            }
+                        },
                         Text {
                             visible: window.editor.foldersInEffect && window.editor.folders.length === 0
                             width: parent.width
@@ -2991,22 +3012,64 @@ Window {
 
                 SettingRow {
                     id: excludedFoldersRow
+                    property string problem
+                    function add(text) {
+                        const problem = window.editor.addExcludedPath(text)
+                        excludedFoldersRow.problem = problem
+                        return problem.length === 0
+                    }
+
                     title: qsTr("不搜索的文件夹")
-                    keywords: qsTr("排除;忽略;隐藏;黑名单;exclude").split(";")
+                    keywords: qsTr("排除;忽略;隐藏;黑名单;手动输入;环境变量;exclude").split(";")
                     values: window.editor.excludedPaths
                     // GitHub #351: indexed all the same for the programs asking over the Everything interface.
                     description: window.editor.everythingCompat
-                        ? qsTr("这些文件夹里的内容都不出现在结果里。“让其他软件把 Win顺 当作 Everything 搜索”开着时仍建索引，其他软件照样查得到（如 Total Commander 的文件夹大小）")
-                        : qsTr("这些文件夹里的内容都不出现在结果里")
+                        ? qsTr("这些文件夹里的内容都不出现在结果里，支持 %TEMP% 等环境变量。“让其他软件把 Win顺 当作 Everything 搜索”开着时仍建索引，其他软件照样查得到（如 Total Commander 的文件夹大小）")
+                        : qsTr("这些文件夹里的内容都不出现在结果里，支持手动输入和 %TEMP% 等环境变量")
 
                     FlatButton {
                         dpr: window.dpr
-                        text: qsTr("添加文件夹")
+                        text: qsTr("选择文件夹…")
                         glyph: "" // Add
-                        onClicked: window.editor.addExcludedFolder()
+                        onClicked: {
+                            const path = window.editor.pickFolder(qsTr("选择不需要搜索的文件夹"))
+                            if (path.length > 0)
+                                excludedFoldersRow.add(path)
+                        }
                     }
 
-                    body: [Rectangle {
+                    body: [
+                        Row {
+                            width: parent.width
+                            spacing: 8
+
+                            InputBox {
+                                id: excludedFolderInput
+                                objectName: "excludedFolderInput"
+                                dpr: window.dpr
+                                width: parent.width - addExcludedFolderButton.width - 8
+                                placeholder: qsTr("输入或粘贴文件夹路径，例如 D:\\Cache 或 %TEMP%")
+                                onTextChanged: if (excludedFoldersRow.problem.length > 0) excludedFoldersRow.problem = ""
+                                onAccepted: if (excludedFoldersRow.add(text)) clear()
+                            }
+                            FlatButton {
+                                id: addExcludedFolderButton
+                                dpr: window.dpr
+                                text: qsTr("添加")
+                                enabled: excludedFolderInput.text.trim().length > 0
+                                onClicked: if (excludedFoldersRow.add(excludedFolderInput.text)) excludedFolderInput.clear()
+                            }
+                        },
+                        Text {
+                            visible: excludedFoldersRow.problem.length > 0
+                            width: parent.width
+                            text: excludedFoldersRow.problem
+                            textFormat: Text.PlainText
+                            color: Theme.danger
+                            font.pixelSize: Theme.fontCaption
+                            wrapMode: Text.Wrap
+                        },
+                        Rectangle {
                         width: parent.width
                         height: Math.max(pathList.implicitHeight, 40)
                         radius: Theme.controlRadius
@@ -3034,6 +3097,7 @@ Window {
 
                                     required property int index
                                     required property string modelData
+                                    readonly property string resolvedPath: window.editor.resolveEnvPath(modelData)
 
                                     width: pathList.width
                                     height: 42
@@ -3053,6 +3117,7 @@ Window {
                                         size: 16
                                     }
                                     Text {
+                                        id: excludedPathLabel
                                         anchors.left: folderIcon.right
                                         anchors.leftMargin: 10
                                         anchors.right: removePath.left
@@ -3063,6 +3128,12 @@ Window {
                                         color: Theme.text
                                         font.pixelSize: Theme.fontBody
                                         elide: Text.ElideMiddle
+
+                                        HoverHandler { id: excludedPathHover }
+                                        HoverTip {
+                                            target: excludedPathHover.hovered && pathRow.resolvedPath.length > 0 ? excludedPathLabel : null
+                                            text: qsTr("当前展开为：%1").arg(pathRow.resolvedPath)
+                                        }
                                     }
                                     FlatButton {
                                         dpr: window.dpr
@@ -3073,7 +3144,10 @@ Window {
                                         implicitHeight: 32
                                         flat: true
                                         text: qsTr("移除")
-                                        onClicked: window.editor.removeExcludedPath(pathRow.index)
+                                        onClicked: {
+                                            excludedFoldersRow.problem = ""
+                                            window.editor.removeExcludedPath(pathRow.index)
+                                        }
                                     }
                                 }
                             }
@@ -4308,6 +4382,22 @@ Window {
                 }
 
                 SettingRow {
+                    objectName: "defaultSystemMenuRow"
+                    title: qsTr("默认使用系统右键菜单")
+                    keywords: qsTr("右键;系统菜单;右键菜单;比较文件;更多选项;Shift;context menu;shell").split(";")
+                    description: window.editor.defaultSystemMenu
+                                 ? qsTr("在文件或文件夹上右键直接打开系统菜单，Shift+右键 打开 Win顺 菜单；应用、插件等仍打开 Win顺 菜单")
+                                 : qsTr("在文件或文件夹上右键打开 Win顺 菜单，Shift+右键 打开系统菜单；开启后互换")
+
+                    ToggleSwitch {
+                        objectName: "defaultSystemMenuToggle"
+                        dpr: window.dpr
+                        checked: window.editor.defaultSystemMenu
+                        onToggled: (on) => window.editor.defaultSystemMenu = on
+                    }
+                }
+
+                SettingRow {
                     objectName: "favoriteFolderTab"
                     title: qsTr("选中收藏文件夹时按 Tab")
                     keywords: qsTr("Tab;Shift+Tab;收藏;文件夹;范围;键盘;favorite;keyboard").split(";")
@@ -4843,7 +4933,13 @@ Window {
                             return qsTr("任务栏上不放 Win顺，用快捷键打开")
                         switch (window.editor.searchBoxHidden) {
                         case "":
-                            return qsTr("图标居中时在任务栏最左边，靠左时在托盘图标左边；点它直接打字")
+                            if (window.editor.searchBoxForm === "box")
+                                return window.editor.taskbarSearchBoxSide === "tray"
+                                    ? qsTr("已放到托盘图标左边，点它直接打字")
+                                    : qsTr("已放到任务栏上，点它直接打字")
+                            return window.editor.taskbarSearchBoxSide === "tray"
+                                ? qsTr("已放到托盘图标左边，点它打开搜索")
+                                : qsTr("已放到任务栏上，点它打开搜索")
                         case "noroom":
                             return qsTr("任务栏太挤，放不下：取消固定几个图标，或改用“固定图标”")
                         case "unreadable":
@@ -4891,20 +4987,32 @@ Window {
                     // Under 搜索框 chosen above: how wide it may be, as
                     // Windows' own search has it (Settings › Taskbar ›
                     // Search). Narrower ones still where that does not fit.
+                    readonly property var styles: ["box", "label", "icon"]
+                    readonly property int chosenRank: Math.max(0, styles.indexOf(window.editor.taskbarSearchBoxStyle))
+                    readonly property int actualRank: styles.indexOf(window.editor.searchBoxForm)
+                    readonly property bool narrowed: window.editor.searchBoxShown && actualRank > chosenRank
                     shown: taskbarButtonRow.boxes && taskbarButtonRow.boxOn
                     title: qsTr("搜索框样式")
                     keywords: qsTr("样式;仅图标;只显示图标;图标和标签;标签;放大镜;按钮;搜索框;icon;label").split(";")
-                    description: window.editor.taskbarSearchBoxStyle === "icon"
-                                 ? qsTr("一个搜索图标，像任务栏上的按钮")
-                                 : window.editor.taskbarSearchBoxStyle === "label"
-                                   ? qsTr("图标加“搜索”两个字，点它打开搜索")
-                                   : qsTr("点它直接打字；任务栏挤时自动变窄")
+                    description: {
+                        if (narrowed) {
+                            const shownName = window.editor.searchBoxForm === "icon" ? qsTr("仅图标") : qsTr("图标和标签")
+                            return window.editor.taskbarSearchBoxSide === "tray"
+                                ? qsTr("当前托盘旁空隙不够，已自动收窄为“%1”；可改选“自动”位置或减少任务栏图标").arg(shownName)
+                                : qsTr("当前任务栏空隙不够，已自动收窄为“%1”；减少几个任务栏图标后会自动展开").arg(shownName)
+                        }
+                        return window.editor.taskbarSearchBoxStyle === "icon"
+                               ? qsTr("一个搜索图标，像任务栏上的按钮")
+                               : window.editor.taskbarSearchBoxStyle === "label"
+                                 ? qsTr("图标加“搜索”两个字，点它打开搜索")
+                                 : qsTr("点它直接打字；任务栏挤时自动变窄")
+                    }
 
                     ScopeTabs {
-                        readonly property var styles: ["box", "label", "icon"]
+                        dpr: window.dpr
                         labels: [qsTr("搜索框"), qsTr("图标和标签"), qsTr("仅图标")]
-                        current: Math.max(0, styles.indexOf(window.editor.taskbarSearchBoxStyle))
-                        onActivated: (index) => window.editor.taskbarSearchBoxStyle = styles[index]
+                        current: taskbarStyleRow.chosenRank
+                        onActivated: (index) => window.editor.taskbarSearchBoxStyle = taskbarStyleRow.styles[index]
                     }
                 }
 
@@ -4923,6 +5031,7 @@ Window {
                                  : qsTr("任务栏图标居中时在任务栏最左边，靠左时在托盘图标左边")
 
                     ScopeTabs {
+                        dpr: window.dpr
                         readonly property var sides: ["auto", "tray"]
                         labels: [qsTr("自动"), qsTr("托盘旁")]
                         current: Math.max(0, sides.indexOf(window.editor.taskbarSearchBoxSide))
@@ -5374,36 +5483,93 @@ Window {
                     }
                 }
 
+                SettingRow {
+                    id: folderMenuFavoriteKindsRow
+                    sub: true
+                    readonly property bool active: window.editor.folderMenu && window.editor.folderMenuFavorites
+                    title: qsTr("收藏夹里显示的类型")
+                    description: qsTr("至少保留一项；未勾选的类型不再出现，应用也可在菜单里直接展开或折叠")
+                    keywords: qsTr("文件夹菜单;收藏夹;收藏;类型;隐藏;过滤;文件夹;文件;应用;系统设置;自定义命令;折叠;展开;favorites;apps;hide;fold;collapse").split(";")
+
+                    body: Flow {
+                        objectName: "folderMenuFavoriteKindChoices"
+                        width: parent.width
+                        spacing: 4
+                        Repeater {
+                            model: [
+                                { title: qsTr("文件夹"), setting: "folderMenuFavoriteFolders" },
+                                { title: qsTr("文件"), setting: "folderMenuFavoriteFiles" },
+                                { title: qsTr("应用"), setting: "folderMenuFavoriteApps" },
+                                { title: qsTr("系统设置"), setting: "folderMenuFavoritePlaces" },
+                                { title: qsTr("自定义命令"), setting: "folderMenuFavoriteCommands" }
+                            ]
+                            delegate: ScopeTabs {
+                                required property var modelData
+                                required property int index
+                                objectName: "folderMenuFavoriteKind" + index
+                                dpr: window.dpr
+                                multiSelect: true
+                                disabled: folderMenuFavoriteKindsRow.active ? [] : [0]
+                                labels: [modelData.title]
+                                checkedIndices: window.editor[modelData.setting] ? [0] : []
+                                onToggled: (index, on) => window.editor[modelData.setting] = on
+                            }
+                        }
+                    }
+                }
+
                 Repeater { // the menu's order: favorites, recent, open
                     model: [
-                        { title: qsTr("直接显示收藏夹"), words: qsTr("文件夹菜单;收藏;收藏夹;数量;更多;展开;inline;favorites"),
+                        { title: qsTr("收藏夹显示方式"), words: qsTr("文件夹菜单;直接显示收藏夹;直接显示;收藏;收藏夹;一级;二级;平铺;全部;数量;更多;展开;折叠;Listary;inline;favorites"),
                           group: "folderMenuFavorites", setting: "folderMenuFavoritesInline" },
-                        { title: qsTr("直接显示最近的文件夹"), words: qsTr("文件夹菜单;最近;已打开;数量;更多;展开;inline;recent;folders"),
+                        { title: qsTr("最近的文件夹显示方式"), words: qsTr("文件夹菜单;直接显示最近的文件夹;直接显示;最近;一级;二级;平铺;全部;数量;更多;展开;折叠;Listary;inline;recent;folders"),
                           group: "folderMenuRecent", setting: "folderMenuRecentInline" },
-                        { title: qsTr("直接显示已打开的文件夹"), words: qsTr("文件夹菜单;最近;已打开;数量;更多;展开;inline;recent;folders"),
+                        { title: qsTr("已打开的文件夹显示方式"), words: qsTr("文件夹菜单;直接显示已打开的文件夹;直接显示;已打开;其他窗口;一级;二级;平铺;全部;数量;更多;展开;折叠;Listary;inline;open;windows;folders"),
                           group: "folderMenuWindows", setting: "folderMenuWindowsInline" }
                     ]
                     delegate: SettingRow {
                         id: inlineFoldersRow
                         required property var modelData
                         readonly property int count: window.editor[modelData.setting]
+                        readonly property bool active: window.editor.folderMenu && window.editor[modelData.group]
+                        property int lastLimit: count > 0 ? count : 5
+                        onCountChanged: if (count > 0) lastLimit = count
                         sub: true
                         title: modelData.title
-                        description: qsTr("0：收进二级菜单；1–10：直接显示前几个，其余放进“更多…”")
+                        description: count === 0
+                                     ? qsTr("收进二级菜单，保持顶层菜单紧凑")
+                                     : count < 0
+                                       ? qsTr("全部直接列在顶层菜单，过多时可滚动")
+                                       : qsTr("顶层直接显示前 %1 个，其余收进“更多…”").arg(count)
                         keywords: modelData.words.split(";")
+                        ScopeTabs {
+                            objectName: inlineFoldersRow.modelData.setting + "Mode"
+                            anchors.verticalCenter: parent.verticalCenter
+                            dpr: window.dpr
+                            disabled: inlineFoldersRow.active ? [] : [0, 1, 2]
+                            labels: [qsTr("二级菜单"), qsTr("前几个"), qsTr("全部")]
+                            current: inlineFoldersRow.count === 0 ? 0 : inlineFoldersRow.count < 0 ? 2 : 1
+                            onActivated: (index) => {
+                                if (index === 0) window.editor[inlineFoldersRow.modelData.setting] = 0
+                                else if (index === 2) window.editor[inlineFoldersRow.modelData.setting] = -1
+                                else window.editor[inlineFoldersRow.modelData.setting] = inlineFoldersRow.lastLimit
+                            }
+                        }
                         InputBox {
                             objectName: inlineFoldersRow.modelData.setting
-                            enabled: window.editor.folderMenu && window.editor[inlineFoldersRow.modelData.group]
-                            width: 72
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: inlineFoldersRow.count > 0
+                            enabled: inlineFoldersRow.active
+                            width: 56
                             dpr: window.dpr
                             horizontalAlignment: TextInput.AlignHCenter
-                            text: String(inlineFoldersRow.count)
-                            validator: IntValidator { bottom: 0; top: 10 }
+                            text: String(Math.max(1, inlineFoldersRow.count))
+                            validator: IntValidator { bottom: 1; top: 20 }
                             onEditingFinished: {
                                 const count = parseInt(text, 10)
-                                if (!isNaN(count) && count >= 0 && count <= 10)
+                                if (!isNaN(count) && count >= 1 && count <= 20)
                                     window.editor[inlineFoldersRow.modelData.setting] = count
-                                text = Qt.binding(() => String(inlineFoldersRow.count))
+                                text = Qt.binding(() => String(Math.max(1, inlineFoldersRow.count)))
                             }
                         }
                     }
@@ -5466,16 +5632,16 @@ Window {
                     property bool copied: false
                     property bool confirming: false // Opus runs: it restarts after a second click
                     shown: window.editor.folderMenu && window.editor.fileManagers.indexOf("dopus") >= 0
-                    title: qsTr("在 Directory Opus 的空白处双击")
-                    keywords: qsTr("双击;空白;文件夹菜单;Directory Opus;Opus;dopus").split(";")
+                    title: qsTr("在 Directory Opus 的空白处也弹出")
+                    keywords: qsTr("双击;中键;空白;此电脑;文件夹菜单;Directory Opus;Opus;dopus").split(";")
                     description: {
                         let text
                         switch (setup) {
                         case "on":
-                            text = qsTr("已在 Opus 的设置里加好")
+                            text = qsTr("已在 Opus 的设置里加好，按“触发方式”弹出")
                             break
                         case "stale":
-                            text = qsTr("Opus 里设的是别处的 Win顺，更新一下就好")
+                            text = qsTr("Opus 里设的是别处或旧版 Win顺 的命令（旧版的不支持中键，在“此电脑”里也不弹），更新一下就好")
                             break
                         case "off":
                             text = qsTr("要在 Opus 的设置里加一条命令，Win顺 可以替你加")
@@ -5641,7 +5807,7 @@ Window {
                     id: dialogBarRow
                     title: qsTr("对话框旁的搜索框")
                     keywords: qsTr("对话框;另存为;打开文件;保存").split(";")
-                    unlocks: [dialogBarPlaceRow]
+                    unlocks: [dialogBarPlaceRow, dialogBarSuggestionsRow]
                     description: qsTr("在“打开”“另存为”旁搜文件夹和文件，选中后直接转过去")
 
                     ToggleSwitch {
@@ -5663,6 +5829,21 @@ Window {
                         labels: [qsTr("自动"), qsTr("下方"), qsTr("左边"), qsTr("右边")]
                         current: Math.max(0, window.dialogBarPlaces.indexOf(window.editor.dialogBarPlace))
                         onActivated: (index) => window.editor.dialogBarPlace = window.dialogBarPlaces[index]
+                    }
+                }
+
+                SettingRow {
+                    id: dialogBarSuggestionsRow
+                    sub: true
+                    shown: window.editor.dialogBar
+                    title: qsTr("点进来就列出常用位置")
+                    keywords: qsTr("最近;常用;隐私;建议;列表;对话框").split(";")
+                    description: qsTr("文件管理器开着的、收藏的和最近用过的文件夹。关掉后打字才列出，按 ↓ 也能列出")
+
+                    ToggleSwitch {
+                        dpr: window.dpr
+                        checked: window.editor.dialogBarSuggestions
+                        onToggled: (on) => window.editor.dialogBarSuggestions = on
                     }
                 }
 

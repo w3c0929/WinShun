@@ -475,8 +475,13 @@ Window {
         restoreMode: Binding.RestoreNone
     }
     minimumHeight: panel ? 360 : 0
+    // Opened to be put in front (App::showLauncher): drawn as an active window
+    // from its first frame, not one frame opaque and then faded to Mica.
+    // Until it is active, or for a second should another window keep the front.
+    property bool arriving: false
+    Timer { interval: 1000; running: window.arriving; onTriggered: window.arriving = false }
     // See-through to Mica, as the settings window (see there).
-    color: Theme.backdrop && SystemTheme.materials && (window.active || SystemTheme.uiStyle === "liquid") ? "transparent" : Theme.background
+    color: Theme.backdrop && SystemTheme.materials && (window.active || window.arriving || SystemTheme.uiStyle === "liquid") ? "transparent" : Theme.background
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     title: qsTr("Win顺")
 
@@ -761,6 +766,16 @@ Window {
     // (logical): where to put it; none: at the pointer. False for a row that
     // has none (an app, a place, a web page, a plugin's): the caller shows
     // Win顺's menu instead.
+    function openKeyboardContextMenu(system) {
+        if (clipboardBelow || homeIndex >= 0 || hintIndex >= 0 || searchBar.composition.length > 0
+                || view.currentIndex < 0 || view.currentIndex >= view.count)
+            return false
+        const wantSystem = window.launcher.defaultSystemMenu ? !system : system
+        if (wantSystem && openSystemMenu(view.currentIndex, rowPoint(view.currentIndex)))
+            return true
+        openContextMenu(view.currentIndex)
+        return true
+    }
     function openSystemMenu(index, globalPos) {
         if (index < 0 || index >= view.count || !window.launcher.hasSystemMenu(index))
             return false
@@ -785,6 +800,7 @@ Window {
     // Hidden: also free the menu window until it is needed again.
     onVisibleChanged: {
         if (!visible) {
+            arriving = false
             leftPath = launcher.results.pathAt(view.currentIndex)
             leftRowY = view.currentItem ? view.currentItem.y - view.contentY : 0
             endRename(false)
@@ -794,7 +810,14 @@ Window {
             nameTip.dismiss()
         }
     }
-    onActiveChanged: if (!active) { nameTip.dismiss(); peekKeywords(false) }
+    onActiveChanged: {
+        if (active) {
+            arriving = false
+        } else {
+            nameTip.dismiss()
+            peekKeywords(false)
+        }
+    }
 
     // The whole name and folder of a row that shows them cut, as the mouse
     // rests on it (NameTip; the box's rows and the panel's).
@@ -1067,12 +1090,12 @@ Window {
             if ((event.modifiers & ~Qt.KeypadModifier) !== Qt.ControlModifier || !openKeyboardMenu(event.isAutoRepeat))
                 return
             break
-        case Qt.Key_Menu: // Shift+Menu: the system's menu for the row; the Menu key alone comes back as a context-menu event (Win顺's menu)
-            if (!shift || view.currentIndex < 0 || !openSystemMenu(view.currentIndex, rowPoint(view.currentIndex)))
+        case Qt.Key_Menu: // Shift+Menu: swaps with Menu (system menu by default, or Win顺's when defaultSystemMenu is on)
+            if (!shift || !openKeyboardContextMenu(true))
                 return
             break
-        case Qt.Key_F10: // Ctrl+Shift+F10 the same (Shift+F10 is Win顺's menu, as the Menu key)
-            if (!ctrl || !shift || view.currentIndex < 0 || !openSystemMenu(view.currentIndex, rowPoint(view.currentIndex)))
+        case Qt.Key_F10: // Ctrl+Shift+F10 the same (Shift+F10 is the default menu, as the Menu key)
+            if (!ctrl || !shift || !openKeyboardContextMenu(true))
                 return
             break
         case Qt.Key_Backtab:
@@ -1212,10 +1235,7 @@ Window {
                 view.currentIndex = index
         }
         function onContextMenuKeyPressed(system) { // Menu key, Shift+F10; Shift+Menu when an IME kept the key itself
-            const row = view.currentIndex
-            if (system && row >= 0 && row < view.count && window.openSystemMenu(row, window.rowPoint(row)))
-                return
-            window.openContextMenu(row)
+            window.openKeyboardContextMenu(system)
         }
         function onQueryChanged() {
             window.galleryNavigation = false
@@ -1225,12 +1245,26 @@ Window {
                 window.panelPage.searchBar.syncQuery()
         }
         function onPanelChanged() { // the other bar has the keyboard now, the words as they were
-            if (window.launcher.panel)
+            if (window.launcher.panel) {
                 window.makePanel()
+                if (window.visible && window.panelPage)
+                    window.panelPage.playFadeIn()
+            }
             window.galleryNavigation = false
             nameTip.dismiss()
             window.closeContextMenu()
             window.searchBar.focusAtEnd()
+        }
+        function onClosingChanged() { // fading out: dismiss tooltips and popups at once
+            if (!window.launcher.closing)
+                return
+            window.closeContextMenu()
+            footer.sortMenuOpen = false
+            nameTip.dismiss()
+            for (const child of window.contentItem.children) {
+                if (child.shownText !== undefined && typeof child.dismiss === "function")
+                    child.dismiss()
+            }
         }
     }
 
@@ -1404,7 +1438,9 @@ Window {
         launcher.clickRow(index, true)
     }
     function rowMenuRequested(index, globalPos, modifiers) {
-        if (!(modifiers & Qt.ShiftModifier) || !openSystemMenu(index))
+        const shift = Boolean(modifiers & Qt.ShiftModifier)
+        const wantSystem = window.launcher.defaultSystemMenu ? !shift : shift
+        if (!wantSystem || !openSystemMenu(index))
             openContextMenu(index, globalPos)
     }
 
@@ -1412,11 +1448,6 @@ Window {
         id: layout
         width: window.width
         visible: !window.panel
-        // Opening, the content comes in a little behind the window (Placement.slideIn).
-        transform: Translate {
-            x: window.placement.contentShift.x
-            y: window.placement.contentShift.y
-        }
 
         // The chrome: the search row and the strip under it, a layer over the
         // window's base (Theme.layer), the rows on the base itself.
@@ -1670,7 +1701,7 @@ Window {
                 bottomMargin: 4
                 clip: true
                 opacity: window.dimRows ? 0.45 : 1
-                Behavior on opacity { NumberAnimation { duration: 150 } }
+                Behavior on opacity { enabled: SystemTheme.animations && window.visible; NumberAnimation { duration: 150 } }
                 model: window.launcher.results
                 boundsBehavior: Flickable.StopAtBounds
                 // The current row's highlight, one for the whole list: it jumps,
@@ -1977,7 +2008,7 @@ Window {
                 visible: boxList.count === 0 && window.launcher.searching && !window.appsMode
                          && (!keywordMode || window.launcher.pluginWaiting.length > 0)
                 opacity: visible ? 1 : 0
-                Behavior on opacity { NumberAnimation { duration: 100 } }
+                Behavior on opacity { enabled: SystemTheme.animations && window.visible; NumberAnimation { duration: 100 } }
                 text: keywordMode ? window.launcher.pluginWaiting : qsTr("正在搜索文件内容…")
                 color: Theme.faint
                 font.pixelSize: Theme.uiBody

@@ -62,6 +62,7 @@
 #include <QWinEventNotifier>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <thread>
@@ -76,6 +77,11 @@ QString displayPath(const QString& path)
 {
     return QString::fromStdWString(win32::expandEnvironment(QDir::toNativeSeparators(path.trimmed()).toStdWString()));
 }
+
+bool hasEnvVar(QStringView text) { return Settings::hasEnvVar(text); }
+QString rawDisplayPath(const QString& path) { return Settings::cleanFolderPath(path); }
+QString resolvedEnvPath(const QString& path) { return Settings::resolvedEnvPath(path); }
+std::wstring excludedCompareKey(const QString& path) { return Settings::excludedCompareKey(path); }
 
 bool containsIgnoreCase(const QStringList& list, const QString& value)
 {
@@ -287,6 +293,14 @@ void SettingsEditor::setDoubleClickToOpen(bool on)
     if (m_settings.doubleClickToOpen == on)
         return;
     m_settings.doubleClickToOpen = on;
+    commit();
+}
+
+void SettingsEditor::setDefaultSystemMenu(bool on)
+{
+    if (m_settings.defaultSystemMenu == on)
+        return;
+    m_settings.defaultSystemMenu = on;
     commit();
 }
 
@@ -1064,7 +1078,7 @@ QStringList SettingsEditor::excludedPaths() const
 {
     QStringList paths;
     for (const QString& p : m_settings.excludedPaths)
-        paths.append(displayPath(p));
+        paths.append(rawDisplayPath(p));
     return paths;
 }
 
@@ -1324,6 +1338,14 @@ void SettingsEditor::setDialogBarPlace(const QString& place)
     commit();
 }
 
+void SettingsEditor::setDialogBarSuggestions(bool on)
+{
+    if (m_settings.dialogBarSuggestions == on)
+        return;
+    m_settings.dialogBarSuggestions = on;
+    commit();
+}
+
 void SettingsEditor::setDialogJump(bool on)
 {
     if (m_settings.dialogJump == on)
@@ -1420,13 +1442,15 @@ void SettingsEditor::hurryIncubation(QObject* window, bool on)
     m_incubationHurry->start();
 }
 
-QString SettingsEditor::opusFolderMenuCommand() const
+QString SettingsEditor::opusFolderMenuCommand(bool middle) const
 {
-    // {sourcepath$}: the folder shown, and nothing run for a non-folder
-    // (a collection, an FTP site); |noterm: "D:" for a drive, not "D:\",
-    // whose \" would read as a quote.
+    // {sourcepath}: the folder shown; for This PC, a collection or an FTP
+    // site no folder of the disk, and the menu has nothing for "here" (as the
+    // hotkey's there). Not {sourcepath$}, as before (GitHub #416): with that
+    // Opus ran nothing there. |noterm: "D:" for a drive, not "D:\", whose \"
+    // would read as a quote.
     const QString stub = scoop::stablePath(QCoreApplication::applicationDirPath() + u"/WinShunSearch.exe"_s); // Scoop: via "current"
-    return u"\"%1\" --folder-menu \"{sourcepath$|noterm}\""_s.arg(stub);
+    return u"\"%1\" %2 \"{sourcepath|noterm}\""_s.arg(stub, middle ? u"--folder-menu-middle"_s : u"--folder-menu"_s);
 }
 
 void SettingsEditor::openOpusPreferences() const
@@ -1436,11 +1460,13 @@ void SettingsEditor::openOpusPreferences() const
 
 namespace {
 
-// Win顺's command for Directory Opus: of this copy, or of another one.
+// Win顺's command for Directory Opus (either click's): of this copy, or of another one.
 bool isFolderMenuCommand(const QString& command)
 {
     return command.contains(u"WinShunSearch.exe\" --folder-menu"_s, Qt::CaseInsensitive);
 }
+
+using pathtext::OpusClick;
 
 } // namespace
 
@@ -1452,12 +1478,16 @@ void SettingsEditor::refreshOpusFolderMenu()
     QString taken;
     if (const std::wstring file = filemanager::opusPrefsFile(); !file.empty()) {
         QFile prefs(QString::fromStdWString(file));
-        const pathtext::OpusBlankClick click = prefs.open(QIODevice::ReadOnly)
-            ? pathtext::opusBlankClick(prefs.readAll()) : pathtext::OpusBlankClick {};
+        const QByteArray text = prefs.open(QIODevice::ReadOnly) ? prefs.readAll() : QByteArray();
+        const pathtext::OpusBlankClick click = pathtext::opusBlankClick(text);
         if (!click.hasPlace) {
             state = u"manual"_s;
         } else if (click.enabled && isFolderMenuCommand(click.command)) {
-            state = click.command.compare(opusFolderMenuCommand(), Qt::CaseInsensitive) == 0 ? u"on"_s : u"stale"_s;
+            const pathtext::OpusBlankClick middle = pathtext::opusBlankClick(text, OpusClick::Middle);
+            const bool current = click.command.compare(opusFolderMenuCommand(), Qt::CaseInsensitive) == 0
+                && middle.enabled && middle.command.compare(opusFolderMenuCommand(true), Qt::CaseInsensitive) == 0
+                && pathtext::opusSingleMiddleClick(text);
+            state = current ? u"on"_s : u"stale"_s;
         } else if (click.enabled && !click.command.trimmed().isEmpty()) {
             state = u"taken"_s;
             taken = click.command;
@@ -1483,25 +1513,53 @@ void SettingsEditor::setOpusFolderMenu(bool on)
     m_opusFolderMenu = u"busy"_s;
     m_opusFolderMenuProblem.clear();
     emit opusFolderMenuChanged();
-    const QByteArray event = on ? pathtext::opusBlankClickEvent(opusFolderMenuCommand())
-                                : m_settings.folderMenuOpusBefore.toUtf8(); // none: taken away
+    // What Opus had for each click before Win顺 put its own there: kept
+    // while Win顺's are there, back as they go.
+    struct Before {
+        QString leftDouble;
+        QString middle;
+        bool singleMiddle = false;
+    };
+    const std::array<QString, 2> commands {opusFolderMenuCommand(), opusFolderMenuCommand(true)};
     const QString backup = QDir(Settings::dataDir()).filePath(u"opus-prefs.oxc.bak"_s);
-    std::thread([guard = QPointer(this), on, event, backup, before = m_settings.folderMenuOpusBefore]() mutable {
+    std::thread([guard = QPointer(this), on, commands, backup,
+                    before = Before {m_settings.folderMenuOpusBefore, m_settings.folderMenuOpusMiddleBefore,
+                        m_settings.folderMenuOpusSingleMiddleBefore}]() mutable {
         bool understood = true;
         const bool restarts = filemanager::opusRunning();
         const filemanager::PrefsEdit result = filemanager::editOpusPrefs(
             [&](const QByteArray& prefs) -> std::optional<QByteArray> {
-                const pathtext::OpusBlankClick click = pathtext::opusBlankClick(prefs);
-                const bool ours = isFolderMenuCommand(click.command);
-                if (!on && !ours)
-                    return std::nullopt; // the user's own by now: it stays
-                QByteArray changed = pathtext::withOpusBlankClick(prefs, event);
+                QByteArray changed = prefs;
+                bool middleWasOurs = false;
+                for (const OpusClick click : {OpusClick::LeftDouble, OpusClick::Middle}) {
+                    const bool middle = click == OpusClick::Middle;
+                    QString& was = middle ? before.middle : before.leftDouble;
+                    const pathtext::OpusBlankClick now = pathtext::opusBlankClick(changed, click);
+                    const bool ours = isFolderMenuCommand(now.command);
+                    if (middle)
+                        middleWasOurs = ours;
+                    if (!on && !ours)
+                        continue; // the user's own by now: it stays
+                    if (on && !ours)
+                        was = QString::fromUtf8(now.element);
+                    changed = pathtext::withOpusBlankClick(changed,
+                        on ? pathtext::opusBlankClickEvent(commands[middle], click) : was.toUtf8(), click); // "": taken away
+                    if (changed.isEmpty())
+                        break;
+                }
+                if (!changed.isEmpty() && on) {
+                    if (!middleWasOurs)
+                        before.singleMiddle = pathtext::opusSingleMiddleClick(prefs);
+                    changed = pathtext::withOpusSingleMiddleClick(changed, true);
+                } else if (!changed.isEmpty() && middleWasOurs) {
+                    changed = pathtext::withOpusSingleMiddleClick(changed, before.singleMiddle);
+                }
                 if (changed.isEmpty()) {
                     understood = false;
                     return std::nullopt;
                 }
-                if (on && !ours)
-                    before = QString::fromUtf8(click.element);
+                if (changed == prefs)
+                    return std::nullopt; // as it is to be already
                 if (!QFile::exists(backup)) { // the file as it was before Win顺 first changed it
                     QSaveFile copy(backup);
                     if (copy.open(QIODevice::WriteOnly) && copy.write(prefs) == prefs.size())
@@ -1519,10 +1577,16 @@ void SettingsEditor::setOpusFolderMenu(bool on)
                 guard->m_opusFolderMenuProblem = tr("改不了 Opus 的设置文件，请照下面的步骤在 Opus 里设一次");
             else if (!understood)
                 guard->m_opusFolderMenuProblem = tr("认不出 Opus 的设置文件，请照下面的步骤在 Opus 里设一次");
-            if (result == filemanager::PrefsEdit::Done && understood
-                && guard->m_settings.folderMenuOpusBefore != (on ? before : QString())) {
-                guard->m_settings.folderMenuOpusBefore = on ? before : QString();
-                guard->commit();
+            if (result == filemanager::PrefsEdit::Done && understood) {
+                Settings& s = guard->m_settings;
+                const Before kept = on ? before : Before {};
+                if (s.folderMenuOpusBefore != kept.leftDouble || s.folderMenuOpusMiddleBefore != kept.middle
+                    || s.folderMenuOpusSingleMiddleBefore != kept.singleMiddle) {
+                    s.folderMenuOpusBefore = kept.leftDouble;
+                    s.folderMenuOpusMiddleBefore = kept.middle;
+                    s.folderMenuOpusSingleMiddleBefore = kept.singleMiddle;
+                    guard->commit();
+                }
             }
             guard->refreshOpusFolderMenu();
             emit guard->opusFolderMenuChanged(); // the problem, though the state may be as it was
@@ -1719,9 +1783,54 @@ void SettingsEditor::setFolderMenuWindows(bool on)
     commit();
 }
 
+namespace {
+bool updateFavoriteKind(Settings& settings, bool Settings::* field, bool on)
+{
+    if (settings.*field == on)
+        return false;
+    const int enabledCount = int(settings.folderMenuFavoriteFolders) + int(settings.folderMenuFavoriteFiles)
+        + int(settings.folderMenuFavoriteApps) + int(settings.folderMenuFavoritePlaces)
+        + int(settings.folderMenuFavoriteCommands);
+    if (!on && enabledCount <= 1)
+        return false; // at least one kind stays on
+    settings.*field = on;
+    return true;
+}
+} // namespace
+
+void SettingsEditor::setFolderMenuFavoriteFolders(bool on)
+{
+    if (updateFavoriteKind(m_settings, &Settings::folderMenuFavoriteFolders, on))
+        commit();
+}
+
+void SettingsEditor::setFolderMenuFavoriteFiles(bool on)
+{
+    if (updateFavoriteKind(m_settings, &Settings::folderMenuFavoriteFiles, on))
+        commit();
+}
+
+void SettingsEditor::setFolderMenuFavoriteApps(bool on)
+{
+    if (updateFavoriteKind(m_settings, &Settings::folderMenuFavoriteApps, on))
+        commit();
+}
+
+void SettingsEditor::setFolderMenuFavoritePlaces(bool on)
+{
+    if (updateFavoriteKind(m_settings, &Settings::folderMenuFavoritePlaces, on))
+        commit();
+}
+
+void SettingsEditor::setFolderMenuFavoriteCommands(bool on)
+{
+    if (updateFavoriteKind(m_settings, &Settings::folderMenuFavoriteCommands, on))
+        commit();
+}
+
 void SettingsEditor::setFolderMenuFavoritesInline(int count)
 {
-    count = std::clamp(count, 0, 10);
+    count = Settings::clampFolderMenuInline(count);
     if (m_settings.folderMenuFavoritesInline == count)
         return;
     m_settings.folderMenuFavoritesInline = count;
@@ -1730,7 +1839,7 @@ void SettingsEditor::setFolderMenuFavoritesInline(int count)
 
 void SettingsEditor::setFolderMenuRecentInline(int count)
 {
-    count = std::clamp(count, 0, 10);
+    count = Settings::clampFolderMenuInline(count);
     if (m_settings.folderMenuRecentInline == count)
         return;
     m_settings.folderMenuRecentInline = count;
@@ -1739,7 +1848,7 @@ void SettingsEditor::setFolderMenuRecentInline(int count)
 
 void SettingsEditor::setFolderMenuWindowsInline(int count)
 {
-    count = std::clamp(count, 0, 10);
+    count = Settings::clampFolderMenuInline(count);
     if (m_settings.folderMenuWindowsInline == count)
         return;
     m_settings.folderMenuWindowsInline = count;
@@ -1990,6 +2099,14 @@ void SettingsEditor::setSearchBoxShown(const QString& hidden)
         return;
     m_searchBoxHidden = hidden;
     emit searchBoxShownChanged();
+}
+
+void SettingsEditor::setSearchBoxForm(const QString& form)
+{
+    if (m_searchBoxForm == form)
+        return;
+    m_searchBoxForm = form;
+    emit searchBoxFormChanged();
 }
 
 void SettingsEditor::setClassicTaskbar(bool classic)
@@ -3439,19 +3556,11 @@ bool folderHolds(std::wstring_view folder, std::wstring_view path)
         && (path.size() == folder.size() || path[folder.size()] == L'\\');
 }
 
-// A path typed or chosen, or a file:/// URL dropped: native separators, no
-// backslash at the end but a drive's ("D:\").
+// A path typed or chosen, or a file:/// URL dropped: native separators, quotes
+// stripped, no backslash at the end but a drive's ("D:\"), preserving %VAR%.
 QString folderText(const QString& text)
 {
-    QString t = text.trimmed();
-    if (t.startsWith(u"file:"_s, Qt::CaseInsensitive))
-        t = QUrl(t).toLocalFile();
-    t = QDir::toNativeSeparators(t);
-    while (t.size() > 3 && t.endsWith(u'\\'))
-        t.chop(1);
-    if (t.size() == 2 && t[1] == u':')
-        t += u'\\';
-    return t;
+    return rawDisplayPath(text);
 }
 
 // A known folder's path as IndexService writes it, without reading the disk
@@ -3566,12 +3675,17 @@ QVariantList SettingsEditor::folders() const
     };
     QVariantList list;
     for (qsizetype i = 0; i < m_settings.indexFolders.size(); ++i) {
-        const QString path = displayPath(m_settings.indexFolders[i]);
+        const QString path = rawDisplayPath(m_settings.indexFolders[i]);
+        const QString expanded = displayPath(m_settings.indexFolders[i]);
+        const QString resolved = resolvedEnvPath(m_settings.indexFolders[i]);
+        const QString namedFrom = !resolved.isEmpty() ? resolved : path;
         const std::wstring& key = keys[static_cast<std::size_t>(i)];
         // 桌面, 文档 …: as Windows calls its own folders; else the folder's name.
-        QString name = path.size() > 3 ? QDir(QDir::fromNativeSeparators(path)).dirName() : path;
+        QString name = namedFrom.size() > 3 ? QDir(QDir::fromNativeSeparators(namedFrom)).dirName() : namedFrom;
+        if (name.isEmpty())
+            name = path;
         if (const auto known = std::ranges::find_if(
-                m_knownFolders, [&](const Settings::KnownFolder& k) { return k.path.compare(path, Qt::CaseInsensitive) == 0; });
+                m_knownFolders, [&](const Settings::KnownFolder& k) { return k.path.compare(expanded, Qt::CaseInsensitive) == 0; });
             known != m_knownFolders.end())
             name = known->name;
         QString tone = u"idle"_s;
@@ -3579,10 +3693,12 @@ QVariantList SettingsEditor::folders() const
         bool busy = false;
         bool verifiable = false;
         const bool linked = hasDirectoryLink(key);
-        const bool network = key.empty() && Settings::isNetworkPath(path);
+        const bool network = key.empty() && (Settings::isNetworkPath(path) || Settings::isNetworkPath(expanded));
         if (key.empty()) {
             tone = u"warn"_s;
-            status = network ? tr("这是网络或 WSL 位置，请在“网络与 WSL”里添加") : tr("不是完整的文件夹路径，不会索引");
+            status = network          ? tr("这是网络或 WSL 位置，请在“网络与 WSL”里添加")
+                : hasEnvVar(path)     ? tr("环境变量未展开为完整路径，暂时不会索引")
+                                      : tr("不是完整的文件夹路径，不会索引");
         } else if (m_settings.selectedDrives && !m_settings.selectedDrives->contains(QString::fromStdWString(key.substr(0, 2)))) {
             tone = u"warn"_s;
             status = tr("所在的磁盘未勾选，不会索引");
@@ -3648,6 +3764,7 @@ QVariantList SettingsEditor::folders() const
         }
         list.append(QVariantMap {
             {u"path"_s, path},
+            {u"resolved"_s, resolved},
             {u"name"_s, name},
             {u"tone"_s, tone},
             {u"status"_s, status},
@@ -3715,12 +3832,15 @@ QString SettingsEditor::addFolderTo(Settings& settings, const QString& text, boo
     const QString folder = folderText(text);
     if (folder.isEmpty())
         return {};
-    if (Settings::isNetworkPath(folder))
+    const QString expanded = displayPath(folder);
+    if (Settings::isNetworkPath(folder) || Settings::isNetworkPath(expanded))
         return tr("这是网络或 WSL 位置，请在“网络与 WSL”里添加");
     const std::wstring key = Settings::indexFolderPath(folder);
-    if (key.empty())
-        return tr("请选一个完整的文件夹路径");
-    if (const QFileInfo info(folder); !info.isDir())
+    if (key.empty()) {
+        return hasEnvVar(folder) ? tr("环境变量未展开为完整的文件夹路径，请检查变量名")
+                                 : tr("请输入完整的文件夹路径，例如 D:\\Work 或 %USERPROFILE%\\Documents");
+    }
+    if (const QFileInfo info(expanded); !info.isDir())
         return info.exists() ? tr("只能添加文件夹") : tr("找不到这个文件夹");
     std::vector<std::wstring> keys;
     for (const QString& chosen : settings.indexFolders)
@@ -3731,7 +3851,7 @@ QString SettingsEditor::addFolderTo(Settings& settings, const QString& text, boo
         if (win32::equalsIgnoreCase(keys[i], key))
             return tr("已经添加过了");
         if (folderHolds(keys[i], key) && !hasDirectoryLink(key, keys[i]))
-            return tr("已经包含在 %1 里").arg(displayPath(settings.indexFolders[static_cast<qsizetype>(i)]));
+            return tr("已经包含在 %1 里").arg(rawDisplayPath(settings.indexFolders[static_cast<qsizetype>(i)]));
     }
     // One that holds folders added takes their place: none twice.
     QStringList kept;
@@ -3768,7 +3888,8 @@ void SettingsEditor::verifyFolder(int index)
 
 bool SettingsEditor::isNetworkFolder(const QString& text) const
 {
-    return Settings::isNetworkPath(folderText(text));
+    const QString folder = folderText(text);
+    return Settings::isNetworkPath(folder) || Settings::isNetworkPath(displayPath(folder));
 }
 
 QString SettingsEditor::localPath(const QString& text) const
@@ -3780,6 +3901,11 @@ QString SettingsEditor::pickFolder(const QString& title)
 {
     const HWND owner = m_window ? reinterpret_cast<HWND>(m_window->winId()) : nullptr;
     return shell::pickFolder(owner, title);
+}
+
+QString SettingsEditor::resolveEnvPath(const QString& text) const
+{
+    return resolvedEnvPath(text);
 }
 
 void SettingsEditor::listServerShares(const QString& server)
@@ -3851,10 +3977,53 @@ void SettingsEditor::addExcludedFolder()
 {
     const HWND owner = m_window ? reinterpret_cast<HWND>(m_window->winId()) : nullptr;
     const QString folder = shell::pickFolder(owner, tr("选择不需要搜索的文件夹"));
-    if (folder.isEmpty() || containsIgnoreCase(excludedPaths(), displayPath(folder)))
-        return;
-    m_settings.excludedPaths.append(folder);
-    commit();
+    if (!folder.isEmpty())
+        addExcludedPath(folder);
+}
+
+QString SettingsEditor::addExcludedPath(const QString& text)
+{
+    bool added = false;
+    const QString problem = addExcludedPathTo(m_settings, text, added);
+    if (added)
+        commit();
+    return problem;
+}
+
+QString SettingsEditor::addExcludedPathTo(Settings& settings, const QString& text, bool& added)
+{
+    added = false;
+    const QString folder = folderText(text);
+    if (folder.isEmpty())
+        return {};
+    const bool env = hasEnvVar(folder);
+    const QString expanded = rawDisplayPath(displayPath(folder));
+    const auto isAbsolutePath = [](const QString& p) {
+        if (p.size() >= 2 && p[1] == u':' && p[0].isLetter() && (p.size() == 2 || p[2] == u'\\'))
+            return true;
+        if (p.startsWith(u"\\\\"_s) && p.size() > 2 && p[2] != u'\\')
+            return true;
+        return false;
+    };
+    if (!env && !isAbsolutePath(expanded)) {
+        if (!folder.contains(u'\\') && !folder.contains(u':'))
+            return tr("请输入完整路径或环境变量路径；按文件夹名跳过请到“名称和类型”里添加");
+        return tr("请输入完整的文件夹路径，例如 D:\\Cache 或 %TEMP%");
+    }
+    const bool candidateResolved = !hasEnvVar(expanded);
+    const std::wstring candidateKey = candidateResolved ? excludedCompareKey(folder) : std::wstring();
+    for (const QString& existing : settings.excludedPaths) {
+        if (rawDisplayPath(existing).compare(folder, Qt::CaseInsensitive) == 0)
+            return tr("已经添加过了");
+        if (candidateResolved) {
+            const QString existingExpanded = rawDisplayPath(displayPath(existing));
+            if (!hasEnvVar(existingExpanded) && win32::equalsIgnoreCase(excludedCompareKey(existing), candidateKey))
+                return tr("已经添加过了");
+        }
+    }
+    settings.excludedPaths.append(folder);
+    added = true;
+    return {};
 }
 
 void SettingsEditor::removeExcludedPath(int index)

@@ -353,13 +353,16 @@ private slots:
         QCOMPARE(rig.editor.viewportDevice(), QRect(2, 126, 300, 200));
         QCOMPARE(rig.editor.originDevice(), QPoint(0, 0));
         QCOMPARE(rig.editor.viewRect().top(), 84.0);
-        // E is the ellipse here, as in the capture; Esc leaves at once, the pin as it was.
+        // E switches to ellipse; Esc exits the active tool first (#415), next Esc leaves the pin as it was.
         rig.editor.model()->setTool(rig.toolIndex(Kind::Rect));
         rig.drag(QPoint(30, 30), QPoint(120, 90));
         QVERIFY(rig.editor.model()->modified());
         QVERIFY(rig.editor.keyPressed(Qt::Key_E, 0));
         QCOMPARE(rig.editor.model()->tool(), rig.toolIndex(Kind::Ellipse));
         QVERIFY(rig.editor.isOpen());
+        QVERIFY(rig.editor.keyPressed(Qt::Key_Escape, 0));
+        QVERIFY(rig.editor.isOpen());
+        QCOMPARE(rig.editor.model()->tool(), -1);
         QVERIFY(rig.editor.keyPressed(Qt::Key_Escape, 0));
         QVERIFY(!rig.editor.isOpen());
         QVERIFY(shown);
@@ -683,7 +686,10 @@ private slots:
         rig.drag(QPoint(210, 170), QPoint(300, 250));
         rig.editor.model()->setTool(-1);
         QCOMPARE(rig.editor.model()->document().items.size(), qsizetype(3));
-        // Esc with changes gives them all up, in one step, and says so.
+        // Esc deselects the drawn ellipse first (#415), then gives up the changes in one step.
+        QVERIFY(rig.editor.keyPressed(Qt::Key_Escape, 0));
+        QCOMPARE(rig.editor.model()->selectedCount(), 0);
+        QCOMPARE(rig.editor.model()->document().items.size(), qsizetype(3));
         QSignalSpy notice(&rig.editor, &CaptureEditor::noticeChanged);
         QVERIFY(rig.editor.keyPressed(Qt::Key_Escape, 0));
         QVERIFY(rig.editor.isOpen());
@@ -1098,6 +1104,56 @@ private slots:
         QVERIFY(!rig.pin->textMode());
         rig.key('Q');
         QCOMPARE(rig.closes, 1);
+    }
+
+    void textToolLiveBorderAndCursorRefresh()
+    {
+        Rig rig(QSize(400, 300), false); // 1000 x 700 at 150 %, empty document
+        QVERIFY(rig.editor.openHistory(1));
+        AnnotationModel* m = rig.editor.model();
+        const int textTool = rig.toolIndex(Kind::Text);
+        m->setTool(textTool);
+        const auto hover = [&](QPoint pixel) {
+            const QPointF p = rig.at(pixel);
+            rig.editor.mouseMoved(p.x(), p.y(), 0);
+        };
+
+        // Click to open a new text box and type.
+        const QPoint start(120, 100);
+        rig.click(start);
+        QVERIFY(m->editingText());
+        m->setEditingText(u"编辑窗口文字"_s);
+
+        // Hover the live edit border -> SizeAllCursor immediately, drag moves without committing.
+        const QPoint border(start.x() - 6, start.y() + 8);
+        hover(border);
+        QCOMPARE(rig.editor.cursorShape(), int(Qt::SizeAllCursor));
+        QVERIFY(m->editing().value(u"borderHot"_s).toBool());
+        rig.drag(border, border + QPoint(45, 25));
+        QVERIFY(m->editingText());
+        QCOMPARE(m->editing().value(u"x"_s).toInt(), start.x() + 45);
+        QCOMPARE(m->editing().value(u"y"_s).toInt(), start.y() + 25);
+
+        // Esc commits while pointer sits inside the text -> cursorShape refreshes immediately to SizeAllCursor.
+        const QPoint inside(start.x() + 55, start.y() + 33);
+        hover(inside);
+        QCOMPARE(rig.editor.cursorShape(), int(Qt::IBeamCursor));
+        QVERIFY(rig.editor.keyPressed(Qt::Key_Escape, 0));
+        QVERIFY(!m->editingText());
+        QCOMPARE(m->itemCount(), 1);
+        QCOMPARE(rig.editor.cursorShape(), int(Qt::SizeAllCursor));
+
+        // Add a second text so the first becomes unselected; hovering & dragging the unselected
+        // first text while Text tool is active shows SizeAllCursor and moves it cleanly.
+        rig.click(QPoint(120, 220));
+        m->setEditingText(u"第二行"_s);
+        QVERIFY(rig.editor.keyPressed(Qt::Key_Escape, 0));
+        QCOMPARE(m->itemCount(), 2);
+        hover(inside);
+        QCOMPARE(rig.editor.cursorShape(), int(Qt::SizeAllCursor));
+        rig.drag(inside, inside + QPoint(-20, 15));
+        QCOMPARE(m->document().items[0].points[0], QPointF(start.x() + 25, start.y() + 40));
+        QCOMPARE(m->tool(), textTool);
     }
 };
 

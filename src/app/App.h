@@ -50,7 +50,7 @@ class QWinEventNotifier;
 
 namespace ws {
 
-namespace preview { struct DoubleTapActionsProbe; struct IdleOpenProbe; struct ForegroundUseProbe; struct ClipboardAnimationProbe; struct SearchShadowProbe; }
+namespace preview { struct DoubleTapActionsProbe; struct IdleOpenProbe; struct ForegroundUseProbe; struct ClipboardAnimationProbe; struct SearchShadowProbe; struct LauncherSettingsProbe; }
 
 namespace piedrop {
 class FileOperations;
@@ -145,6 +145,7 @@ class App : public QObject {
     friend struct preview::ForegroundUseProbe;
     friend struct preview::ClipboardAnimationProbe;
     friend struct preview::SearchShadowProbe;
+    friend struct preview::LauncherSettingsProbe;
 
 public:
     struct StartOptions {
@@ -218,10 +219,11 @@ public:
     // field comes back into the window and the box goes idle (as for the
     // panel): the window stays where it stands, a window of its own now.
     void launcherPinnedChanged();
-    // Over every window (its WindowStaysOnTopHint), but not while pinned
-    // with Settings::pinnedOnTop off. Pinned, also a window of the desktop:
-    // a taskbar button, Alt+Tab, minimize and restore (win::setTaskbarWindow).
-    void applyLauncherTopmost();
+    // Pinned, a window of its own (GitHub #418): on the taskbar and in
+    // Alt+Tab, minimized and back as any other (win::setTaskbarWindow), and
+    // topmost only with Settings::pinnedOnTop. Else over every window (its
+    // WindowStaysOnTopHint), and none of the rest.
+    void applyLauncherPin();
     // --dump <file> from another copy (tests): the launcher's state and rows as JSON.
     void dumpLauncher(const QString& file) const;
     void showClipboard();
@@ -253,6 +255,7 @@ protected:
 
 private:
     bool startRuntime(const StartOptions& options, bool firstRun, bool clipboardIsNew, bool fromOnboarding = false);
+    void showSettingsNow(const std::function<void(QQuickWindow*)>& at = {});
     bool settingsShown() const; // the settings window on show (it is kept, hidden, once made)
     void settingsFirstFrame(int opening); // after the first frame of an opening: what waited for it
     bool showOnboarding(const StartOptions& options);
@@ -298,7 +301,8 @@ private:
     // (the diagnostics journal's "trigger", TriggerJournal); a double tap's
     // also says which listener told of it, and when.
     void beginTrigger(TriggerSource source, std::uint64_t pressedAt, std::optional<TriggerJournal::Told> told = {});
-    void openingSeen(TriggerWindow window); // m_triggers->seen, and HotPages
+    void openingSeen(TriggerWindow window, bool deferWarmup = false); // m_triggers->seen; warmup runs now or after slideIn
+    void finishOpeningWarmup(TriggerWindow window); // IdleTrim index warm + HotPages learning, deferred past slideIn
     void journalTapNote(const KeyListener::Note& note);
     // win::bringToFront for a window a press asked for: how, and how long, to the journal.
     win::Front toFront(QWindow* window);
@@ -446,7 +450,7 @@ private:
     // Win顺's own search box on the taskbar ([Taskbar] SearchBox, taskbar::SearchBox).
     void applySearchBox();
     void setSearchBoxShown(taskbar::SearchBox::Hidden why); // it is on the taskbar (None), or why not
-    void setSearchBoxWide(bool wide); // the whole box, or its label or icon alone (SearchBox::wide)
+    void setSearchBoxForm(std::optional<taskbar::Form> form); // actual rendered form (none while hidden)
     void setClassicTaskbar(bool classic); // SearchBox::Callbacks::classicChanged
     void updateSearchBoxLook(); // placeholder, accent
     void searchBoxPressed(const taskbar::SearchBox::Press& press);
@@ -791,6 +795,12 @@ private:
     // with double tap and its pause in games).
     std::unique_ptr<PointerWatch> m_pointerWatch;
     bool m_launcherClosing = false; // sliding out (hideLauncher)
+    bool m_clipClosing = false; // fading out via win::fadeOutCopy (hideClipboard)
+    quint64 m_clipFadeSeq = 0;
+    quint64 m_revealArmSeq = 0; // invalidates queued armReveal() across begin/cancel
+    // Settings requested while the launcher or clipboard fades out (showSettings):
+    // opened once the fade finishes, cleared if either window reopens.
+    std::optional<std::function<void(QQuickWindow*)>> m_pendingSettings;
     bool m_launcherOpening = false; // query/focus/caret still being prepared; no typing replay yet (#140)
     bool m_lettersPending = false; // opened with englishOnOpen, its field not yet switched (lettersOnOpen)
     // 打开时填入刚复制的文字 (Settings::clipboardFillSeconds): since another
@@ -820,6 +830,7 @@ private:
     std::unique_ptr<taskbar::SearchBox> m_searchBox; // while [Taskbar] SearchBox is on (Windows 11)
     bool m_searchBoxShown = false; // ... and it is on the taskbar
     taskbar::SearchBox::Hidden m_searchBoxHidden = taskbar::SearchBox::Hidden::Pending; // ... or why not
+    std::optional<taskbar::Form> m_searchBoxForm; // ... actual rendered form (box | label | icon)
     bool m_classicTaskbar = false; // ... measured on Windows 10's taskbar (StartAllBack, ExplorerPatcher)
     // The launcher is open over the box: typing in it when the box is wide
     // (Launcher::inTaskbarBox), else with its own field, the box looking open.

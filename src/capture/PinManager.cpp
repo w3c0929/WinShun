@@ -37,7 +37,8 @@ enum MenuCommand {
     OtherSideCommand,
     CopyTranslationCommand,
     TranslateCommand,
-    CopyPictureCommand
+    CopyPictureCommand,
+    OcrCopyCommand
 };
 
 shell::MenuItem command(int id, QString text, char16_t glyph, bool checked = false, bool enabled = true)
@@ -72,18 +73,22 @@ PinManager::~PinManager()
     m_closing.clear();
 }
 
-PinWindow* PinManager::pin(const QImage& image, QPoint origin, bool screenshot, QByteArray project)
+PinWindow* PinManager::pin(const QImage& image, QPoint origin, bool screenshot, QByteArray project,
+    std::optional<QList<RedactLine>> recognizedLines)
 {
-    return add(image, origin, screenshot, std::move(project), std::nullopt);
+    return add(image, origin, screenshot, std::move(project), std::nullopt, std::move(recognizedLines), true);
 }
 
-void PinManager::pinFitted(const QImage& image, QPoint origin, QPoint anchor, bool screenshot, QString text)
+void PinManager::pinFitted(const QImage& image, QPoint origin, QPoint anchor, bool screenshot, QString text,
+    std::optional<QList<RedactLine>> recognizedLines)
 {
-    if (PinWindow* pin = add(image, origin, screenshot, {}, anchor); pin && !text.isEmpty())
+    const bool hasWords = !text.isEmpty();
+    if (PinWindow* pin = add(image, origin, screenshot, {}, anchor, std::move(recognizedLines), !hasWords); pin && hasWords)
         pin->setCopiedText(std::move(text));
 }
 
-PinWindow* PinManager::add(const QImage& image, QPoint origin, bool screenshot, QByteArray project, std::optional<QPoint> fitAbout)
+PinWindow* PinManager::add(const QImage& image, QPoint origin, bool screenshot, QByteArray project, std::optional<QPoint> fitAbout,
+    std::optional<QList<RedactLine>> recognizedLines, bool announceLines)
 {
     if (image.isNull())
         return nullptr;
@@ -109,12 +114,14 @@ PinWindow* PinManager::add(const QImage& image, QPoint origin, bool screenshot, 
         if (m_callbacks.ocr)
             m_callbacks.ocr(pin->image(), pin->dpr(), pin->pictureRect());
     };
+    host.ocrCopy = [this](PinWindow* pin) { copyWords(pin); };
     host.dark = m_callbacks.dark;
     host.accent = m_callbacks.accent;
     host.edge = m_callbacks.edge;
     host.pillRadius = m_callbacks.pillRadius;
     host.copyText = m_callbacks.copyText;
     host.readLines = m_callbacks.readLines;
+    host.ocrAvailable = m_callbacks.ocrAvailable;
     host.takenTabs = [this](const PinWindow* self) {
         std::vector<QRect> tabs;
         for (const auto& p : m_pins) {
@@ -142,6 +149,9 @@ PinWindow* PinManager::add(const QImage& image, QPoint origin, bool screenshot, 
     pin->setKeys(m_keys);
     if (!pin->hwnd())
         return nullptr;
+    if (recognizedLines)
+        pin->setRecognizedLines(std::move(*recognizedLines), announceLines && m_autoOcr);
+    pin->setAutoOcr(m_autoOcr);
     m_pins.push_back(std::move(pin));
     return m_pins.back().get();
 }
@@ -259,6 +269,13 @@ void PinManager::setKeyHints(bool on)
     syncHints();
 }
 
+void PinManager::setAutoOcr(bool on)
+{
+    m_autoOcr = on;
+    for (const auto& p : m_pins)
+        p->setAutoOcr(on);
+}
+
 // ---- the key card (GitHub #343) ---------------------------------------------------------------
 
 void PinManager::hintFocus(PinWindow* pin, bool focused, bool fromOwnWindow)
@@ -371,6 +388,25 @@ void PinManager::closed(PinWindow* pin)
     }, Qt::QueuedConnection);
 }
 
+void PinManager::copyWords(PinWindow* pin)
+{
+    if (!pin)
+        return;
+    // Copied text pinned (#388) or a translated pin currently showing its
+    // translation: copy the exact text directly without re-running OCR.
+    if (!pin->copiedText().isEmpty() && m_callbacks.copyText) {
+        m_callbacks.copyText(pin->copiedText());
+        pin->showCopiedAllPill();
+    } else if (pin->hasOtherSide() && pin->translationShown() && !pin->translatedWords().isEmpty() && m_callbacks.copyText) {
+        m_callbacks.copyText(pin->translatedWords());
+        pin->showCopiedAllPill();
+    } else if (pin->copyAllRecognizedText()) {
+        return;
+    } else if (m_callbacks.ocrCopy) {
+        m_callbacks.ocrCopy(pin->image(), pin->dpr(), pin->pictureRect());
+    }
+}
+
 void PinManager::showMenu(PinWindow* pin, POINT at)
 {
     const bool ocrAvailable = m_callbacks.ocrAvailable && m_callbacks.ocrAvailable();
@@ -396,10 +432,15 @@ void PinManager::showMenu(PinWindow* pin, POINT at)
         command(AllTopmostCommand, tr("全部置顶"), 0xE718, allTopmost()),
         command(CloseAllCommand, tr("关闭全部贴图"), 0xE8BB),
     };
-    // Copied words pinned (GitHub #388): 复制 is theirs, the picture a second choice.
+    // Copied words pinned (GitHub #388) or text currently highlighted on the pin:
+    // 复制 takes the text, with 复制图片 offered right beside it.
     const bool words = !pin->copiedText().isEmpty();
-    std::vector<shell::MenuItem> items {command(CopyCommand, (words ? tr("复制文字") : tr("复制")) + hint(KeyAction::PinCopy), 0xE8C8)};
-    if (words)
+    const bool picked = full && pin->hasPickedText();
+    const QString copyLabel = picked ? tr("复制选中文字") : words ? tr("复制文字") : tr("复制");
+    std::vector<shell::MenuItem> items {command(CopyCommand, copyLabel + hint(KeyAction::PinCopy), 0xE8C8)};
+    if (picked && words)
+        items.push_back(command(OcrCopyCommand, tr("复制全部文字") + hint(KeyAction::PinOcrCopy), 0xE8C8));
+    if (picked || words)
         items.push_back(command(CopyPictureCommand, tr("复制图片"), 0xE8C8));
     items.push_back(command(SaveCommand, tr("保存到“屏幕截图”") + hint(KeyAction::PinSave), 0xE74E));
     items.push_back(command(SaveAsCommand, tr("另存为…"), 0xE74E));
@@ -412,10 +453,12 @@ void PinManager::showMenu(PinWindow* pin, POINT at)
     if (full) {
         items.push_back(command(EditCommand, tr("编辑") + hint(KeyAction::PinEdit), 0xE70F));
         items.push_back(command(OcrCommand, ocr + hint(KeyAction::PinOcr), 0xE8A5));
+        if (!words)
+            items.push_back(command(OcrCopyCommand, tr("复制全部文字") + hint(KeyAction::PinOcrCopy), 0xE8C8));
         if (m_callbacks.translate && !pin->hasOtherSide())
             items.push_back(command(TranslateCommand, tr("翻译"), 0xE8C1, false, ocrAvailable));
         items.push_back(command(PickTextCommand, tr("选择文字") + hint(KeyAction::PinTextPick), 0xE8D2,
-            pin->textMode(), ocrAvailable && pin->canPickText()));
+            pin->textMode(), (ocrAvailable && pin->canPickText()) || pin->hasRecognizedLines()));
         items.push_back(shell::MenuItem::separator());
         items.push_back(std::move(turn));
         items.push_back(std::move(collapse));
@@ -440,7 +483,9 @@ void PinManager::showMenu(PinWindow* pin, POINT at)
         return;
     switch (chosen) {
     case CopyCommand:
-        if (words && m_callbacks.copyText)
+        if (picked)
+            pin->copyPickedText();
+        else if (words && m_callbacks.copyText)
             m_callbacks.copyText(pin->copiedText());
         else if (m_callbacks.copy)
             m_callbacks.copy(pin->image(), pin->screenshot());
@@ -468,6 +513,9 @@ void PinManager::showMenu(PinWindow* pin, POINT at)
     case OcrCommand:
         if (m_callbacks.ocr)
             m_callbacks.ocr(pin->image(), pin->dpr(), pin->pictureRect());
+        break;
+    case OcrCopyCommand:
+        copyWords(pin);
         break;
     case OtherSideCommand:
         pin->showOtherSide();

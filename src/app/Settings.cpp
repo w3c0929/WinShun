@@ -23,6 +23,7 @@
 #include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QUrl>
 
 #include <windows.h>
 
@@ -911,6 +912,7 @@ void Settings::load()
     if (dialogBarPlace != u"below" && dialogBarPlace != u"left" && dialogBarPlace != u"right")
         dialogBarPlace = d.dialogBarPlace;
     dialogBarFolderOnly = readOrDefault(s, u"Launcher/DialogBarFolderOnly"_s, d.dialogBarFolderOnly);
+    dialogBarSuggestions = readOrDefault(s, u"Launcher/DialogBarSuggestions"_s, d.dialogBarSuggestions);
     dialogAutoJump = readOrDefault(s, u"Launcher/DialogAutoJump"_s, d.dialogAutoJump);
     dialogAutoJumpWhen = readOrDefault(s, u"Launcher/DialogAutoJumpWhen"_s, d.dialogAutoJumpWhen).trimmed().toLower();
     if (dialogAutoJumpWhen != u"back")
@@ -952,9 +954,25 @@ void Settings::load()
     folderMenuFavorites = readOrDefault(s, u"Launcher/FolderMenuFavorites"_s, d.folderMenuFavorites);
     folderMenuRecent = readOrDefault(s, u"Launcher/FolderMenuRecent"_s, d.folderMenuRecent);
     folderMenuWindows = readOrDefault(s, u"Launcher/FolderMenuWindows"_s, d.folderMenuWindows);
-    folderMenuFavoritesInline = std::clamp(readOrDefault(s, u"Launcher/FolderMenuFavoritesInline"_s, d.folderMenuFavoritesInline), 0, 10);
-    folderMenuRecentInline = std::clamp(readOrDefault(s, u"Launcher/FolderMenuRecentInline"_s, d.folderMenuRecentInline), 0, 10);
-    folderMenuWindowsInline = std::clamp(readOrDefault(s, u"Launcher/FolderMenuWindowsInline"_s, d.folderMenuWindowsInline), 0, 10);
+    folderMenuFavoriteFolders = readOrDefault(s, u"Launcher/FolderMenuFavoriteFolders"_s, d.folderMenuFavoriteFolders);
+    folderMenuFavoriteFiles = readOrDefault(s, u"Launcher/FolderMenuFavoriteFiles"_s, d.folderMenuFavoriteFiles);
+    folderMenuFavoriteApps = readOrDefault(s, u"Launcher/FolderMenuFavoriteApps"_s, d.folderMenuFavoriteApps);
+    folderMenuFavoritePlaces = readOrDefault(s, u"Launcher/FolderMenuFavoritePlaces"_s, d.folderMenuFavoritePlaces);
+    folderMenuFavoriteCommands = readOrDefault(s, u"Launcher/FolderMenuFavoriteCommands"_s, d.folderMenuFavoriteCommands);
+    if (!folderMenuFavoriteFolders && !folderMenuFavoriteFiles && !folderMenuFavoriteApps
+        && !folderMenuFavoritePlaces && !folderMenuFavoriteCommands) {
+        folderMenuFavoriteFolders = folderMenuFavoriteFiles = folderMenuFavoriteApps
+            = folderMenuFavoritePlaces = folderMenuFavoriteCommands = true;
+    }
+    folderMenuAppsExpanded = readOrDefault(s, u"Launcher/FolderMenuAppsExpanded"_s, d.folderMenuAppsExpanded);
+    const auto readInline = [&](const QString& key, int fallback) {
+        if (s.contains(key) && s.value(key).toString().trimmed().compare(u"all"_s, Qt::CaseInsensitive) == 0)
+            return kFolderMenuInlineAll;
+        return clampFolderMenuInline(readOrDefault(s, key, fallback));
+    };
+    folderMenuFavoritesInline = readInline(u"Launcher/FolderMenuFavoritesInline"_s, d.folderMenuFavoritesInline);
+    folderMenuRecentInline = readInline(u"Launcher/FolderMenuRecentInline"_s, d.folderMenuRecentInline);
+    folderMenuWindowsInline = readInline(u"Launcher/FolderMenuWindowsInline"_s, d.folderMenuWindowsInline);
     if (!folderMenuFavorites && !folderMenuRecent && !folderMenuWindows) // a menu of nothing: back to all (#51)
         folderMenuFavorites = folderMenuRecent = folderMenuWindows = true;
     folderMenuItemSearch = readOrDefault(s, u"Launcher/FolderMenuItemSearch"_s, d.folderMenuItemSearch);
@@ -966,6 +984,9 @@ void Settings::load()
     folderMenuFiles = readOrDefault(s, u"Launcher/FolderMenuFiles"_s, d.folderMenuFiles);
     folderMenuHotkey = readOrDefault(s, u"Launcher/FolderMenuHotkey"_s, d.folderMenuHotkey).trimmed();
     folderMenuOpusBefore = readOrDefault(s, u"Launcher/FolderMenuOpusBefore"_s, d.folderMenuOpusBefore);
+    folderMenuOpusMiddleBefore = readOrDefault(s, u"Launcher/FolderMenuOpusMiddleBefore"_s, d.folderMenuOpusMiddleBefore);
+    folderMenuOpusSingleMiddleBefore
+        = readOrDefault(s, u"Launcher/FolderMenuOpusSingleMiddleBefore"_s, d.folderMenuOpusSingleMiddleBefore);
     dropPie = readOrDefault(s, u"Favorites/DropPie"_s, d.dropPie);
     dropPieKeyTakenTold = readOrDefault(s, u"Favorites/DropPieKeyTakenTold"_s, d.dropPieKeyTakenTold);
 
@@ -984,6 +1005,7 @@ void Settings::load()
     folderKeyword = normalizedTypeKeyword(readOrDefault(s, u"Results/FolderKeyword"_s, d.folderKeyword)).value_or(d.folderKeyword);
     doubleClickToOpen = readOrDefault(s, u"Results/DoubleClickToOpen"_s, d.doubleClickToOpen);
     clickPreviews = readOrDefault(s, u"Results/ClickPreviews"_s, d.clickPreviews);
+    defaultSystemMenu = readOrDefault(s, u"Results/DefaultSystemMenu"_s, d.defaultSystemMenu);
     tabEntersFavoriteFolder = readOrDefault(s, u"Results/TabEntersFavoriteFolder"_s, d.tabEntersFavoriteFolder);
     thumbnails = readOrDefault(s, u"Results/Thumbnails"_s, d.thumbnails);
     rowDeleteButton = readOrDefault(s, u"Results/DeleteButton"_s, d.rowDeleteButton);
@@ -1373,6 +1395,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/DialogBar"_s, dialogBar);
     s.setValue(u"Launcher/DialogBarPlace"_s, dialogBarPlace);
     s.setValue(u"Launcher/DialogBarFolderOnly"_s, dialogBarFolderOnly);
+    s.setValue(u"Launcher/DialogBarSuggestions"_s, dialogBarSuggestions);
     s.setValue(u"Launcher/DialogAutoJump"_s, dialogAutoJump);
     s.setValue(u"Launcher/DialogAutoJumpWhen"_s, dialogAutoJumpWhen);
     s.setValue(u"Launcher/DialogAutoJumpAsked"_s, dialogAutoJumpAsked);
@@ -1397,6 +1420,12 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/FolderMenuFavorites"_s, folderMenuFavorites);
     s.setValue(u"Launcher/FolderMenuRecent"_s, folderMenuRecent);
     s.setValue(u"Launcher/FolderMenuWindows"_s, folderMenuWindows);
+    s.setValue(u"Launcher/FolderMenuFavoriteFolders"_s, folderMenuFavoriteFolders);
+    s.setValue(u"Launcher/FolderMenuFavoriteFiles"_s, folderMenuFavoriteFiles);
+    s.setValue(u"Launcher/FolderMenuFavoriteApps"_s, folderMenuFavoriteApps);
+    s.setValue(u"Launcher/FolderMenuFavoritePlaces"_s, folderMenuFavoritePlaces);
+    s.setValue(u"Launcher/FolderMenuFavoriteCommands"_s, folderMenuFavoriteCommands);
+    s.setValue(u"Launcher/FolderMenuAppsExpanded"_s, folderMenuAppsExpanded);
     s.setValue(u"Launcher/FolderMenuFavoritesInline"_s, folderMenuFavoritesInline);
     s.setValue(u"Launcher/FolderMenuRecentInline"_s, folderMenuRecentInline);
     s.setValue(u"Launcher/FolderMenuWindowsInline"_s, folderMenuWindowsInline);
@@ -1409,6 +1438,8 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/FolderMenuFiles"_s, folderMenuFiles);
     s.setValue(u"Launcher/FolderMenuHotkey"_s, folderMenuHotkey);
     s.setValue(u"Launcher/FolderMenuOpusBefore"_s, folderMenuOpusBefore);
+    s.setValue(u"Launcher/FolderMenuOpusMiddleBefore"_s, folderMenuOpusMiddleBefore);
+    s.setValue(u"Launcher/FolderMenuOpusSingleMiddleBefore"_s, folderMenuOpusSingleMiddleBefore);
     s.setValue(u"Favorites/DropPie"_s, dropPie);
     s.setValue(u"Favorites/DropPieKeyTakenTold"_s, dropPieKeyTakenTold);
     s.setValue(u"Results/FoldersFirst"_s, foldersFirst);
@@ -1422,6 +1453,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Results/FolderKeyword"_s, folderKeyword);
     s.setValue(u"Results/DoubleClickToOpen"_s, doubleClickToOpen);
     s.setValue(u"Results/ClickPreviews"_s, clickPreviews);
+    s.setValue(u"Results/DefaultSystemMenu"_s, defaultSystemMenu);
     s.setValue(u"Results/TabEntersFavoriteFolder"_s, tabEntersFavoriteFolder);
     s.setValue(u"Results/Thumbnails"_s, thumbnails);
     s.setValue(u"Results/DeleteButton"_s, rowDeleteButton);
@@ -1656,14 +1688,64 @@ CrawlRules Settings::hiddenRules() const
 
 std::wstring Settings::indexFolderPath(const QString& folder)
 {
-    if (folder.trimmed().isEmpty() || isNetworkPath(folder))
+    const QString cleaned = cleanFolderPath(folder);
+    if (cleaned.isEmpty() || isNetworkPath(cleaned))
         return {}; // a share's place is 网络共享 (ShareIndexer), and its folders are not looked up here
-    std::wstring path = win32::expandEnvironment(QDir::toNativeSeparators(folder.trimmed()).toStdWString());
+    std::wstring path = win32::expandEnvironment(cleaned.toStdWString());
     if (path.size() < 2 || path[1] != L':' || !std::iswalpha(path[0]) || (path.size() > 2 && path[2] != L'\\'))
         return {}; // no full path
-    path = path.find_first_not_of(L'\\', 2) == std::wstring::npos ? path.substr(0, 2) : normalizePath(folder); // "D:\" -> "D:"
+    path = path.find_first_not_of(L'\\', 2) == std::wstring::npos ? path.substr(0, 2) : normalizePath(cleaned); // "D:\" -> "D:"
     path[0] = static_cast<wchar_t>(std::towupper(path[0]));
     return path;
+}
+
+QString Settings::cleanFolderPath(const QString& text)
+{
+    QString t = text.trimmed();
+    if (t.size() >= 2 && t.front() == u'"' && t.back() == u'"')
+        t = t.mid(1, t.size() - 2).trimmed();
+    if (t.startsWith(u"file:"_s, Qt::CaseInsensitive))
+        t = QUrl(t).toLocalFile();
+    t = QDir::toNativeSeparators(t);
+    while (t.size() > 3 && t.endsWith(u'\\'))
+        t.chop(1);
+    if (t.size() == 2 && t[1] == u':')
+        t += u'\\';
+    return t;
+}
+
+bool Settings::hasEnvVar(QStringView text)
+{
+    qsizetype from = 0;
+    while (from < text.size()) {
+        const qsizetype open = text.indexOf(u'%', from);
+        if (open < 0)
+            return false;
+        const qsizetype close = text.indexOf(u'%', open + 1);
+        if (close < 0)
+            return false;
+        if (close > open + 1)
+            return true;
+        from = close + 1;
+    }
+    return false;
+}
+
+QString Settings::resolvedEnvPath(const QString& text)
+{
+    const QString raw = cleanFolderPath(text);
+    if (!hasEnvVar(raw))
+        return {};
+    const QString expanded
+        = cleanFolderPath(QString::fromStdWString(win32::expandEnvironment(raw.toStdWString())));
+    if (expanded.isEmpty() || hasEnvVar(expanded) || expanded.compare(raw, Qt::CaseInsensitive) == 0)
+        return {};
+    return expanded;
+}
+
+std::wstring Settings::excludedCompareKey(const QString& path)
+{
+    return normalizePath(cleanFolderPath(path));
 }
 
 std::vector<std::wstring> Settings::indexFolderPaths() const

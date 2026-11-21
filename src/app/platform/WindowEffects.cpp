@@ -15,6 +15,8 @@
 #include <commctrl.h>
 #include <windows.h>
 #include <msctf.h>
+#include <shobjidl.h>
+#include <wrl/client.h>
 
 #include <atomic>
 #include <mutex>
@@ -406,6 +408,47 @@ void setCloaked(QWindow* window, bool cloaked)
     }
 }
 
+void setTaskbarWindow(QWindow* window, bool on)
+{
+    const HWND hwnd = handleOf(window);
+    if (!hwnd)
+        return;
+    const Qt::WindowFlags flags = window->flags();
+    const LONG_PTR exStyle = ::GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    const LONG_PTR style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+    LONG_PTR wantedEx = exStyle & ~(WS_EX_TOOLWINDOW | WS_EX_APPWINDOW);
+    if (on)
+        wantedEx |= WS_EX_APPWINDOW;
+    else if ((flags & Qt::WindowType_Mask) == Qt::Tool)
+        wantedEx |= WS_EX_TOOLWINDOW;
+    // The minimize box: what the taskbar's button and Win+D go by; the
+    // window menu with it, as their minimizing needs (none of it drawn: no
+    // caption, see nativeFrameProc).
+    LONG_PTR wanted = style & ~(WS_MINIMIZEBOX | WS_SYSMENU);
+    if (on || (flags & Qt::WindowMinimizeButtonHint))
+        wanted |= WS_MINIMIZEBOX;
+    if (on || (flags & Qt::WindowSystemMenuHint))
+        wanted |= WS_SYSMENU;
+    if (wantedEx == exStyle && wanted == style)
+        return;
+    ::SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wantedEx);
+    ::SetWindowLongPtrW(hwnd, GWL_STYLE, wanted);
+    ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+        SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
+    // The taskbar looks at the styles as a window is shown; one on the
+    // screen already is added or taken away by hand.
+    if (!::IsWindowVisible(hwnd))
+        return;
+    Microsoft::WRL::ComPtr<ITaskbarList> taskbar;
+    if (FAILED(::CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&taskbar)))
+        || FAILED(taskbar->HrInit())) {
+        qWarning("Taskbar button: no ITaskbarList");
+        return;
+    }
+    if (FAILED(on ? taskbar->AddTab(hwnd) : taskbar->DeleteTab(hwnd)))
+        qWarning("Taskbar button: could not %s it", on ? "add" : "remove");
+}
+
 void expectActivation(QWindow* window)
 {
     if (const HWND hwnd = handleOf(window); hwnd && ::GetPropW(hwnd, kBackdropWindow))
@@ -443,26 +486,40 @@ namespace {
 // over every window; its opacity stepped down by an animation it owns.
 class FadingCopy : public QVariantAnimation {
 public:
-    explicit FadingCopy(HWND window)
+    FadingCopy(HWND window, std::function<void()> done)
         : QVariantAnimation(qApp)
         , m_window(window)
+        , m_done(std::move(done))
     {
         setStartValue(255);
         setEndValue(0);
         connect(this, &QVariantAnimation::valueChanged, this, [this](const QVariant& alpha) {
+            if (!m_window)
+                return;
             BLENDFUNCTION blend {AC_SRC_OVER, 0, static_cast<BYTE>(alpha.toInt()), 0};
             ::UpdateLayeredWindow(m_window, nullptr, nullptr, nullptr, nullptr, nullptr, 0, &blend, ULW_ALPHA);
         });
+        connect(this, &QVariantAnimation::finished, this, [this] {
+            if (const HWND w = std::exchange(m_window, nullptr))
+                ::DestroyWindow(w);
+            if (auto done = std::exchange(m_done, {}))
+                done();
+        });
     }
-    ~FadingCopy() override { ::DestroyWindow(m_window); }
+    ~FadingCopy() override
+    {
+        if (m_window)
+            ::DestroyWindow(m_window);
+    }
 
 private:
     HWND m_window;
+    std::function<void()> m_done;
 };
 
 } // namespace
 
-bool fadeOutCopy(QWindow* window, std::chrono::milliseconds duration)
+bool fadeOutCopy(QWindow* window, std::chrono::milliseconds duration, std::function<void()> done)
 {
     const HWND hwnd = handleOf(window);
     RECT bounds {};
@@ -524,7 +581,7 @@ bool fadeOutCopy(QWindow* window, std::chrono::milliseconds duration)
         return false;
     }
     ::ShowWindow(copy, SW_SHOWNOACTIVATE);
-    auto* fading = new FadingCopy(copy);
+    auto* fading = new FadingCopy(copy, std::move(done));
     fading->setDuration(static_cast<int>(duration.count()));
     fading->start(QAbstractAnimation::DeleteWhenStopped);
     return true;
@@ -603,32 +660,6 @@ Front bringToFront(QWindow* window, ShellFlyout flyout)
     }
     qWarning().noquote() << "Could not bring the window to the front over" << describe(::GetForegroundWindow());
     return Front::Refused;
-}
-
-void setTaskbarWindow(QWindow* window, bool on)
-{
-    const HWND hwnd = handleOf(window);
-    if (!hwnd)
-        return;
-    const LONG_PTR exStyle = ::GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-    const LONG_PTR style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
-    // The taskbar and Alt+Tab take the window as the styles say: a tool
-    // window's WS_EX_TOOLWINDOW hides it from both, WS_EX_APPWINDOW shows
-    // it. WS_MINIMIZEBOX and the system menu give the taskbar button its
-    // minimize and its menu; Qt's frameless style keeps WS_CAPTION (the
-    // nativeFrameProc subclass), which the system menu needs.
-    const LONG_PTR wantedEx = on ? (exStyle & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
-                                 : (exStyle & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
-    const LONG_PTR wantedStyle = on ? style | WS_MINIMIZEBOX | WS_SYSMENU
-                                    : style & ~(WS_MINIMIZEBOX | WS_SYSMENU);
-    if (wantedEx == exStyle && wantedStyle == style)
-        return;
-    if (wantedEx != exStyle)
-        ::SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wantedEx);
-    if (wantedStyle != style)
-        ::SetWindowLongPtrW(hwnd, GWL_STYLE, wantedStyle);
-    ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-        SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
 }
 
 void setMenuTheme(bool dark)

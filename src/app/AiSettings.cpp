@@ -118,9 +118,9 @@ Entry choice(const Head& head, QString Settings::* field, std::vector<Choice> ch
 }
 
 // A whole number as `field` holds it, between `min` and `max`; with a
-// `zeroLabel`, 0 is allowed as well.
+// `zeroLabel`, 0 is allowed as well; with an `allLabel`, -1 is allowed too.
 Entry integer(const Head& head, int Settings::* field, int min, int max, const char* zeroLabel = nullptr,
-    const char* zeroMeaning = nullptr)
+    const char* zeroMeaning = nullptr, const char* allLabel = nullptr, const char* allMeaning = nullptr)
 {
     Entry e = base(head, Type::Int);
     e.min = min;
@@ -128,6 +128,9 @@ Entry integer(const Head& head, int Settings::* field, int min, int max, const c
     e.zeroLabel = zeroLabel;
     if (zeroMeaning)
         e.zeroMeaning = QString::fromUtf8(zeroMeaning); // "only when Win顺 starts"
+    e.allLabel = allLabel;
+    if (allMeaning)
+        e.allMeaning = QString::fromUtf8(allMeaning);
     e.field = field;
     return e;
 }
@@ -337,6 +340,36 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Launcher/FolderMenuWindows", QT_TRANSLATE_NOOP("AiSettings", "菜单里列出别的窗口里的文件夹"), "files_and_dialogs", 1,
                     "The folder menu lists the folders open in other file manager windows. At least one of the three groups stays on."},
         &Settings::folderMenuWindows));
+    add(boolean({"Launcher/FolderMenuFavoriteFolders", QT_TRANSLATE_NOOP("AiSettings", "文件夹菜单的收藏夹显示文件夹"), "files_and_dialogs", 1,
+                    "Include favorite folders in the folder menu's Favorites group. At least one of the five favorite kinds stays on."},
+        &Settings::folderMenuFavoriteFolders));
+    add(boolean({"Launcher/FolderMenuFavoriteFiles", QT_TRANSLATE_NOOP("AiSettings", "文件夹菜单的收藏夹显示文件"), "files_and_dialogs", 1,
+                    "Include favorite files in the folder menu's Favorites group. At least one of the five favorite kinds stays on."},
+        &Settings::folderMenuFavoriteFiles));
+    add(boolean({"Launcher/FolderMenuFavoriteApps", QT_TRANSLATE_NOOP("AiSettings", "文件夹菜单的收藏夹显示应用"), "files_and_dialogs", 1,
+                    "Include favorite apps in the folder menu's Favorites group. Turn off to hide favorite apps completely from the folder menu; at least one of the five favorite kinds stays on."},
+        &Settings::folderMenuFavoriteApps));
+    add(boolean({"Launcher/FolderMenuFavoritePlaces", QT_TRANSLATE_NOOP("AiSettings", "文件夹菜单的收藏夹显示系统设置"), "files_and_dialogs", 1,
+                    "Include favorite Windows and Win顺 settings places in the folder menu's Favorites group. At least one of the five favorite kinds stays on."},
+        &Settings::folderMenuFavoritePlaces));
+    add(boolean({"Launcher/FolderMenuFavoriteCommands", QT_TRANSLATE_NOOP("AiSettings", "文件夹菜单的收藏夹显示自定义命令"), "files_and_dialogs", 1,
+                    "Include favorite custom commands in the folder menu's Favorites group. At least one of the five favorite kinds stays on."},
+        &Settings::folderMenuFavoriteCommands));
+    add(boolean({"Launcher/FolderMenuAppsExpanded", QT_TRANSLATE_NOOP("AiSettings", "文件夹菜单里展开收藏的应用"), "files_and_dialogs", 1,
+                    "Whether the collapsible Apps section inside the folder menu's Favorites is expanded. Can also be toggled directly inside the folder menu."},
+        &Settings::folderMenuAppsExpanded));
+    add(integer({"Launcher/FolderMenuFavoritesInline", QT_TRANSLATE_NOOP("AiSettings", "收藏夹显示方式"), "files_and_dialogs", 1,
+                    "How the folder menu displays favorites: 0 keeps them in a submenu, 1..20 lists the first N directly at the top level with the rest under More, and -1 lists all of them directly (Listary-style)."},
+        &Settings::folderMenuFavoritesInline, 1, Settings::kFolderMenuInlineMax,
+        QT_TRANSLATE_NOOP("AiSettings", "二级菜单"), "submenu", QT_TRANSLATE_NOOP("AiSettings", "全部"), "all directly"));
+    add(integer({"Launcher/FolderMenuRecentInline", QT_TRANSLATE_NOOP("AiSettings", "最近的文件夹显示方式"), "files_and_dialogs", 1,
+                    "How the folder menu displays recent folders: 0 keeps them in a submenu, 1..20 lists the first N directly at the top level with the rest under More, and -1 lists all of them directly."},
+        &Settings::folderMenuRecentInline, 1, Settings::kFolderMenuInlineMax,
+        QT_TRANSLATE_NOOP("AiSettings", "二级菜单"), "submenu", QT_TRANSLATE_NOOP("AiSettings", "全部"), "all directly"));
+    add(integer({"Launcher/FolderMenuWindowsInline", QT_TRANSLATE_NOOP("AiSettings", "已打开的文件夹显示方式"), "files_and_dialogs", 1,
+                    "How the folder menu displays folders open in other windows: 0 keeps them in a submenu, 1..20 lists the first N directly at the top level with the rest under More, and -1 lists all of them directly."},
+        &Settings::folderMenuWindowsInline, 1, Settings::kFolderMenuInlineMax,
+        QT_TRANSLATE_NOOP("AiSettings", "二级菜单"), "submenu", QT_TRANSLATE_NOOP("AiSettings", "全部"), "all directly"));
     add(boolean({"Launcher/FolderMenuItemSearch", QT_TRANSLATE_NOOP("AiSettings", "文件夹菜单里有“在此搜索”"), "files_and_dialogs", 1,
                     "The folder menu offers this action under its lists. On by default."},
         &Settings::folderMenuItemSearch));
@@ -379,6 +412,12 @@ std::vector<Entry> buildCatalog()
                 {u"left"_s, u"left of the dialog"_s, QT_TRANSLATE_NOOP("AiSettings", "左边")},
                 {u"right"_s, u"right of the dialog"_s, QT_TRANSLATE_NOOP("AiSettings", "右边")}}));
         e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "搜索框的位置");
+    }
+    {
+        Entry& e = add(boolean({"Launcher/DialogBarSuggestions", QT_TRANSLATE_NOOP("AiSettings", "点进对话框旁的搜索框就列出常用位置"), "files_and_dialogs", 2,
+                                   "Clicked into with nothing typed, the dialog search bar lists the folders open in file managers, favorites and recent folders. Off: nothing until typing (or the Down key)."},
+            &Settings::dialogBarSuggestions));
+        e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "点进来就列出常用位置");
     }
     {
         Entry& e = add(boolean({"Launcher/DialogAutoJump", QT_TRANSLATE_NOOP("AiSettings", "对话框自动转到文件管理器的文件夹"), "files_and_dialogs", 2,
@@ -593,6 +632,9 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Results/ClickPreviews", QT_TRANSLATE_NOOP("AiSettings", "单击预览"), "results", 1,
                     "With Results/DoubleClickToOpen on: a click on a result also shows its preview (as a middle click does); a double click or Enter still opens it."},
         &Settings::clickPreviews));
+    add(boolean({"Results/DefaultSystemMenu", QT_TRANSLATE_NOOP("AiSettings", "默认使用系统右键菜单"), "results", 1,
+                    "Right-clicking a file or folder opens the Windows shell context menu directly, and Shift+right-click opens WinShun's menu; rows without a shell menu (apps, plugins) still open WinShun's menu."},
+        &Settings::defaultSystemMenu));
     add(boolean({"Results/TabEntersFavoriteFolder", QT_TRANSLATE_NOOP("AiSettings", "Tab 进入收藏文件夹"), "results", 1,
                     "In All, Tab browses a favorite folder the list selected by itself (such as the first row). Off by default: Tab switches search scopes there. A folder the user moved to with the arrow keys or clicked is always browsed by Tab, Ctrl+Backspace goes back. Shift+Tab and plugin/web completion keep their usual behavior."},
         &Settings::tabEntersFavoriteFolder));
@@ -947,6 +989,9 @@ std::vector<Entry> buildCatalog()
             e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "菜单里的操作");
         else if (e.key == u"Launcher/FolderMenuFavorites" || e.key == u"Launcher/FolderMenuRecent" || e.key == u"Launcher/FolderMenuWindows")
             e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "菜单里列出的内容");
+        else if ((e.key.startsWith(u"Launcher/FolderMenuFavorite") && e.key != u"Launcher/FolderMenuFavoritesInline")
+            || e.key == u"Launcher/FolderMenuAppsExpanded")
+            e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "收藏夹里显示的类型");
         else if (e.key == u"Results/ShowModifiedTime")
             e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "较早的日期也显示具体时间");
         else if (e.key == u"Clipboard/PreviewRestore") // titled as the search box's row of that name
@@ -960,7 +1005,8 @@ std::vector<Entry> buildCatalog()
     // ---- never seen: paths and shares (what leaves the PC), AI's own switches, plugins, bookkeeping ----
     for (const char* key : {"Backup/Folder", "Index/Folder", "Capture/PrintScreenBefore", "Launcher/DialogAutoJumpAsked", "Index/FolderHintDismissed",
              "Launcher/AdminTapHinted", "Launcher/AdminDialogHinted", "Launcher/ServiceUpdateHinted", "Favorites/DropPieKeyTakenTold",
-             "Launcher/FolderMenuOpusBefore", "Mcp/Enabled", "Mcp/AllowOpen", "Mcp/Clipboard", "Mcp/Screenshot",
+             "Launcher/FolderMenuOpusBefore", "Launcher/FolderMenuOpusMiddleBefore",
+             "Launcher/FolderMenuOpusSingleMiddleBefore", "Mcp/Enabled", "Mcp/AllowOpen", "Mcp/Clipboard", "Mcp/Screenshot",
              "Mcp/ExcludedPaths", "Mcp/Plugins", "Mcp/PluginActions", "Mcp/Settings", "Plugins/DeveloperMode",
              "Proxy/Mode", "Proxy/Address"}) // where every request goes: not for AI to turn
         add(hidden(key));
@@ -1297,12 +1343,19 @@ QString applyChange(const Entry& e, State& s, const Change& c, const Env& env)
         break;
     }
     case Type::Int: {
-        const QString range = e.zeroLabel ? u"0 (%1) or a whole number from %2 to %3"_s.arg(e.zeroMeaning).arg(int(e.min)).arg(int(e.max))
-                                          : u"a whole number from %1 to %2"_s.arg(int(e.min)).arg(int(e.max));
+        QStringList allowed;
+        if (e.allLabel)
+            allowed << u"-1 (%1)"_s.arg(e.allMeaning);
+        if (e.zeroLabel)
+            allowed << u"0 (%1)"_s.arg(e.zeroMeaning);
+        allowed << u"a whole number from %1 to %2"_s.arg(int(e.min)).arg(int(e.max));
+        const QString range = allowed.size() == 1 ? allowed.first()
+            : allowed.size() == 2                 ? u"%1 or %2"_s.arg(allowed[0], allowed[1])
+                                                  : u"%1, %2 or %3"_s.arg(allowed[0], allowed[1], allowed[2]);
         if (!v.isDouble() || v.toDouble() != std::floor(v.toDouble()))
             return u"Must be %1."_s.arg(range);
         const double d = v.toDouble();
-        if (!((e.zeroLabel && d == 0) || (d >= e.min && d <= e.max)))
+        if (!((e.allLabel && d == -1) || (e.zeroLabel && d == 0) || (d >= e.min && d <= e.max)))
             return u"%1 is out of range: must be %2."_s.arg(d).arg(range);
         e.setInteger(s, static_cast<int>(d));
         break;
@@ -1364,6 +1417,8 @@ QString textOf(const Entry& e, const QJsonValue& v)
         return it != e.choices.end() ? translated(it->label) : v.toString();
     }
     case Type::Int:
+        if (e.allLabel && v.toInt() == -1)
+            return translated(e.allLabel);
         return e.zeroLabel && v.toInt() == 0 ? translated(e.zeroLabel) : QString::number(v.toInt());
     case Type::Number:
         return sizeText(v.toDouble());
@@ -1766,6 +1821,8 @@ QJsonObject entryJson(const Entry& e, const State& current, const State& default
             o.insert(u"unit"_s, u"MB"_s);
         if (!e.zeroMeaning.isEmpty())
             o.insert(u"zero_means"_s, e.zeroMeaning);
+        if (!e.allMeaning.isEmpty())
+            o.insert(u"minus_one_means"_s, e.allMeaning);
     }
     if (e.type == Type::List)
         o.insert(u"items_are"_s, listItemsName(e.list));
@@ -1927,6 +1984,15 @@ void checkFolderMenuOneLeft(Plan& plan)
         plan.problems.push_back(u"Launcher/FolderMenuDouble, Launcher/FolderMenuMiddle: at least one of them stays on."_s);
     if (!s.folderMenuExplorer && !s.folderMenuDesktop && (changed(u"Launcher/FolderMenuExplorer"_s) || changed(u"Launcher/FolderMenuDesktop"_s)))
         plan.problems.push_back(u"Launcher/FolderMenuExplorer, Launcher/FolderMenuDesktop: at least one of them stays on."_s);
+    if (!s.folderMenuFavoriteFolders && !s.folderMenuFavoriteFiles && !s.folderMenuFavoriteApps
+        && !s.folderMenuFavoritePlaces && !s.folderMenuFavoriteCommands
+        && (changed(u"Launcher/FolderMenuFavoriteFolders"_s) || changed(u"Launcher/FolderMenuFavoriteFiles"_s)
+            || changed(u"Launcher/FolderMenuFavoriteApps"_s) || changed(u"Launcher/FolderMenuFavoritePlaces"_s)
+            || changed(u"Launcher/FolderMenuFavoriteCommands"_s))) {
+        plan.problems.push_back(
+            u"Launcher/FolderMenuFavoriteFolders, Launcher/FolderMenuFavoriteFiles, Launcher/FolderMenuFavoriteApps, "
+            u"Launcher/FolderMenuFavoritePlaces, Launcher/FolderMenuFavoriteCommands: at least one of them stays on."_s);
+    }
 }
 
 } // namespace

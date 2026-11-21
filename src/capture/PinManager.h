@@ -34,6 +34,7 @@ public:
         std::function<void(const QImage&, bool screenshot)> copy; // screenshot: the pin came from a capture
         std::function<void(const QImage&, const QString& path)> save; // empty path: the Screenshots folder
         std::function<void(const QImage&, double dpr, const QRect& picture)> ocr;
+        std::function<void(const QImage&, double dpr, const QRect& picture)> ocrCopy; // Shift+C / 复制文字 (#423)
         std::function<void(PinWindow*)> translate; // 翻译: its words translated in place (#191); empty: not offered
         std::function<void(PinWindow*)> edit; // 编辑: the editing window opens on it
         std::function<void()> closed; // a pin closed: its memory can go back to Windows
@@ -42,8 +43,10 @@ public:
         std::function<QColor()> edge; // PinWindow::Host::edge
         std::function<qreal()> pillRadius; // PinWindow::Host::pillRadius
         std::function<void(const QString&)> copyText; // the text picked on a pin
-        // The lines of a picture (CaptureOcr::scan), for picking text.
-        std::function<void(const QImage&, double dpr, std::function<void(QList<RedactLine>)> done)> readLines;
+        // The lines of a picture (CaptureOcr::scan), for picking text and auto-OCR.
+        std::function<void(const QImage&, double dpr, std::function<void(QList<RedactLine>)> done,
+            std::shared_ptr<const std::atomic<bool>> cancelled)>
+            readLines;
         std::function<bool()> ocrAvailable; // checked again after an on-demand installation
         // The host supplies its themed native menu; standalone previews can use the system menu.
         std::function<int(HWND, const std::vector<shell::MenuItem>&, POINT)> popupMenu;
@@ -58,13 +61,15 @@ public:
     // desktop); `screenshot`: taken with the capture (PinWindow::screenshot);
     // `project`: its annotations, to edit again (empty: none).
     // The pin made (the manager's, here until it is closed: contains()); none for a null picture.
-    PinWindow* pin(const QImage& image, QPoint origin, bool screenshot = true, QByteArray project = {});
+    PinWindow* pin(const QImage& image, QPoint origin, bool screenshot = true, QByteArray project = {},
+        std::optional<QList<RedactLine>> recognizedLines = std::nullopt);
     // A picture not shown where it was taken (a long screenshot, a file, the
     // clipboard's): its own pixels kept, it starts within the work area of
     // the monitor at `anchor`, shown fitted when larger than 90% of it, its
     // pixel at `anchor` kept in place (PinWindow). `text`: the words the
     // picture shows (copied text pinned, GitHub #388), copied by Ctrl+C.
-    void pinFitted(const QImage& image, QPoint origin, QPoint anchor, bool screenshot, QString text = {});
+    void pinFitted(const QImage& image, QPoint origin, QPoint anchor, bool screenshot, QString text = {},
+        std::optional<QList<RedactLine>> recognizedLines = std::nullopt);
     int count() const { return static_cast<int>(m_pins.size()); }
     // `pin` is one of the pins on the screen (not closed since): for what
     // keeps a pointer to one meanwhile (the editing window).
@@ -90,6 +95,8 @@ public:
     // itself when a pin has the focus and the user stops (PinHintPolicy);
     // off, only ? or F1 shows it.
     void setKeyHints(bool on);
+    // [Capture] PinAutoOcr: quietly recognize text on pinned pictures for direct drag selection.
+    void setAutoOcr(bool on);
     bool keyCardShown() const { return m_card && m_card->visible(); }
     const CaptureKeys& keys() const { return m_keys; }
     // True while the Ctrl watcher runs (some pin is click-through), else no timer at all.
@@ -98,8 +105,10 @@ public:
 private:
     void setWatching(); // starts or stops the watcher to match anyClickThrough()
     void watch(); // one tick: Ctrl and the cursor against every click-through pin
-    PinWindow* add(const QImage& image, QPoint origin, bool screenshot, QByteArray project, std::optional<QPoint> fitAbout);
+    PinWindow* add(const QImage& image, QPoint origin, bool screenshot, QByteArray project, std::optional<QPoint> fitAbout,
+        std::optional<QList<RedactLine>> recognizedLines, bool announceLines);
     void showMenu(PinWindow* pin, POINT at);
+    void copyWords(PinWindow* pin);
     void closed(PinWindow* pin);
     // The key card: what the pins report (PinWindow::Host), and the card shown or taken away to match.
     void hintFocus(PinWindow* pin, bool focused, bool fromOwnWindow);
@@ -112,6 +121,7 @@ private:
     std::vector<std::unique_ptr<PinWindow>> m_pins;
     QTimer m_watch; // a click-through pin under the cursor with Ctrl held takes the mouse (#59)
     bool m_hidden = false; // 隐藏全部贴图
+    bool m_autoOcr = true;
     PinDoubleClick m_doubleClick = PinDoubleClick::Reset;
     CaptureKeys m_keys;
     const PinWindow* m_menuPin = nullptr; // the pin whose menu is up

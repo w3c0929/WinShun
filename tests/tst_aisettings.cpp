@@ -187,6 +187,7 @@ private slots:
                  "Plugin.winshun.gestures/Setting.layout", // a hidden setting (0.41.0) is no more AI's than a shown one
                  "Plugins/DeveloperMode", "Launcher/FileManagerOpenCommand", "Launcher/FileManagerRevealCommand", "Backup/Folder",
                  "Index/Folder", "Shares/size", "Shares/1\\Path", "Capture/PrintScreenBefore", "Launcher/FolderMenuOpusBefore",
+                 "Launcher/FolderMenuOpusMiddleBefore", "Launcher/FolderMenuOpusSingleMiddleBefore",
                  "Launcher/DialogAutoJumpAsked", "Network/Threads", "Proxy/Mode", "Proxy/Address"})
             QTest::newRow(key) << QString::fromLatin1(key);
     }
@@ -900,6 +901,26 @@ private slots:
         QCOMPARE(plan.items.front().newText, u"深色"_s); // the label, never the id
         plan = makePlan(state, one(u"Clipboard/MaxItems"_s, 0), {});
         QCOMPARE(plan.items.front().newText, u"不限"_s);
+        plan = makePlan(state, one(u"Launcher/FolderMenuFavoritesInline"_s, -1), {});
+        QVERIFY2(plan.problems.isEmpty(), qPrintable(problemText(plan)));
+        QCOMPARE(plan.items.front().oldText, u"二级菜单"_s);
+        QCOMPARE(plan.items.front().newText, u"全部"_s);
+        QCOMPARE(plan.result.settings.folderMenuFavoritesInline, Settings::kFolderMenuInlineAll);
+        QVERIFY(!makePlan(state, one(u"Launcher/FolderMenuFavoritesInline"_s, -2), {}).problems.isEmpty());
+        QVERIFY(!makePlan(state, one(u"Launcher/FolderMenuFavoritesInline"_s, 21), {}).problems.isEmpty());
+        plan = makePlan(state, one(u"Launcher/FolderMenuFavoriteApps"_s, false), {});
+        QVERIFY2(plan.problems.isEmpty(), qPrintable(problemText(plan)));
+        QVERIFY(!plan.result.settings.folderMenuFavoriteApps);
+        plan = makePlan(state, one(u"Launcher/FolderMenuAppsExpanded"_s, false), {});
+        QVERIFY2(plan.problems.isEmpty(), qPrintable(problemText(plan)));
+        QVERIFY(!plan.result.settings.folderMenuAppsExpanded);
+        QJsonArray allKindsOff;
+        for (const QString& key : {u"Launcher/FolderMenuFavoriteFolders"_s, u"Launcher/FolderMenuFavoriteFiles"_s,
+                 u"Launcher/FolderMenuFavoriteApps"_s, u"Launcher/FolderMenuFavoritePlaces"_s,
+                 u"Launcher/FolderMenuFavoriteCommands"_s}) {
+            allKindsOff.append(QJsonObject {{u"key"_s, key}, {u"value"_s, false}});
+        }
+        QVERIFY(!makePlan(state, allKindsOff, {}).problems.isEmpty());
         plan = makePlan(state, one(u"Content/MaxFileSizeMB"_s, 0.5), {});
         QCOMPARE(plan.items.front().newText, u"512 KB"_s);
         state.settings.clipboardExcludedApps = {u"A.exe"_s, u"B.exe"_s};

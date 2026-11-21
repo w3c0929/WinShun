@@ -823,6 +823,14 @@
         <translation>Type to search in OneCommander</translation>
     </message>
     <message>
+        <source>点进对话框旁的搜索框就列出常用位置</source>
+        <translation>List common places when clicking into the dialog search bar</translation>
+    </message>
+    <message>
+        <source>点进来就列出常用位置</source>
+        <translation>List common places on click</translation>
+    </message>
+    <message>
         <source>宽松</source>
         <translation>Roomy</translation>
     </message>
@@ -957,6 +965,10 @@
     <message>
         <source>单击预览</source>
         <translation>Click to preview</translation>
+    </message>
+    <message>
+        <source>默认使用系统右键菜单</source>
+        <translation>Use system context menu by default</translation>
     </message>
     <message>
         <source>搜索应用</source>
@@ -1428,6 +1440,54 @@
     <message>
         <source>文件夹菜单里有“收藏这个文件夹”</source>
         <translation>The folder menu has “Add this folder to favorites”</translation>
+    </message>
+    <message>
+        <source>收藏夹里显示的类型</source>
+        <translation>Favorite types shown</translation>
+    </message>
+    <message>
+        <source>文件夹菜单的收藏夹显示文件夹</source>
+        <translation>Show favorite folders in the folder menu</translation>
+    </message>
+    <message>
+        <source>文件夹菜单的收藏夹显示文件</source>
+        <translation>Show favorite files in the folder menu</translation>
+    </message>
+    <message>
+        <source>文件夹菜单的收藏夹显示应用</source>
+        <translation>Show favorite apps in the folder menu</translation>
+    </message>
+    <message>
+        <source>文件夹菜单的收藏夹显示系统设置</source>
+        <translation>Show favorite system settings in the folder menu</translation>
+    </message>
+    <message>
+        <source>文件夹菜单的收藏夹显示自定义命令</source>
+        <translation>Show favorite custom commands in the folder menu</translation>
+    </message>
+    <message>
+        <source>文件夹菜单里展开收藏的应用</source>
+        <translation>Expand favorite apps in the folder menu</translation>
+    </message>
+    <message>
+        <source>收藏夹显示方式</source>
+        <translation>Favorites display</translation>
+    </message>
+    <message>
+        <source>最近的文件夹显示方式</source>
+        <translation>Recent folders display</translation>
+    </message>
+    <message>
+        <source>已打开的文件夹显示方式</source>
+        <translation>Open folders display</translation>
+    </message>
+    <message>
+        <source>二级菜单</source>
+        <translation>Submenu</translation>
+    </message>
+    <message>
+        <source>全部</source>
+        <translation>All</translation>
     </message>
     <message>
         <source>菜单里的操作</source>
@@ -2749,6 +2809,14 @@
     <message>
         <source>展开“%1”</source>
         <translation>Show the folders in “%1”</translation>
+    </message>
+    <message>
+        <source>展开%1</source>
+        <translation>Expand %1</translation>
+    </message>
+    <message>
+        <source>收起%1</source>
+        <translation>Collapse %1</translation>
     </message>
 </context>
 <context>
@@ -5806,6 +5874,30 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Going onto the taskbar…</translation>
     </message>
     <message>
+        <source>已放到托盘图标左边，点它直接打字</source>
+        <translation>Placed left of the tray icons; click it to type</translation>
+    </message>
+    <message>
+        <source>已放到任务栏上，点它直接打字</source>
+        <translation>Placed on the taskbar; click it to type</translation>
+    </message>
+    <message>
+        <source>已放到托盘图标左边，点它打开搜索</source>
+        <translation>Placed left of the tray icons; click it to search</translation>
+    </message>
+    <message>
+        <source>已放到任务栏上，点它打开搜索</source>
+        <translation>Placed on the taskbar; click it to search</translation>
+    </message>
+    <message>
+        <source>当前托盘旁空隙不够，已自动收窄为“%1”；可改选“自动”位置或减少任务栏图标</source>
+        <translation>Not enough space beside the tray, so it narrowed to “%1”; switch Position to Auto or unpin a few taskbar icons</translation>
+    </message>
+    <message>
+        <source>当前任务栏空隙不够，已自动收窄为“%1”；减少几个任务栏图标后会自动展开</source>
+        <translation>Not enough space on the taskbar, so it narrowed to “%1”; unpin a few icons to let it widen</translation>
+    </message>
+    <message>
         <source>搜索框样式</source>
         <translation>Search box style</translation>
     </message>
@@ -5920,14 +6012,6 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>文件夹菜单;文件;子列;子菜单;列出文件;打开文件;Listary;files</source>
         <translation>folder menu;files;column;submenu;list files;open file;Listary;files</translation>
-    </message>
-    <message>
-        <source>已在 Opus 的设置里加好</source>
-        <translation>Set up in Opus</translation>
-    </message>
-    <message>
-        <source>Opus 里设的是别处的 Win顺，更新一下就好</source>
-        <translation>Opus runs WinShun from another folder: update it</translation>
     </message>
     <message>
         <source>要在 Opus 的设置里加一条命令，Win顺 可以替你加</source>
@@ -6184,6 +6268,42 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>没有排除任何文件夹</source>
         <translation>No folders excluded</translation>
+    </message>
+    <message>
+        <source>文件夹;添加文件夹;手动输入;环境变量;工作文件夹;桌面;文档;下载;立即核对;folders</source>
+        <translation>folder;add folder;manual input;environment variable;work folder;desktop;documents;downloads;check now;folders</translation>
+    </message>
+    <message>
+        <source>只有这些文件夹里的文件能搜到；可手动输入（支持 %USERPROFILE% 等环境变量）或拖入文件夹</source>
+        <translation>Only files in these folders can be found; type a path (environment variables like %USERPROFILE% are supported) or drag folders here</translation>
+    </message>
+    <message>
+        <source>输入或粘贴文件夹路径，例如 D:\Work 或 %USERPROFILE%\Documents</source>
+        <translation>Type or paste a folder path, e.g. D:\Work or %USERPROFILE%\Documents</translation>
+    </message>
+    <message>
+        <source>排除;忽略;隐藏;黑名单;手动输入;环境变量;exclude</source>
+        <translation>exclude;ignore;hide;blacklist;manual input;environment variable</translation>
+    </message>
+    <message>
+        <source>这些文件夹里的内容都不出现在结果里，支持 %TEMP% 等环境变量。“让其他软件把 Win顺 当作 Everything 搜索”开着时仍建索引，其他软件照样查得到（如 Total Commander 的文件夹大小）</source>
+        <translation>Nothing in these folders appears in results; environment variables like %TEMP% are supported. When “Let other apps search WinShun as Everything” is on, they are still indexed for those apps (such as Total Commander&apos;s folder sizes)</translation>
+    </message>
+    <message>
+        <source>这些文件夹里的内容都不出现在结果里，支持手动输入和 %TEMP% 等环境变量</source>
+        <translation>Nothing in these folders appears in results; manual input and environment variables like %TEMP% are supported</translation>
+    </message>
+    <message>
+        <source>输入或粘贴文件夹路径，例如 D:\Cache 或 %TEMP%</source>
+        <translation>Type or paste a folder path, e.g. D:\Cache or %TEMP%</translation>
+    </message>
+    <message>
+        <source>选择不需要搜索的文件夹</source>
+        <translation>Choose a folder to exclude</translation>
+    </message>
+    <message>
+        <source>当前展开为：%1</source>
+        <translation>Currently resolves to: %1</translation>
     </message>
     <message>
         <source>只想跳过某些文件？到“名称和类型”里按文件名（可用 *）或扩展名跳过</source>
@@ -6677,14 +6797,6 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>This level only</translation>
     </message>
     <message>
-        <source>在 Directory Opus 的空白处双击</source>
-        <translation>Double-click blank space in Directory Opus</translation>
-    </message>
-    <message>
-        <source>双击;空白;文件夹菜单;Directory Opus;Opus;dopus</source>
-        <translation>double-click;blank;folder menu;Directory Opus;Opus;dopus</translation>
-    </message>
-    <message>
         <source>更新</source>
         <comment>动词：把 Opus 里的命令换成这一份 Win顺 的</comment>
         <translation>Update</translation>
@@ -6939,6 +7051,22 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>双击打开</source>
         <translation>Double-click to open</translation>
+    </message>
+    <message>
+        <source>默认使用系统右键菜单</source>
+        <translation>Use system context menu by default</translation>
+    </message>
+    <message>
+        <source>右键;系统菜单;右键菜单;比较文件;更多选项;Shift;context menu;shell</source>
+        <translation>right-click;system menu;context menu;compare;more options;Shift;shell</translation>
+    </message>
+    <message>
+        <source>在文件或文件夹上右键直接打开系统菜单，Shift+右键 打开 Win顺 菜单；应用、插件等仍打开 Win顺 菜单</source>
+        <translation>Right-clicking a file or folder opens the Windows context menu directly, and Shift+right-click opens WinShun&apos;s menu; apps and plugins still open WinShun&apos;s menu</translation>
+    </message>
+    <message>
+        <source>在文件或文件夹上右键打开 Win顺 菜单，Shift+右键 打开系统菜单；开启后互换</source>
+        <translation>Right-clicking a file or folder opens WinShun&apos;s menu, and Shift+right-click opens the Windows context menu; turn on to swap them</translation>
     </message>
     <message>
         <source>优先显示的文件类型</source>
@@ -8346,6 +8474,34 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Replaces OneCommander&apos;s own filter by first letters; symbol keys, the sidebar, renaming and the address bar are not affected</translation>
     </message>
     <message>
+        <source>在 Directory Opus 的空白处也弹出</source>
+        <translation>Also on blank space in Directory Opus</translation>
+    </message>
+    <message>
+        <source>双击;中键;空白;此电脑;文件夹菜单;Directory Opus;Opus;dopus</source>
+        <translation>double-click;middle click;blank;This PC;folder menu;Directory Opus;Opus;dopus</translation>
+    </message>
+    <message>
+        <source>已在 Opus 的设置里加好，按“触发方式”弹出</source>
+        <translation>Set up in Opus; opens as chosen in “Trigger method”</translation>
+    </message>
+    <message>
+        <source>Opus 里设的是别处或旧版 Win顺 的命令（旧版的不支持中键，在“此电脑”里也不弹），更新一下就好</source>
+        <translation>Opus runs WinShun from another folder or an older version (no middle click, nothing in “This PC”): update it</translation>
+    </message>
+    <message>
+        <source>点进来就列出常用位置</source>
+        <translation>List common places on click</translation>
+    </message>
+    <message>
+        <source>最近;常用;隐私;建议;列表;对话框</source>
+        <translation>recent;common;privacy;suggestions;list;dialog</translation>
+    </message>
+    <message>
+        <source>文件管理器开着的、收藏的和最近用过的文件夹。关掉后打字才列出，按 ↓ 也能列出</source>
+        <translation>Folders open in file managers, favorites and recently used ones. Off: listed once you type, or with ↓</translation>
+    </message>
+    <message>
         <source>剪贴板大小</source>
         <translation>Clipboard size</translation>
     </message>
@@ -9006,28 +9162,76 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>full window;panel;global;shortcut;full search;hotkey</translation>
     </message>
     <message>
-        <source>直接显示收藏夹</source>
-        <translation>Favorites shown directly</translation>
+        <source>收藏夹里显示的类型</source>
+        <translation>Favorite types shown</translation>
     </message>
     <message>
-        <source>直接显示最近的文件夹</source>
-        <translation>Recent folders shown directly</translation>
+        <source>至少保留一项；未勾选的类型不再出现，应用也可在菜单里直接展开或折叠</source>
+        <translation>Keep at least one selected; unchecked types are hidden, and apps can also be expanded or collapsed right in the menu</translation>
     </message>
     <message>
-        <source>直接显示已打开的文件夹</source>
-        <translation>Open folders shown directly</translation>
+        <source>文件夹菜单;收藏夹;收藏;类型;隐藏;过滤;文件夹;文件;应用;系统设置;自定义命令;折叠;展开;favorites;apps;hide;fold;collapse</source>
+        <translation>folder menu;favorites;types;hide;filter;folders;files;apps;system settings;custom commands;collapse;expand;fold</translation>
     </message>
     <message>
-        <source>0：收进二级菜单；1–10：直接显示前几个，其余放进“更多…”</source>
-        <translation>0: keep in a submenu. 1–10: show this many directly, with the rest under “More…”.</translation>
+        <source>文件</source>
+        <translation>Files</translation>
     </message>
     <message>
-        <source>文件夹菜单;最近;已打开;数量;更多;展开;inline;recent;folders</source>
-        <translation>folder menu;recent;open;count;more;expand;inline;folders</translation>
+        <source>应用</source>
+        <translation>Apps</translation>
     </message>
     <message>
-        <source>文件夹菜单;收藏;收藏夹;数量;更多;展开;inline;favorites</source>
-        <translation>folder menu;favorite;favorites;count;more;expand;inline</translation>
+        <source>系统设置</source>
+        <translation>System settings</translation>
+    </message>
+    <message>
+        <source>收藏夹显示方式</source>
+        <translation>Favorites display</translation>
+    </message>
+    <message>
+        <source>最近的文件夹显示方式</source>
+        <translation>Recent folders display</translation>
+    </message>
+    <message>
+        <source>已打开的文件夹显示方式</source>
+        <translation>Open folders display</translation>
+    </message>
+    <message>
+        <source>收进二级菜单，保持顶层菜单紧凑</source>
+        <translation>Keep in a submenu so the top menu stays compact</translation>
+    </message>
+    <message>
+        <source>全部直接列在顶层菜单，过多时可滚动</source>
+        <translation>List all items directly in the top menu; scrolls when long</translation>
+    </message>
+    <message>
+        <source>顶层直接显示前 %1 个，其余收进“更多…”</source>
+        <translation>Show the first %1 directly in the top menu, with the rest under “More…”</translation>
+    </message>
+    <message>
+        <source>二级菜单</source>
+        <translation>Submenu</translation>
+    </message>
+    <message>
+        <source>前几个</source>
+        <translation>First N</translation>
+    </message>
+    <message>
+        <source>全部</source>
+        <translation>All</translation>
+    </message>
+    <message>
+        <source>文件夹菜单;直接显示收藏夹;直接显示;收藏;收藏夹;一级;二级;平铺;全部;数量;更多;展开;折叠;Listary;inline;favorites</source>
+        <translation>folder menu;favorites shown directly;direct;favorite;favorites;top level;submenu;flat;all;count;more;expand;collapse;Listary;inline</translation>
+    </message>
+    <message>
+        <source>文件夹菜单;直接显示最近的文件夹;直接显示;最近;一级;二级;平铺;全部;数量;更多;展开;折叠;Listary;inline;recent;folders</source>
+        <translation>folder menu;recent folders shown directly;direct;recent;top level;submenu;flat;all;count;more;expand;collapse;Listary;inline;folders</translation>
+    </message>
+    <message>
+        <source>文件夹菜单;直接显示已打开的文件夹;直接显示;已打开;其他窗口;一级;二级;平铺;全部;数量;更多;展开;折叠;Listary;inline;open;windows;folders</source>
+        <translation>folder menu;open folders shown directly;direct;open;other windows;top level;submenu;flat;all;count;more;expand;collapse;Listary;inline;windows;folders</translation>
     </message>
     <message>
         <source>启动时请求管理员权限，直接读取主文件表和变更日志；取消后本次用普通权限，保留选择。开机自启也以管理员身份</source>
@@ -9227,6 +9431,10 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>移除</source>
         <translation>Remove</translation>
+    </message>
+    <message>
+        <source>当前展开为：%1</source>
+        <translation>Currently resolves to: %1</translation>
     </message>
     <message>
         <source>启动并索引</source>
@@ -10320,6 +10528,10 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>安装索引服务失败（错误 %1）</source>
         <translation>Installing the index service failed (error %1)</translation>
+    </message>
+    <message>
+        <source>无法安装索引服务：系统保护目录（%1）允许普通用户修改，出于安全考虑不能将服务放进去。请恢复目录默认权限后再试。</source>
+        <translation>Cannot install the index service: the protected system folder (%1) can be modified by non-administrators, so placing the service there is blocked for security. Restore its default permissions and try again.</translation>
     </message>
     <message>
         <source>更新索引服务失败（错误 %1）</source>
@@ -11884,6 +12096,14 @@ Content index: %5</translation>
         <translation>Add “%1” to favorites</translation>
     </message>
     <message>
+        <source>点进来时不列出常用位置</source>
+        <translation>Don&apos;t list common places on click</translation>
+    </message>
+    <message>
+        <source>点进来就列出常用位置</source>
+        <translation>List common places on click</translation>
+    </message>
+    <message>
         <source>这次不显示</source>
         <translation>Hide this time</translation>
     </message>
@@ -12445,6 +12665,10 @@ Content index: %5</translation>
         <translation>Favorites</translation>
     </message>
     <message>
+        <source>应用</source>
+        <translation>Apps</translation>
+    </message>
+    <message>
         <source>最近的文件夹</source>
         <translation>Recent folders</translation>
     </message>
@@ -12736,6 +12960,10 @@ Content index: %5</translation>
     <message>
         <source>Shift+右键</source>
         <translation>Shift+right-click</translation>
+    </message>
+    <message>
+        <source>右键</source>
+        <translation>Right-click</translation>
     </message>
     <message>
         <source>已剪切，可在资源管理器中粘贴</source>
@@ -15655,6 +15883,26 @@ Content index: %5</translation>
     <message>
         <source>不是完整的文件夹路径，不会索引</source>
         <translation>Not a full folder path: not indexed</translation>
+    </message>
+    <message>
+        <source>环境变量未展开为完整路径，暂时不会索引</source>
+        <translation>Environment variable did not expand to a full path: not indexed for now</translation>
+    </message>
+    <message>
+        <source>环境变量未展开为完整的文件夹路径，请检查变量名</source>
+        <translation>The environment variable did not expand to a full folder path; check its name</translation>
+    </message>
+    <message>
+        <source>请输入完整的文件夹路径，例如 D:\Work 或 %USERPROFILE%\Documents</source>
+        <translation>Enter a full folder path, e.g. D:\Work or %USERPROFILE%\Documents</translation>
+    </message>
+    <message>
+        <source>请输入完整路径或环境变量路径；按文件夹名跳过请到“名称和类型”里添加</source>
+        <translation>Enter a full path or an environment variable path; to skip folders by name, add it under “Names and types”</translation>
+    </message>
+    <message>
+        <source>请输入完整的文件夹路径，例如 D:\Cache 或 %TEMP%</source>
+        <translation>Enter a full folder path, e.g. D:\Cache or %TEMP%</translation>
     </message>
     <message>
         <source>已经包含在 %1 里</source>

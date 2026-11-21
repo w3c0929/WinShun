@@ -240,25 +240,25 @@ private slots:
         QCOMPARE(settings.folderMenuFavoritesInline, 0);
         QCOMPARE(settings.folderMenuRecentInline, 0);
         QCOMPARE(settings.folderMenuWindowsInline, 0);
-        settings.folderMenuFavoritesInline = 5;
+        settings.folderMenuFavoritesInline = ws::Settings::kFolderMenuInlineAll;
         settings.folderMenuRecentInline = 3;
-        settings.folderMenuWindowsInline = 10;
+        settings.folderMenuWindowsInline = 20;
         QVERIFY(settings.saveChecked());
         ws::Settings restored;
         restored.load();
-        QCOMPARE(restored.folderMenuFavoritesInline, 5);
+        QCOMPARE(restored.folderMenuFavoritesInline, ws::Settings::kFolderMenuInlineAll);
         QCOMPARE(restored.folderMenuRecentInline, 3);
-        QCOMPARE(restored.folderMenuWindowsInline, 10);
+        QCOMPARE(restored.folderMenuWindowsInline, 20);
         {
             QSettings ini(ws::Settings::filePath(), QSettings::IniFormat);
             ini.setValue(u"Launcher/FolderMenuFavoritesInline"_s, 99);
-            ini.setValue(u"Launcher/FolderMenuRecentInline"_s, -1);
-            ini.setValue(u"Launcher/FolderMenuWindowsInline"_s, 50);
+            ini.setValue(u"Launcher/FolderMenuRecentInline"_s, -2);
+            ini.setValue(u"Launcher/FolderMenuWindowsInline"_s, u"all"_s);
         }
         restored.load();
-        QCOMPARE(restored.folderMenuFavoritesInline, 10);
+        QCOMPARE(restored.folderMenuFavoritesInline, 20);
         QCOMPARE(restored.folderMenuRecentInline, 0);
-        QCOMPARE(restored.folderMenuWindowsInline, 10);
+        QCOMPARE(restored.folderMenuWindowsInline, ws::Settings::kFolderMenuInlineAll);
     }
 
     void garbledBackupFolder() // GitHub #346
@@ -1472,6 +1472,43 @@ private slots:
         QVERIFY(none.folderMenuFavorites && none.folderMenuRecent && none.folderMenuWindows);
     }
 
+    void folderMenuFavoriteKindsAndAppsExpanded()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        ws::Settings fresh;
+        fresh.load();
+        QVERIFY(fresh.folderMenuFavoriteFolders && fresh.folderMenuFavoriteFiles && fresh.folderMenuFavoriteApps
+            && fresh.folderMenuFavoritePlaces && fresh.folderMenuFavoriteCommands);
+        QVERIFY(fresh.folderMenuAppsExpanded);
+
+        fresh.folderMenuFavoriteApps = false;
+        fresh.folderMenuFavoritePlaces = false;
+        fresh.folderMenuAppsExpanded = false;
+        QVERIFY(fresh.saveChecked());
+
+        ws::Settings restored;
+        restored.load();
+        QVERIFY(restored.folderMenuFavoriteFolders && restored.folderMenuFavoriteFiles && !restored.folderMenuFavoriteApps
+            && !restored.folderMenuFavoritePlaces && restored.folderMenuFavoriteCommands);
+        QVERIFY(!restored.folderMenuAppsExpanded);
+
+        // A hand-edited file with all five kinds off restores all five.
+        {
+            QSettings ini(ws::Settings::filePath(), QSettings::IniFormat);
+            ini.setValue(u"Launcher/FolderMenuFavoriteFolders"_s, false);
+            ini.setValue(u"Launcher/FolderMenuFavoriteFiles"_s, false);
+            ini.setValue(u"Launcher/FolderMenuFavoriteApps"_s, false);
+            ini.setValue(u"Launcher/FolderMenuFavoritePlaces"_s, false);
+            ini.setValue(u"Launcher/FolderMenuFavoriteCommands"_s, false);
+        }
+        ws::Settings recovered;
+        recovered.load();
+        QVERIFY(recovered.folderMenuFavoriteFolders && recovered.folderMenuFavoriteFiles && recovered.folderMenuFavoriteApps
+            && recovered.folderMenuFavoritePlaces && recovered.folderMenuFavoriteCommands);
+    }
+
     // The double click is a choice of its own (GitHub #196): on as it always
     // was, and off stays off with the middle button on.
     void folderMenuTriggers()
@@ -1540,18 +1577,21 @@ private slots:
         ws::Settings fresh;
         fresh.load();
         QVERIFY(fresh.dialogBar);
+        QVERIFY(fresh.dialogBarSuggestions); // listed as it is clicked into (GitHub #417: can be turned off)
         QCOMPARE(fresh.folderMenu, u"auto"_s);
         QVERIFY(fresh.explorerTyping);
         QVERIFY(fresh.dialogJump);
         QVERIFY(!fresh.pasteFileEnabled);
         QVERIFY(fresh.pasteFileCtrlV && fresh.pasteFileMenu); // its ways, once it is on
         fresh.dialogBar = false;
+        fresh.dialogBarSuggestions = false;
         fresh.folderMenu = u"off"_s;
         fresh.explorerTyping = false;
         fresh.save();
         ws::Settings again;
         again.load();
         QVERIFY(!again.dialogBar);
+        QVERIFY(!again.dialogBarSuggestions);
         QCOMPARE(again.folderMenu, u"off"_s);
         QVERIFY(!again.explorerTyping);
 
@@ -1565,6 +1605,7 @@ private slots:
         ws::Settings upgraded;
         upgraded.load();
         QVERIFY(upgraded.dialogBar);
+        QVERIFY(upgraded.dialogBarSuggestions); // as before the key
         QCOMPARE(upgraded.folderMenu, u"auto"_s);
         QVERIFY(!upgraded.explorerTyping); // an upgrade changes nothing
         QVERIFY(!upgraded.pasteFileEnabled); // new: off, as 截图 is
@@ -1621,6 +1662,7 @@ private slots:
         QCOMPARE(fresh.sort, u"match"_s);
         QVERIFY(!fresh.doubleClickToOpen);
         QVERIFY(!fresh.clickPreviews);
+        QVERIFY(!fresh.defaultSystemMenu);
         QVERIFY(!fresh.favoriteTiles);
         QVERIFY(fresh.pinnedOnTop);
         QVERIFY(fresh.previewFollowsPointer);
@@ -1634,6 +1676,7 @@ private slots:
             s.sort = name.toString();
             s.doubleClickToOpen = true;
             s.clickPreviews = true;
+            s.defaultSystemMenu = true;
             s.favoriteTiles = true;
             s.pinnedOnTop = false;
             s.previewFollowsPointer = false;
@@ -1646,6 +1689,7 @@ private slots:
             QCOMPARE(back.sort, name.toString());
             QVERIFY(back.doubleClickToOpen);
             QVERIFY(back.clickPreviews);
+            QVERIFY(back.defaultSystemMenu);
             QVERIFY(back.favoriteTiles);
             QVERIFY(!back.pinnedOnTop);
             QVERIFY(!back.previewFollowsPointer);
@@ -1858,6 +1902,45 @@ private slots:
             for (const QString& o : defaults)
                 QVERIFY2(f == o || !f.startsWith(o + u'\\', Qt::CaseInsensitive), qPrintable(f + u" in "_s + o));
         }
+
+        // Manual input & environment variables (#421): cleaned without auto-expanding,
+        // while indexFolderPath and resolvedEnvPath expand %VAR% at runtime.
+        QCOMPARE(ws::Settings::cleanFolderPath(u"  \"%USERPROFILE%/Documents/\"  "_s), u"%USERPROFILE%\\Documents"_s);
+        QCOMPARE(ws::Settings::cleanFolderPath(u"\"D:\\Work\\\""_s), u"D:\\Work"_s);
+        QCOMPARE(ws::Settings::cleanFolderPath(u"d:"_s), u"d:\\"_s);
+        QCOMPARE(ws::Settings::cleanFolderPath(u"%TEMP%"_s), u"%TEMP%"_s);
+        QVERIFY(ws::Settings::hasEnvVar(u"%TEMP%"_s));
+        QVERIFY(ws::Settings::hasEnvVar(u"%USERPROFILE%\\Projects"_s));
+        QVERIFY(!ws::Settings::hasEnvVar(u"D:\\100%_done"_s));
+        QVERIFY(!ws::Settings::hasEnvVar(u"D:\\a%%b"_s));
+        const QString resolvedTemp = ws::Settings::resolvedEnvPath(u"%TEMP%"_s);
+        QVERIFY(!resolvedTemp.isEmpty());
+        QVERIFY(QFileInfo(resolvedTemp).isDir());
+        QVERIFY(ws::Settings::resolvedEnvPath(u"C:\\Windows"_s).isEmpty()); // no %VAR%
+        QVERIFY(ws::Settings::resolvedEnvPath(u"%WINSHUN_NO_SUCH_VAR_421%\\Sub"_s).isEmpty()); // unresolved
+
+        // %VAR% paths survive save/load verbatim and still expand in indexFolderPaths() and crawlRules().
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        ws::Settings envSettings;
+        envSettings.load();
+        envSettings.indexFolders = {u"%TEMP%"_s, u"%WINSHUN_NO_SUCH_VAR_421%\\Work"_s};
+        envSettings.indexFoldersChosen = true;
+        envSettings.excludedPaths = {u"%TEMP%"_s, u"%WINSHUN_NO_SUCH_VAR_421%\\Cache"_s};
+        envSettings.save();
+
+        ws::Settings loaded;
+        loaded.load();
+        QCOMPARE(loaded.indexFolders, envSettings.indexFolders);
+        QCOMPARE(loaded.excludedPaths, envSettings.excludedPaths);
+        const std::vector<std::wstring> indexed = loaded.indexFolderPaths();
+        QCOMPARE(indexed.size(), std::size_t(1)); // unresolved env var skipped, %TEMP% expanded
+        QCOMPARE(indexed.front(), ws::Settings::indexFolderPath(resolvedTemp));
+        const ws::CrawlRules rules = loaded.crawlRules();
+        QVERIFY(std::ranges::any_of(rules.excludedPaths, [&](const std::wstring& p) {
+            return _wcsicmp(p.c_str(), ws::Settings::excludedCompareKey(resolvedTemp).c_str()) == 0;
+        }));
     }
 
     // `WinShun.exe --settings --settings-at 9,0` to a copy that is running: the place travels

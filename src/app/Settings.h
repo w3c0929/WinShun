@@ -120,6 +120,11 @@ struct Settings {
     // It searches only the folder the dialog shows (GitHub #286): turned on
     // and off in the bar itself (its menu, Ctrl+Shift+D), kept here.
     bool dialogBarFolderOnly = false;
+    // Clicked into with nothing typed, the bar lists the folders open in file
+    // managers, the copied one, favorites and recent ones. Off (GitHub #417:
+    // abrupt, and seen by whoever looks on), the list waits for typing; ↓
+    // brings it. Also turned on and off in the bar's own menu.
+    bool dialogBarSuggestions = true;
     bool dialogAutoJump = false; // file dialogs go to the folder open in a file manager by themselves
     // open | back: as a dialog comes up, or only when the user comes back to
     // it from the file manager (GitHub #14: it opens where Windows left it).
@@ -179,7 +184,26 @@ struct Settings {
     bool folderMenuFavorites = true;
     bool folderMenuRecent = true;
     bool folderMenuWindows = true; // folders open in other windows
-    int folderMenuFavoritesInline = 0; // 0: submenu; 1..10: direct rows, then More
+    // Which favorite kinds appear in the folder menu's 收藏夹: all on by
+    // default; at least one stays on (the editor refuses unchecking the last,
+    // load() turns all back on if a hand-edited file has none).
+    bool folderMenuFavoriteFolders = true;
+    bool folderMenuFavoriteFiles = true;
+    bool folderMenuFavoriteApps = true;
+    bool folderMenuFavoritePlaces = true;
+    bool folderMenuFavoriteCommands = true;
+    // Whether the collapsible "应用" section inside the folder menu's 收藏夹
+    // is expanded; toggled directly in the menu and remembered across runs.
+    bool folderMenuAppsExpanded = true;
+    // Folder menu group presentation: -1 shows all items directly at top level,
+    // 0 keeps them in a submenu, 1..20 shows the first N directly then "更多…".
+    static constexpr int kFolderMenuInlineAll = -1;
+    static constexpr int kFolderMenuInlineMax = 20;
+    static constexpr int clampFolderMenuInline(int count) noexcept
+    {
+        return count == kFolderMenuInlineAll ? kFolderMenuInlineAll : std::clamp(count, 0, kFolderMenuInlineMax);
+    }
+    int folderMenuFavoritesInline = 0;
     int folderMenuRecentInline = 0;
     int folderMenuWindowsInline = 0;
     // Which actions the menu offers under the lists (GitHub #200): all on is
@@ -200,6 +224,10 @@ struct Settings {
     // Directory Opus's <event> for a double click on blank space, as it was
     // before Win顺 put its own there (SettingsEditor::setOpusFolderMenu); "": none.
     QString folderMenuOpusBefore;
+    // ... for a middle click (GitHub #416), and whether a single one ran it
+    // (<bg_commands single_middle_click>), as they were.
+    QString folderMenuOpusMiddleBefore;
+    bool folderMenuOpusSingleMiddleBefore = false;
     // 拖放圆盘 (DropPie): the key under Esc, with files held or dragged,
     // brings up the favorite folders round the pointer to drop
     // them in. Does nothing while Win顺 runs as administrator (drops cannot
@@ -226,6 +254,9 @@ struct Settings {
     // With doubleClickToOpen: the click also shows the row's preview, as the
     // middle click does (feedback 2026-11-10: a look inside without opening).
     bool clickPreviews = false;
+    // Right-clicking a file or folder opens the Windows shell context menu by
+    // default, and Shift+right-click opens Win顺's own menu (GitHub #420).
+    bool defaultSystemMenu = false;
     // GitHub #81: Tab switches scopes by default, including on favorites.
     // Opt in to the former behavior: in 全部, Tab browses a favorite folder.
     bool tabEntersFavoriteFolder = false;
@@ -658,6 +689,17 @@ struct Settings {
     // places (a share, a mapped drive) are left out: those are 网络共享's.
     std::vector<std::wstring> indexFolderPaths() const;
     static std::wstring indexFolderPath(const QString& folder); // one of them; empty when it is left out
+    // Cleans a typed/pasted/dropped folder path (trims whitespace, strips
+    // matching surrounding quotes, converts file:/// URLs, native separators,
+    // removes trailing backslash except drive root) without expanding %VAR% (#421).
+    static QString cleanFolderPath(const QString& text);
+    // True when `text` contains a %VAR% environment variable reference.
+    static bool hasEnvVar(QStringView text);
+    // If `text` contains %VAR% and expands cleanly to a different path with no
+    // unresolved %VAR% remaining, returns that expanded path; otherwise empty.
+    static QString resolvedEnvPath(const QString& text);
+    // Normalized expanded comparison key for an excluded folder path.
+    static std::wstring excludedCompareKey(const QString& path);
     // GitHub #52: the first time only the chosen folders are indexed, a list
     // never set (indexFoldersChosen) is taken for good as it is: the
     // account's known folders as load() found them, or as changed since.

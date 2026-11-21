@@ -13,6 +13,7 @@
 #include "Grabber.h" // take_screenshot (MCP)
 #include "CliSetup.h"
 #include "ScoopInstall.h"
+#include "ServiceLocation.h"
 #include "ServiceUpdate.h"
 #include "ClipImportJob.h"
 #include "ClipStore.h"
@@ -622,6 +623,8 @@ bool App::showOnboarding(const StartOptions& options)
             m_onboardingEditor->setSettings(m_settings);
     });
     connect(m_onboarding.get(), &Onboarding::finished, this, [this, options] { finishOnboarding(options); });
+    window->setProperty("arriving", true);
+    win::expectActivation(window);
     window->show();
     window->raise();
     win::bringToFront(window);
@@ -642,9 +645,9 @@ void App::finishOnboarding(const StartOptions& options)
         m_onboardingEditor.reset();
         m_onboardingFrame.reset();
         if (options.settings) {
-            showSettings([&options](QQuickWindow* window) {
-                if (!options.settingsAt.isEmpty())
-                    QMetaObject::invokeMethod(window, "showPlace", Q_ARG(QVariant, QVariant(options.settingsAt)));
+            showSettings([settingsAt = options.settingsAt](QQuickWindow* window) {
+                if (!settingsAt.isEmpty())
+                    QMetaObject::invokeMethod(window, "showPlace", Q_ARG(QVariant, QVariant(settingsAt)));
             });
         } else {
             // Finishing a visible welcome screen is an explicit interaction,
@@ -753,6 +756,7 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
     // result opened, whose program is coming to the front instead. Esc hides
     // it, pinned or not (dismissRequested follows, for the rest).
     connect(m_launcher.get(), &Launcher::escaped, this, [this] {
+        m_pendingSettings.reset();
         cancelTypingSelection();
         const HWND back = std::exchange(m_typingOrigin, {}).root;
         if (back && ::IsWindow(back) && m_window && m_window->isActive())
@@ -1123,11 +1127,13 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
         m_launcher->noteSearchHere(folder); // not indexed (GitHub #52): searched on the disk all the same
         showLauncher(folder.endsWith(u'\\') ? folder + u' ' : folder + u"\\ "_s);
     };
-    // Directory Opus's double click on blank space (WinShunSearch.exe, put
-    // into Opus's settings by SettingsEditor::setOpusFolderMenu). Not with
-    // the double click turned off: the menu may be there for its hotkey alone.
-    callbacks.folderMenu = [this](const QString& folder) {
-        if (m_folderMenu && m_settings.folderMenu != u"off")
+    // Directory Opus's double or middle click on blank space (WinShunSearch.exe,
+    // put into Opus's settings by SettingsEditor::setOpusFolderMenu): Opus runs
+    // it for both, and these settings say which opens the menu. Not with the
+    // menu turned off: it may be there for its hotkey alone.
+    callbacks.folderMenu = [this](const QString& folder, bool middle) {
+        if (m_folderMenu && m_settings.folderMenu != u"off"
+            && (middle ? m_settings.folderMenuMiddle : m_settings.folderMenuDouble)) // as set for every window (触发方式)
             m_folderMenu->requested(folder);
     };
     // Windows ends us right after this returns, or a few seconds in: the
@@ -1297,9 +1303,9 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
         m_messages->showNotification(tr("索引位置"), m_indexFolderProblem);
     }
     if (options.settings) {
-        showSettings([&options](QQuickWindow* window) {
-            if (!options.settingsAt.isEmpty())
-                QMetaObject::invokeMethod(window, "showPlace", Q_ARG(QVariant, QVariant(options.settingsAt)));
+        showSettings([settingsAt = options.settingsAt](QQuickWindow* window) {
+            if (!settingsAt.isEmpty())
+                QMetaObject::invokeMethod(window, "showPlace", Q_ARG(QVariant, QVariant(settingsAt)));
         });
     } else if (!options.background || !options.query.isEmpty())
         showLauncher(options.query);
@@ -2019,6 +2025,7 @@ void App::applySettings(bool initial)
         m_settings.showModified, m_settings.showFileSize, m_settings.thumbnails, m_settings.numberKeys);
     m_launcher->setDoubleClickToOpen(m_settings.doubleClickToOpen);
     m_launcher->setClickPreviews(m_settings.clickPreviews);
+    m_launcher->setDefaultSystemMenu(m_settings.defaultSystemMenu);
     m_launcher->setTabEntersFavoriteFolder(m_settings.tabEntersFavoriteFolder);
     m_launcher->setSearchKinds(m_settings.searchApps, m_settings.searchSystem);
     m_launcher->setRunningTray(m_settings.runningTray);
@@ -2043,7 +2050,7 @@ void App::applySettings(bool initial)
     m_launcher->setPreviewFollowsPointer(m_settings.previewFollowsPointer);
     m_launcher->setPreviewRestore(m_settings.previewRestore);
     m_launcher->setReopenWhereLeft(m_settings.reopenWhereLeft);
-    applyLauncherTopmost();
+    applyLauncherPin();
     m_preview->setTextExtensions(m_settings.contentExtensions);
     m_clipboard->filePreview()->setTextExtensions(m_settings.contentExtensions);
     m_clipboard->setNumberKeys(m_settings.clipboardNumberKeys);
@@ -3068,6 +3075,14 @@ static QString searchBoxHiddenName(taskbar::SearchBox::Hidden why)
     return QString::fromLatin1(names[static_cast<int>(why)]);
 }
 
+static QString searchBoxFormName(std::optional<taskbar::Form> form)
+{
+    if (!form)
+        return {};
+    static const char* const names[] = {"box", "label", "icon"};
+    return QString::fromLatin1(names[static_cast<int>(*form)]);
+}
+
 void App::applySearchBox()
 {
     const bool wanted = m_settings.taskbarSearchBox && taskbar::SearchBox::supported();
@@ -3092,8 +3107,8 @@ void App::applySearchBox()
                     QGuiApplication::inputMethod()->update(Qt::ImCursorRectangle);
             }, Qt::QueuedConnection);
         };
-        callbacks.wideChanged = [this](bool wide) {
-            QMetaObject::invokeMethod(this, [this, wide] { setSearchBoxWide(wide); }, Qt::QueuedConnection);
+        callbacks.formChanged = [this](std::optional<taskbar::Form> form) {
+            QMetaObject::invokeMethod(this, [this, form] { setSearchBoxForm(form); }, Qt::QueuedConnection);
         };
         callbacks.classicChanged = [this](bool classic) {
             QMetaObject::invokeMethod(this, [this, classic] { setClassicTaskbar(classic); }, Qt::QueuedConnection);
@@ -3104,12 +3119,14 @@ void App::applySearchBox()
         if (m_settingsEditor)
             m_settingsEditor->setClassicTaskbar(m_classicTaskbar);
         setSearchBoxShown(taskbar::SearchBox::Hidden::Pending);
+        setSearchBoxForm(std::nullopt);
         updateSearchBoxLook();
     } else if (!wanted && m_searchBox) {
         if (m_launcher->inTaskbarBox())
             hideLauncher();
         m_searchBox.reset();
         setSearchBoxShown(taskbar::SearchBox::Hidden::Pending);
+        setSearchBoxForm(std::nullopt);
     }
 }
 
@@ -3136,8 +3153,14 @@ void App::setSearchBoxShown(taskbar::SearchBox::Hidden why)
         hideLauncher(); // what is typed there would be out of sight
 }
 
-void App::setSearchBoxWide(bool wide)
+void App::setSearchBoxForm(std::optional<taskbar::Form> form)
 {
+    if (!m_searchBox)
+        form.reset(); // a late word from a box gone since
+    m_searchBoxForm = form;
+    if (m_settingsEditor)
+        m_settingsEditor->setSearchBoxForm(searchBoxFormName(form));
+    const bool wide = form == taskbar::Form::Box;
     // Narrowed under what is being typed (the taskbar filled up): on in the
     // launcher's own field, the box looking open. Not back the other way
     // while it is open, under the user's hands.
@@ -3917,6 +3940,22 @@ bool App::settingsShown() const
 // 30 ms instead of 500.
 void App::showSettings(const std::function<void(QQuickWindow*)>& at)
 {
+    // Let the search box or clipboard finish fading out before creating or
+    // showing Settings: otherwise constructing and activating Settings stalls
+    // the GUI thread during slideOut / fadeOutCopy, drops the active Mica
+    // backdrop mid-fade, and uncloaks Settings behind the still-visible window.
+    if (m_window && m_window->isVisible() && !m_prewarming.load())
+        hideLauncher();
+    if (m_launcherClosing || m_clipClosing) {
+        m_pendingSettings = at;
+        return;
+    }
+    m_pendingSettings.reset();
+    showSettingsNow(at);
+}
+
+void App::showSettingsNow(const std::function<void(QQuickWindow*)>& at)
+{
     const bool created = !m_settingsWindow;
     const bool opening = created || !m_settingsWindow->isVisible();
     if (opening) {
@@ -4185,6 +4224,7 @@ void App::showSettings(const std::function<void(QQuickWindow*)>& at)
         applyFolderMenuHotkey(); // ... and the folder menu's
         applyPastePlainHotkey(); // ... and 粘贴为纯文本's
         editor->setSearchBoxShown(searchBoxHiddenName(m_searchBoxHidden));
+        editor->setSearchBoxForm(searchBoxFormName(m_searchBoxForm));
         editor->setClassicTaskbar(m_classicTaskbar);
 
         prepareBackdrop(window); // once: the format is the window's for good
@@ -4228,7 +4268,6 @@ void App::showSettings(const std::function<void(QQuickWindow*)>& at)
     m_settingsEditor->setHistoryCount(static_cast<int>(m_history->items().size()) + m_launcher->queryHistoryCount());
     m_settingsEditor->setClipboardCount(m_clipStore->isOpen() ? static_cast<int>(m_clipStore->clips().size()) : -1);
     m_contentStatusTimer.start();
-    hideLauncher();
     if (opening) {
         // The rest waits for the first frame (or a second, should none come:
         // shown minimized). Activation waits for it too (windowActivated).
@@ -4317,21 +4356,21 @@ void App::showFileTypeSettings()
 
 void App::showQuickFilterSettings(const QString& draft)
 {
-    showSettings([&draft](QQuickWindow* window) {
+    showSettings([draft](QQuickWindow* window) {
         QMetaObject::invokeMethod(window, "showQuickFiltersPage", Q_ARG(QVariant, QVariant(draft)));
     });
 }
 
 void App::showFavoriteSettings(const QString& path)
 {
-    showSettings([&path](QQuickWindow* window) {
+    showSettings([path](QQuickWindow* window) {
         QMetaObject::invokeMethod(window, "showFavoritesPage", Q_ARG(QVariant, QVariant(path)));
     });
 }
 
 void App::showPluginSettings(const QString& pluginId)
 {
-    showSettings([&pluginId](QQuickWindow* window) {
+    showSettings([pluginId](QQuickWindow* window) {
         QMetaObject::invokeMethod(window, "showPluginPage", Q_ARG(QVariant, QVariant(pluginId)));
     });
 }
@@ -4343,9 +4382,7 @@ void App::showPluginUpdates()
 
 void App::showUpdate()
 {
-    showSettings();
-    if (m_settingsWindow)
-        QMetaObject::invokeMethod(m_settingsWindow, "showUpdateDialog");
+    showSettings([](QQuickWindow* window) { QMetaObject::invokeMethod(window, "showUpdateDialog"); });
 }
 
 void App::refreshContentIndexStatus()
@@ -4676,7 +4713,7 @@ void App::handleCommand(const QString& command)
         // App's destructor saves the index and disposes of those windows.
         QCoreApplication::exit(0);
     else if (QString place; settingscommand::parse(command, &place)) {
-        showSettings([&place](QQuickWindow* window) {
+        showSettings([place](QQuickWindow* window) {
             if (!place.isEmpty())
                 QMetaObject::invokeMethod(window, "showPlace", Q_ARG(QVariant, QVariant(place)));
         });
@@ -4859,12 +4896,22 @@ void App::applyFolderMenu()
         connect(menu.get(), &FolderMenu::notice, this, [this](const QString& text) {
             m_messages->showNotification(tr("文件夹菜单"), text);
         });
+        connect(menu.get(), &FolderMenu::appsExpandedRequested, this, [this](bool expanded) {
+            if (std::exchange(m_settings.folderMenuAppsExpanded, expanded) == expanded)
+                return;
+            m_settings.save();
+            if (m_settingsEditor)
+                m_settingsEditor->setSettings(m_settings);
+        });
         m_folderMenuWindow = window;
         m_folderMenu = std::move(menu);
     }
     if (m_folderMenu) {
         m_folderMenu->setOptions(m_settings.folderMenu == u"auto", m_settings.folderMenuExplorer, m_settings.folderMenuDesktop);
         m_folderMenu->setGroups(m_settings.folderMenuFavorites, m_settings.folderMenuRecent, m_settings.folderMenuWindows);
+        m_folderMenu->setFavoriteKinds({m_settings.folderMenuFavoriteFolders, m_settings.folderMenuFavoriteFiles,
+            m_settings.folderMenuFavoriteApps, m_settings.folderMenuFavoritePlaces, m_settings.folderMenuFavoriteCommands});
+        m_folderMenu->setAppsExpanded(m_settings.folderMenuAppsExpanded);
         m_folderMenu->setInlineCounts(m_settings.folderMenuFavoritesInline, m_settings.folderMenuRecentInline, m_settings.folderMenuWindowsInline);
         m_folderMenu->setItems(m_settings.folderMenuItemSearch, m_settings.folderMenuItemCopyPath, m_settings.folderMenuItemCmd, m_settings.folderMenuItemPowerShell,
             m_settings.folderMenuItemFavorite, m_settings.folderMenuItemSettings);
@@ -5005,6 +5052,13 @@ void App::applyDialogs()
             if (m_settingsEditor)
                 m_settingsEditor->setSettings(m_settings);
         });
+        connect(m_dialogBar.get(), &DialogBar::suggestionsRequested, this, [this](bool on) {
+            if (std::exchange(m_settings.dialogBarSuggestions, on) == on)
+                return;
+            m_settings.save();
+            if (m_settingsEditor)
+                m_settingsEditor->setSettings(m_settings);
+        });
         connect(m_dialogBar.get(), &DialogBar::settingsRequested, this, [this] { showSettings(); });
         connect(m_dialogBar.get(), &DialogBar::autoJumpAnswered, this, &App::answerAutoJump);
     } else if (!m_settings.dialogBar && m_dialogBar) {
@@ -5018,6 +5072,7 @@ void App::applyDialogs()
         m_dialogBar->setExcludedApps(m_settings.dialogBarExcludedApps);
         m_dialogBar->setPlace(m_settings.dialogBarPlace);
         m_dialogBar->setFolderOnly(m_settings.dialogBarFolderOnly);
+        m_dialogBar->setSuggestOnFocus(m_settings.dialogBarSuggestions);
         m_dialogBar->setResultOptions(m_settings.showModified, m_settings.thumbnails, m_settings.numberKeys);
         m_dialogBar->setNumberHints(m_settings.numberHints);
         m_dialogBar->setLetterJump(m_settings.letterJump, m_settings.letterJumpKey, m_settings.letterJumpKeys);
@@ -5462,15 +5517,21 @@ void App::beginTrigger(TriggerSource source, std::uint64_t pressedAt, std::optio
     m_triggers->begin(source, pressedAt, context);
 }
 
-void App::openingSeen(TriggerWindow window)
+void App::openingSeen(TriggerWindow window, bool deferWarmup)
 {
     if (m_triggers)
         m_triggers->seen(window);
     m_openingSeenMs[static_cast<std::size_t>(window)] = QDateTime::currentMSecsSinceEpoch(); // IdleTrim::LastTrim's clock
+    if (!deferWarmup)
+        finishOpeningWarmup(window);
+}
+
+void App::finishOpeningWarmup(TriggerWindow window)
+{
     // The file index's pages back, before the first search needs them
-    // (IdleTrim, FileIndex::warm). Once the window is up, not while it
-    // comes: tens of thousands of page faults on another thread held up
-    // the window's own (measured 2026-11-12, 35 ms to be seen instead of 27).
+    // (IdleTrim, FileIndex::warm). Once the opening slide has finished, not
+    // while the window comes in: tens of thousands of page faults on another
+    // thread competed with the window's reveal and opening animation.
     if (window == TriggerWindow::Launcher && m_idleTrim->takeTrimmed() && m_index->index()) {
         std::thread([index = m_index->index()] {
             const auto lock = index->longReadLock();
@@ -5718,6 +5779,7 @@ void App::showLauncher(const QString& asked, const std::optional<taskbar::Spot>&
 {
     if (!m_window)
         return;
+    m_pendingSettings.reset();
     // Opened for nothing in particular just after a copy (GitHub #171): the
     // copy is what is searched, selected so that typing replaces it.
     const bool mayFill = asked.isEmpty() && !avoid && !asPanel && !(m_launcher->pinned() && launcherShown());
@@ -5742,7 +5804,7 @@ void App::showLauncher(const QString& asked, const std::optional<taskbar::Spot>&
     m_boxPressGrace.stop();
     m_launcherShown.start();
     m_frontTakenBack = 0;
-    applyLauncherTopmost(); // left not topmost by a pin of before, perhaps
+    applyLauncherPin(); // left not topmost by a pin of before, perhaps
     m_idleTrim->used();
     m_index->shares().lookedAt(); // a WebDAV server stopped meanwhile shows as offline (GitHub #114)
     if (!launcherShown()) { // what a screenshot of the history pastes into (jt, Enter)
@@ -5769,6 +5831,7 @@ void App::showLauncher(const QString& asked, const std::optional<taskbar::Spot>&
         return;
     }
     const bool wasClosing = std::exchange(m_launcherClosing, false); // back from on its way out
+    m_launcher->setClosing(false);
     // Opened anew (not back from on its way out, not up already): as at its
     // first opening, if so set. Still hidden or cloaked until the rows for
     // it are drawn, so the old words and rows are never seen.
@@ -5825,12 +5888,21 @@ void App::showLauncher(const QString& asked, const std::optional<taskbar::Spot>&
     const bool prewarming = m_prewarming.exchange(false); // up already, cloaked
     if (wasClosing) {
         // Back from where it got to on its way out.
+        if (!m_window->isActive()) {
+            m_window->setProperty("arriving", true);
+            win::expectActivation(m_window);
+        }
         m_placement->slideIn();
     } else if (!m_window->isVisible() || prewarming) {
         // Shown cloaked: Windows would first put up the window as it looked
         // when it was hidden (old selection, old rows), then our repaint.
         // Revealed once a frame with the refreshed results is drawn.
+        // Draw as active from the first frame (Main.arriving) so Mica does not
+        // fade in over 250 ms after activation.
+        m_window->setProperty("arriving", true);
+        win::expectActivation(m_window);
         win::setCloaked(m_window, true);
+        ++m_revealArmSeq;
         m_launcherReveal.begin();
     }
     m_window->show();
@@ -5848,6 +5920,7 @@ void App::showLauncher(const QString& asked, const std::optional<taskbar::Spot>&
 
 void App::showClipboard()
 {
+    m_pendingSettings.reset();
     if (!m_clipWindow && !createClipWindow())
         return;
     m_idleTrim->used(); // it never takes the focus, which would tell IdleTrim
@@ -5921,6 +5994,11 @@ void App::showClipboard()
                 avoidClipboardShellFlyout(front);
         }
         m_clipboard->handlePlaced(); // the preview, if left open: as wide as there is room for here
+        // Draw as active from the first frame (ClipboardWindow.arriving) so Mica
+        // does not fade in over 250 ms after activation.
+        if (!keepFocus)
+            m_clipWindow->setProperty("arriving", true);
+        win::expectActivation(m_clipWindow);
         // Cloaked until its first frame: Windows would first put up the
         // window as it looked when it was hidden, then our repaint.
         win::setCloaked(m_clipWindow, true);
@@ -6638,13 +6716,17 @@ void App::uncloakClipboard()
     }
     // In as the launcher comes (弹出动画): faded in, a little from the box or
     // the caret it drops from (GitHub #377). Before the cloak goes, as there.
-    if (m_clipWindow->isVisible() && !m_clipPrewarming.load())
-        m_clipPlacement->slideIn();
+    if (m_clipWindow->isVisible() && !m_clipPrewarming.load()) {
+        m_clipPlacement->slideIn([this] {
+            if (m_clipRevealedAt)
+                finishOpeningWarmup(TriggerWindow::Clipboard);
+        });
+    }
     win::setCloaked(m_clipWindow, false);
     if (m_clipWindow->isVisible() && !m_clipPrewarming.load()) {
         m_clipRevealedAt = ::GetTickCount64(); // there to be seen from now on (seenBy)
         m_clipboard->setSeen(true); // a copied file beside the list, a document's handler over it
-        openingSeen(TriggerWindow::Clipboard);
+        openingSeen(TriggerWindow::Clipboard, m_clipPlacement->sliding());
     }
 }
 
@@ -6684,8 +6766,28 @@ void App::hideClipboard(bool launcherToo)
     // (GitHub #377); the window itself goes at once, so the focus, the keys
     // and a paste go on as ever. Not when it was never seen, nor behind the
     // display (cloaked: fadeOutCopy shows nothing).
-    if (m_clipRevealedAt && m_settings.openAnimation && Placement::animationsOn())
-        win::fadeOutCopy(m_clipWindow, 120ms);
+    if (m_clipRevealedAt && m_settings.openAnimation && Placement::animationsOn()) {
+        const quint64 fadeSeq = ++m_clipFadeSeq;
+        QPointer<App> self(this);
+        if (win::fadeOutCopy(m_clipWindow, 120ms, [self, fadeSeq] {
+                if (!self || fadeSeq != self->m_clipFadeSeq)
+                    return;
+                self->m_clipClosing = false;
+                if (self->m_pendingSettings && !self->m_launcherClosing && !self->launcherShown()
+                    && !(self->m_clipWindow && self->m_clipWindow->isVisible())) {
+                    QMetaObject::invokeMethod(self, [self] {
+                        if (!self)
+                            return;
+                        if (auto at = std::exchange(self->m_pendingSettings, {});
+                            at && !self->m_launcherClosing && !self->m_clipClosing && !self->launcherShown()
+                            && !(self->m_clipWindow && self->m_clipWindow->isVisible()))
+                            self->showSettingsNow(*at);
+                    }, Qt::QueuedConnection);
+                }
+            })) {
+            m_clipClosing = true;
+        }
+    }
     m_clipWindow->hide();
     m_clipPlacement->settleSlide(); // caught coming in: at its place, its opacity whole
     m_clipRevealedAt.reset(); // only here: pinned, it stays up when it lets go of the keys
@@ -6763,7 +6865,13 @@ void App::returnToField(QQuickItem* field)
 
 void App::armReveal()
 {
-    m_launcherReveal.arm();
+    // Let Qt.callLater handlers (Main.qml's settleRows) finish sizing the
+    // window before FrameReveal accepts the next rendered frame.
+    const quint64 seq = ++m_revealArmSeq;
+    QMetaObject::invokeMethod(this, [this, seq] {
+        if (seq == m_revealArmSeq && m_launcherReveal.pending())
+            m_launcherReveal.arm();
+    }, Qt::QueuedConnection);
 }
 
 // The rows of the words typed in a file manager are in the box, which was
@@ -6779,6 +6887,7 @@ void App::typedRowsShown()
     qInfo().noquote() << u"Folder typing: the key's rows are in after %1 ms, seen with the frame after next"_s.arg(m_typedRowsClock.elapsed());
     m_typedRows = TypedRows::Settling;
     m_typedRowsCap.stop();
+    ++m_revealArmSeq;
     m_launcherReveal.begin(kTypedRowsFrame);
     armReveal();
 }
@@ -6799,6 +6908,7 @@ void App::revealLauncher()
     }
     if (m_typedRows == TypedRows::Settling && launcherShown()) {
         m_typedRows = TypedRows::No;
+        ++m_revealArmSeq;
         m_launcherReveal.begin(kTypedRowsFrame);
         armReveal();
         return;
@@ -6806,12 +6916,16 @@ void App::revealLauncher()
     m_typedRows = TypedRows::No;
     m_typedRowsCap.stop();
     // Slide in before revealing, unless it was hidden before its first frame.
-    if (m_window->isVisible())
-        m_placement->slideIn();
+    if (m_window->isVisible()) {
+        m_placement->slideIn([this] {
+            if (m_launcherRevealedAt)
+                finishOpeningWarmup(TriggerWindow::Launcher);
+        });
+    }
     win::setCloaked(m_window, false);
     if (launcherShown()) {
         m_launcherRevealedAt = ::GetTickCount64(); // there to be seen from now on (seenBy)
-        openingSeen(TriggerWindow::Launcher);
+        openingSeen(TriggerWindow::Launcher, m_placement->sliding());
     }
     deliverTyping(); // asked for by typing elsewhere: the keys, if they waited for its first frame
 }
@@ -6865,7 +6979,7 @@ void App::launcherLostFront()
     // over it; another window in front (a click on it, on the desktop,
     // on the rest of the taskbar) dismisses it at once, however soon
     // after it opened.
-    if (!m_window || !m_window->isVisible() || clipboardUnderLauncher())
+    if (!m_window || !m_window->isVisible() || m_launcherClosing || clipboardUnderLauncher())
         return;
     // Its keys routed to it, the window it was refused over still in front
     // (GitHub #203): nothing was lost. Qt can say so all the same (active
@@ -7257,12 +7371,22 @@ void App::hideLauncher()
     m_launcher->closePreview(); // at once, not after the slide
     if (clipboardUnderLauncher())
         hideClipboard(false);
+    // Pinned and minimized (GitHub #418), closed from its taskbar button: back
+    // to its size and place unseen and not made active, then hidden. Hidden
+    // minimized, it would come back so, and be placed where it is not.
+    if (const HWND hwnd = reinterpret_cast<HWND>(m_window->winId()); ::IsIconic(hwnd)) {
+        win::setCloaked(m_window, true); // dropped as it is hidden
+        ::ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        finishHidingLauncher();
+        return;
+    }
     // Slid out, unless it was never seen (still waiting for its first frame).
     if (m_launcherReveal.pending() || m_prewarming.load() || m_typedRows == TypedRows::Awaited) {
         finishHidingLauncher();
         return;
     }
     m_launcherClosing = true;
+    m_launcher->setClosing(true);
     // The box idle at once; the launcher keeps its look (in the box: no
     // field) until it is gone.
     if (m_searchBox && m_launcherOverBox) {
@@ -7282,6 +7406,7 @@ void App::finishHidingLauncher()
     // all along, and a press after that closes it.
     m_launcherRevealedAt.reset();
     m_launcherClosing = false;
+    m_launcher->setClosing(false);
     m_launcherOverBox = false;
     if (m_launcher->inTaskbarBox()) {
         m_launcher->setInTaskbarBox(false);
@@ -7293,6 +7418,7 @@ void App::finishHidingLauncher()
     if (!m_window || !m_window->isVisible())
         return;
     m_window->hide();
+    ++m_revealArmSeq;
     m_launcherReveal.cancel();
     m_typedRows = TypedRows::No;
     m_typedRowsCap.stop();
@@ -7300,6 +7426,15 @@ void App::finishHidingLauncher()
     m_launcher->handleHidden();
     if (m_launcher->panel())
         setPanel(false); // the next opening is the box (hidden: nothing to see of it)
+    if (m_pendingSettings && !m_clipClosing) {
+        // Queued so Placement::slideOut() finishes resetting the hidden
+        // launcher's opacity before Settings opens.
+        QMetaObject::invokeMethod(this, [this] {
+            if (auto at = std::exchange(m_pendingSettings, {});
+                at && !m_launcherClosing && !m_clipClosing && !launcherShown())
+                showSettingsNow(*at);
+        }, Qt::QueuedConnection);
+    }
 }
 
 void App::showSearchPanel()
@@ -7331,22 +7466,18 @@ void App::togglePanel()
         setPanel(!m_launcher->panel());
 }
 
-void App::applyLauncherTopmost()
+void App::applyLauncherPin()
 {
     if (!m_window || !m_window->handle())
         return;
+    win::setTaskbarWindow(m_window, m_launcher->pinned() && !m_prewarming.load());
     const bool topmost = !m_launcher->pinned() || m_settings.pinnedOnTop;
     ::SetWindowPos(reinterpret_cast<HWND>(m_window->winId()), topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-    // Pinned, the window is the desktop's own: a taskbar button, Alt+Tab,
-    // minimize and restore, so it is found among the other windows while it
-    // stays. Unpinned, a tool window again, its trace gone from both.
-    win::setTaskbarWindow(m_window, m_launcher->pinned());
-}
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);}
 
 void App::launcherPinnedChanged()
 {
-    applyLauncherTopmost();
+    applyLauncherPin();
     // Over the box, its field drawn there: pinned, the window is one of its
     // own (it stays while the user works elsewhere, and can be dragged
     // away), so the field comes back into it and the box goes idle. Where it
@@ -7367,6 +7498,17 @@ void App::setPanel(bool on, bool opening)
 {
     if (!m_window || on == m_launcher->panel())
         return;
+    const auto armPanelUncloak = [this] {
+        auto connection = std::make_shared<QMetaObject::Connection>();
+        const auto uncloak = [this, connection] {
+            QObject::disconnect(*connection);
+            if (m_window && !m_launcherReveal.pending() && !m_prewarming.load())
+                win::setCloaked(m_window, false);
+        };
+        *connection = connect(m_frame.get(), &WindowFrame::frameShown, this, uncloak);
+        QTimer::singleShot(250ms, this, uncloak); // should no frame come
+        m_frame->afterNextFrame();
+    };
     if (on) {
         if (!opening && (!m_window->isVisible() || m_launcherClosing || m_launcherReveal.pending() || m_prewarming.load()))
             return;
@@ -7379,10 +7521,19 @@ void App::setPanel(bool on, bool opening)
             updateSearchBoxLook();
         }
         m_launcherOverBox = false;
+        // Expanding an already-visible box into the larger panel: cloak across
+        // the native resize until the first panel frame is composed by DWM,
+        // avoiding a stretched/blank intermediate frame.
+        const bool seen = !opening && m_window->isVisible() && !m_launcherClosing && !m_launcherReveal.pending()
+            && !m_prewarming.load();
+        if (seen)
+            win::setCloaked(m_window, true);
         m_frame->setResizable(true);
         m_launcher->setPanel(true); // Main.qml lets go of the window's size and lays the panel out
         applySearchShadow(); // the standard one
         m_placement->enterPanel(m_window->screen()); // one move and resize: the panel's size at its spot
+        if (seen)
+            armPanelUncloak();
         return;
     }
     // Back to the box. A window made smaller shows its last frame cut until
@@ -7390,18 +7541,8 @@ void App::setPanel(bool on, bool opening)
     // seen again once a frame of the box is on the screen.
     const std::optional<taskbar::Spot> spot = m_placement->taskbarSpot();
     const bool seen = m_window->isVisible() && !m_launcherClosing && !m_launcherReveal.pending() && !m_prewarming.load();
-    if (seen) {
+    if (seen)
         win::setCloaked(m_window, true);
-        auto connection = std::make_shared<QMetaObject::Connection>();
-        const auto uncloak = [this, connection] {
-            QObject::disconnect(*connection);
-            if (m_window && !m_launcherReveal.pending() && !m_prewarming.load())
-                win::setCloaked(m_window, false);
-        };
-        *connection = connect(m_frame.get(), &WindowFrame::frameShown, this, uncloak);
-        QTimer::singleShot(250ms, this, uncloak); // should no frame come
-        m_frame->afterNextFrame();
-    }
     m_placement->leavePanel();
     m_frame->setResizable(false);
     m_launcher->setPanel(false); // Main.qml: the box's size again, before it is placed
@@ -7410,6 +7551,8 @@ void App::setPanel(bool on, bool opening)
         m_placement->attachTaskbar(*spot);
     else
         m_placement->placeOn(m_window->screen() ? m_window->screen() : QGuiApplication::primaryScreen());
+    if (seen)
+        armPanelUncloak();
 }
 
 void App::showTrayMenu()
@@ -8087,19 +8230,29 @@ void App::installIndexService(bool install)
     m_serviceMessage = update ? tr("正在更新索引服务…") : install ? tr("正在安装索引服务…") : tr("正在卸载索引服务…");
     refreshIndexAccess();
     // Registered from where this copy is: moved, it has to be installed again.
-    shell::runElevated(exe.toStdWString(), install ? L"--install" : L"--uninstall",
-        [this, install, update](std::optional<unsigned long> code) {
+    // SW_HIDE: WinShunService.exe is a console binary, so hide its window and
+    // surface any failure here (and in service.log) instead of flashing stderr.
+    shell::runElevated(
+        exe.toStdWString(), install ? L"--install" : L"--uninstall",
+        [this, install, update, exe](std::optional<unsigned long> code) {
             QMetaObject::invokeMethod(
                 this,
-                [this, install, update, code] {
+                [this, install, update, exe, code] {
                     m_serviceBusy = false;
                     if (!code) {
                         m_serviceMessage = tr("没有进行：需要管理员权限（在 UAC 里选“是”）");
                     } else if (*code != 0) {
-                        m_serviceMessage = (update ? tr("更新索引服务失败（错误 %1）")
-                                : install          ? tr("安装索引服务失败（错误 %1）")
-                                                   : tr("卸载索引服务失败（错误 %1）"))
-                                               .arg(*code);
+                        std::wstring badFolder;
+                        if (install && *code == ERROR_ACCESS_DENIED && !svcloc::pathProtected(exe.toStdWString())
+                            && !svcloc::anyProtectedDirUsable(svcloc::protectedServiceDirs(), &badFolder)) {
+                            m_serviceMessage = tr("无法安装索引服务：系统保护目录（%1）允许普通用户修改，出于安全考虑不能将服务放进去。请恢复目录默认权限后再试。")
+                                                   .arg(QString::fromStdWString(badFolder));
+                        } else {
+                            m_serviceMessage = (update ? tr("更新索引服务失败（错误 %1）")
+                                    : install          ? tr("安装索引服务失败（错误 %1）")
+                                                       : tr("卸载索引服务失败（错误 %1）"))
+                                                   .arg(*code);
+                        }
                     } else if (install) {
                         m_serviceMessage = update ? tr("索引服务已更新。")
                                                   : tr("索引服务已安装并启动。以后换了新版本的 Win顺，会提醒你点一下更新它。");
@@ -8116,7 +8269,8 @@ void App::installIndexService(bool install)
                     refreshIndexAccess();
                 },
                 Qt::QueuedConnection);
-        });
+        },
+        SW_HIDE);
 }
 
 // ---- AI 助手: the MCP server --------------------------------------------------
@@ -8537,11 +8691,20 @@ void App::createPluginHost()
         };
         environment.installFromLibrary = [this](const QString& id, std::function<void(PluginInstalled)> done) {
             // The library's tab at this plugin: its download and its questions show there.
-            showSettings([&id](QQuickWindow* window) { QMetaObject::invokeMethod(window, "showPluginLibrary", Q_ARG(QVariant, QVariant(id))); });
-            if (m_settingsEditor)
-                m_settingsEditor->plugins()->gallery()->installFor(id, std::move(done));
-            else
-                done({PluginInstalled::Step::Failed, id, {}, tr("打不开 Win顺 的设置窗口")});
+            auto reply = std::make_shared<std::function<void(PluginInstalled)>>(std::move(done));
+            showSettings([this, id, reply](QQuickWindow* window) {
+                QMetaObject::invokeMethod(window, "showPluginLibrary", Q_ARG(QVariant, QVariant(id)));
+                if (auto callback = std::exchange(*reply, {})) {
+                    if (m_settingsEditor)
+                        m_settingsEditor->plugins()->gallery()->installFor(id, std::move(callback));
+                    else
+                        callback({PluginInstalled::Step::Failed, id, {}, tr("打不开 Win顺 的设置窗口")});
+                }
+            });
+            if (!m_pendingSettings && !m_settingsEditor) {
+                if (auto callback = std::exchange(*reply, {}))
+                    callback({PluginInstalled::Step::Failed, id, {}, tr("打不开 Win顺 的设置窗口")});
+            }
         };
         environment.librarySource = PluginUpdates::defaultSource();
         environment.web = m_pluginUpdates->web();
@@ -9321,10 +9484,10 @@ mcp::ToolResult App::openAiSettings(const QString& key, const QString& section)
         }
         tab = shared.value_or(-1);
     }
-    showSettings([&](QQuickWindow* window) {
+    showSettings([page, tab, rowTitle](QQuickWindow* window) {
         QMetaObject::invokeMethod(window, "showSetting", Q_ARG(QVariant, page), Q_ARG(QVariant, tab), Q_ARG(QVariant, rowTitle));
     });
-    if (!m_settingsWindow)
+    if (!m_settingsWindow && !m_pendingSettings)
         return {{}, true, u"The settings window could not be opened."_s};
     return {{{u"opened"_s, true}, {u"where"_s, where}}};
 }

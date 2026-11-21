@@ -64,6 +64,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool dialogJump READ dialogJump WRITE setDialogJump NOTIFY changed FINAL)
     Q_PROPERTY(bool dialogBar READ dialogBar WRITE setDialogBar NOTIFY changed FINAL)
     Q_PROPERTY(QString dialogBarPlace READ dialogBarPlace WRITE setDialogBarPlace NOTIFY changed FINAL)
+    Q_PROPERTY(bool dialogBarSuggestions READ dialogBarSuggestions WRITE setDialogBarSuggestions NOTIFY changed FINAL)
     Q_PROPERTY(bool dialogAutoJump READ dialogAutoJump WRITE setDialogAutoJump NOTIFY changed FINAL)
     Q_PROPERTY(QString dialogAutoJumpWhen READ dialogAutoJumpWhen WRITE setDialogAutoJumpWhen NOTIFY changed FINAL)
     Q_PROPERTY(QStringList dialogBarExcludedApps READ dialogBarExcludedApps NOTIFY changed FINAL)
@@ -96,6 +97,11 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool folderMenuFavorites READ folderMenuFavorites WRITE setFolderMenuFavorites NOTIFY changed FINAL)
     Q_PROPERTY(bool folderMenuRecent READ folderMenuRecent WRITE setFolderMenuRecent NOTIFY changed FINAL)
     Q_PROPERTY(bool folderMenuWindows READ folderMenuWindows WRITE setFolderMenuWindows NOTIFY changed FINAL)
+    Q_PROPERTY(bool folderMenuFavoriteFolders READ folderMenuFavoriteFolders WRITE setFolderMenuFavoriteFolders NOTIFY changed FINAL)
+    Q_PROPERTY(bool folderMenuFavoriteFiles READ folderMenuFavoriteFiles WRITE setFolderMenuFavoriteFiles NOTIFY changed FINAL)
+    Q_PROPERTY(bool folderMenuFavoriteApps READ folderMenuFavoriteApps WRITE setFolderMenuFavoriteApps NOTIFY changed FINAL)
+    Q_PROPERTY(bool folderMenuFavoritePlaces READ folderMenuFavoritePlaces WRITE setFolderMenuFavoritePlaces NOTIFY changed FINAL)
+    Q_PROPERTY(bool folderMenuFavoriteCommands READ folderMenuFavoriteCommands WRITE setFolderMenuFavoriteCommands NOTIFY changed FINAL)
     Q_PROPERTY(int folderMenuFavoritesInline READ folderMenuFavoritesInline WRITE setFolderMenuFavoritesInline NOTIFY changed FINAL)
     Q_PROPERTY(int folderMenuRecentInline READ folderMenuRecentInline WRITE setFolderMenuRecentInline NOTIFY changed FINAL)
     Q_PROPERTY(int folderMenuWindowsInline READ folderMenuWindowsInline WRITE setFolderMenuWindowsInline NOTIFY changed FINAL)
@@ -107,11 +113,12 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool folderMenuItemFavorite READ folderMenuItemFavorite WRITE setFolderMenuItemFavorite NOTIFY changed FINAL)
     Q_PROPERTY(bool folderMenuItemSettings READ folderMenuItemSettings WRITE setFolderMenuItemSettings NOTIFY changed FINAL)
     Q_PROPERTY(bool folderMenuFiles READ folderMenuFiles WRITE setFolderMenuFiles NOTIFY changed FINAL)
-    // The folder menu in Directory Opus, which runs a command of its settings
-    // on a double click on blank space (refreshOpusFolderMenu): on | stale
-    // (another copy's WinShunSearch.exe) | off | taken (a command of the
-    // user's own: opusFolderMenuTaken) | manual (no settings file, or one
-    // not understood: set up by hand) | busy (setOpusFolderMenu at work).
+    // The folder menu in Directory Opus, which runs commands of its settings
+    // on a double and a middle click on blank space (refreshOpusFolderMenu):
+    // on | stale (another copy's WinShunSearch.exe, or the command of before
+    // GitHub #416) | off | taken (a command of the user's own:
+    // opusFolderMenuTaken) | manual (no settings file, or one not understood:
+    // set up by hand) | busy (setOpusFolderMenu at work).
     Q_PROPERTY(QString opusFolderMenu READ opusFolderMenu NOTIFY opusFolderMenuChanged FINAL)
     Q_PROPERTY(QString opusFolderMenuTaken READ opusFolderMenuTaken NOTIFY opusFolderMenuChanged FINAL)
     Q_PROPERTY(QString opusFolderMenuProblem READ opusFolderMenuProblem NOTIFY opusFolderMenuChanged FINAL)
@@ -202,6 +209,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool showModifiedTime READ showModifiedTime WRITE setShowModifiedTime NOTIFY changed FINAL)
     Q_PROPERTY(bool showFileSize READ showFileSize WRITE setShowFileSize NOTIFY changed FINAL)
     Q_PROPERTY(bool doubleClickToOpen READ doubleClickToOpen WRITE setDoubleClickToOpen NOTIFY changed FINAL)
+    Q_PROPERTY(bool defaultSystemMenu READ defaultSystemMenu WRITE setDefaultSystemMenu NOTIFY changed FINAL)
     Q_PROPERTY(bool clickPreviews READ clickPreviews WRITE setClickPreviews NOTIFY changed FINAL)
     Q_PROPERTY(bool tabEntersFavoriteFolder READ tabEntersFavoriteFolder WRITE setTabEntersFavoriteFolder NOTIFY changed FINAL)
     Q_PROPERTY(bool searchApps READ searchApps WRITE setSearchApps NOTIFY changed FINAL)
@@ -311,6 +319,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool searchBoxSupported READ searchBoxSupported CONSTANT FINAL)
     Q_PROPERTY(bool searchBoxShown READ searchBoxShown NOTIFY searchBoxShownChanged FINAL)
     Q_PROPERTY(QString searchBoxHidden READ searchBoxHidden NOTIFY searchBoxShownChanged FINAL)
+    Q_PROPERTY(QString searchBoxForm READ searchBoxForm NOTIFY searchBoxFormChanged FINAL) // "" | box | label | icon
     // Read again as the window comes to the front (refreshTaskbarState): the
     // user pins the button and hides Windows' search outside Win顺.
     Q_PROPERTY(bool taskbarButtonPinned READ taskbarButtonPinned NOTIFY taskbarStateChanged FINAL)
@@ -450,6 +459,8 @@ public:
     void setDialogBar(bool on);
     QString dialogBarPlace() const { return m_settings.dialogBarPlace; }
     void setDialogBarPlace(const QString& place);
+    bool dialogBarSuggestions() const { return m_settings.dialogBarSuggestions; }
+    void setDialogBarSuggestions(bool on);
     bool dialogAutoJump() const { return m_settings.dialogAutoJump; }
     void setDialogAutoJump(bool on);
     QString dialogAutoJumpWhen() const { return m_settings.dialogAutoJumpWhen; }
@@ -500,6 +511,16 @@ public:
     void setFolderMenuRecent(bool on);
     bool folderMenuWindows() const { return m_settings.folderMenuWindows; }
     void setFolderMenuWindows(bool on);
+    bool folderMenuFavoriteFolders() const { return m_settings.folderMenuFavoriteFolders; }
+    void setFolderMenuFavoriteFolders(bool on);
+    bool folderMenuFavoriteFiles() const { return m_settings.folderMenuFavoriteFiles; }
+    void setFolderMenuFavoriteFiles(bool on);
+    bool folderMenuFavoriteApps() const { return m_settings.folderMenuFavoriteApps; }
+    void setFolderMenuFavoriteApps(bool on);
+    bool folderMenuFavoritePlaces() const { return m_settings.folderMenuFavoritePlaces; }
+    void setFolderMenuFavoritePlaces(bool on);
+    bool folderMenuFavoriteCommands() const { return m_settings.folderMenuFavoriteCommands; }
+    void setFolderMenuFavoriteCommands(bool on);
     int folderMenuFavoritesInline() const { return m_settings.folderMenuFavoritesInline; }
     int folderMenuRecentInline() const { return m_settings.folderMenuRecentInline; }
     int folderMenuWindowsInline() const { return m_settings.folderMenuWindowsInline; }
@@ -548,10 +569,11 @@ public:
     // search or a favorite given it is told; empty when it is free.
     QString captureKeywordTaken(const QString& keyword) const;
     Q_INVOKABLE void refreshFileManagers();
-    // The command Directory Opus runs for a double click on blank space, to
-    // bring up the folder menu there (FolderMenu::requested): for its
-    // Preferences > File Displays > Mouse > Background Events.
-    Q_INVOKABLE QString opusFolderMenuCommand() const;
+    // The command Directory Opus runs for a double click on blank space (or
+    // a middle click), to bring up the folder menu there
+    // (FolderMenu::requested): for its Preferences > File Displays > Mouse >
+    // Background Events.
+    Q_INVOKABLE QString opusFolderMenuCommand(bool middle = false) const;
     Q_INVOKABLE void openOpusPreferences() const;
     // While `on`: what `window`'s engine is making in the background (a
     // settings page the pointer rests on: SettingsWindow.hoverNav) made on
@@ -564,8 +586,9 @@ public:
     QString opusFolderMenuProblem() const { return m_opusFolderMenuProblem; }
     bool opusRunning() const { return m_opusRunning; }
     Q_INVOKABLE void refreshOpusFolderMenu();
-    // Puts that command into Opus's settings (what was there comes back with
-    // `on` false), closing and starting again an Opus that runs.
+    // Puts those commands into Opus's settings, a single middle click made
+    // to run its (what was there comes back with `on` false), closing and
+    // starting again an Opus that runs.
     Q_INVOKABLE void setOpusFolderMenu(bool on);
     bool includeRemovableDrives() const { return m_settings.includeRemovableDrives; }
     void setIncludeRemovableDrives(bool on);
@@ -645,6 +668,9 @@ public:
     Q_INVOKABLE bool isNetworkFolder(const QString& text) const; // a share's place (path or file:// URL)
     Q_INVOKABLE QString localPath(const QString& text) const; // a path or a file:/// URL, with native separators
     Q_INVOKABLE QString pickFolder(const QString& title); // asks for one; empty when none was chosen
+    // If `text` contains %VAR% and expands cleanly to a different path, returns
+    // that expanded path (for tooltips); otherwise empty.
+    Q_INVOKABLE QString resolveEnvPath(const QString& text) const;
     QStringList excludedPaths() const;
     QStringList excludedNames() const { return m_settings.excludedNames; }
     QStringList excludedTypes() const { return m_settings.excludedTypes; }
@@ -805,6 +831,8 @@ public:
     void setShowFileSize(bool on);
     bool doubleClickToOpen() const { return m_settings.doubleClickToOpen; }
     void setDoubleClickToOpen(bool on);
+    bool defaultSystemMenu() const { return m_settings.defaultSystemMenu; }
+    void setDefaultSystemMenu(bool on);
     bool clickPreviews() const { return m_settings.clickPreviews; }
     void setClickPreviews(bool on);
     bool tabEntersFavoriteFolder() const { return m_settings.tabEntersFavoriteFolder; }
@@ -924,6 +952,8 @@ public:
     bool searchBoxShown() const { return m_searchBoxHidden.isEmpty(); }
     QString searchBoxHidden() const { return m_searchBoxHidden; } // why not: "pending", "noroom"... (App)
     void setSearchBoxShown(const QString& hidden); // set by the app: empty when shown
+    QString searchBoxForm() const { return m_searchBoxForm; } // "" | "box" | "label" | "icon"
+    void setSearchBoxForm(const QString& form); // set by the app
     // Set by the app: the box measured Windows 10's taskbar (StartAllBack,
     // ExplorerPatcher), where Windows' search is another thing (refreshTaskbarState).
     void setClassicTaskbar(bool classic);
@@ -1002,6 +1032,10 @@ public:
     Q_INVOKABLE void openWindowsSetting(const QString& command);
 
     Q_INVOKABLE void addExcludedFolder(); // asks for the folder
+    // Adds a typed/pasted excluded folder (supports %VAR% without auto-expanding,
+    // GitHub #421). Returns why it cannot be added, or empty once added.
+    Q_INVOKABLE QString addExcludedPath(const QString& text);
+    static QString addExcludedPathTo(Settings& settings, const QString& text, bool& added);
     Q_INVOKABLE void removeExcludedPath(int index);
     Q_INVOKABLE bool addExcludedName(const QString& name);
     Q_INVOKABLE void removeExcludedName(int index);
@@ -1183,6 +1217,7 @@ signals:
     void winVStateChanged();
     void winSStateChanged();
     void searchBoxShownChanged();
+    void searchBoxFormChanged();
     void taskbarStateChanged();
     void fileManagersChanged();
     void clipboardCountChanged();
@@ -1270,6 +1305,7 @@ private:
     bool m_taskbarButtonPinned = false;
     bool m_windowsSearchShown = true;
     QString m_searchBoxHidden = QStringLiteral("pending");
+    QString m_searchBoxForm;
     bool m_classicTaskbar = false;
     QString m_clipboardHotkeyError;
     int m_clipboardCount = 0;

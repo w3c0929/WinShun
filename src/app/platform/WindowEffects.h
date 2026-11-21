@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 
 class QWindow;
 
@@ -93,6 +94,12 @@ bool materialsEnabled();
 // while it still gets focus and draws as usual.
 void setCloaked(QWindow* window, bool cloaked);
 
+// A window of its own to the shell (GitHub #418, the launcher pinned): a
+// button on the taskbar, in Alt+Tab, minimized by that button and Win+D as
+// any other, and back from them. Off: as Qt made it from its flags (a
+// Qt::Tool window: none of that). Kept while hidden and shown again.
+void setTaskbarWindow(QWindow* window, bool on);
+
 // No DWM fade as the window is shown or hidden: hidden, it is off the screen
 // in the next composition, not some 200 ms later (a capture must not catch it).
 // Not for a window that can be maximized or snapped: sized so with them off,
@@ -107,7 +114,7 @@ void disableTransitions(QWindow* window);
 // window itself may go at once: its focus, its keys and whatever comes next
 // are as they would be without this. False, and nothing shown, when it is
 // not on the screen (hidden, minimized, cloaked) or the screen can't be read.
-bool fadeOutCopy(QWindow* window, std::chrono::milliseconds duration);
+bool fadeOutCopy(QWindow* window, std::chrono::milliseconds duration, std::function<void()> done = {});
 // A window (hidden or not) put on the monitor that has `logicalPoint` (Qt's
 // coordinates), where it is not on it yet: only moved, at the size it has,
 // so that a change of scale reaches Qt as WM_DPICHANGED does for a window
@@ -149,15 +156,6 @@ enum class ShellFlyout { Dismiss, Preserve };
 // that must keep the old field open should normally show without activation;
 // an explicit foreground activation may still dismiss a system popup itself.
 Front bringToFront(QWindow* window, ShellFlyout flyout = ShellFlyout::Dismiss);
-
-// The launcher kept shown (Launcher::pinned): a window of the desktop's own,
-// with a taskbar button, Alt+Tab and minimize/restore, rather than the tool
-// window it is otherwise (no taskbar trace, out of Alt+Tab). Windows picks
-// those from the native styles alone (WS_EX_TOOLWINDOW / WS_EX_APPWINDOW,
-// WS_MINIMIZEBOX); Qt sets them for Qt::Tool at creation and does not ask
-// again, so switching them here leaves the window, its frame and its focus
-// as they are, where changing the Qt window flags would recreate the HWND.
-void setTaskbarWindow(QWindow* window, bool on);
 
 // Makes native popup menus (tray, context menu) follow the dark theme.
 void setMenuTheme(bool dark);

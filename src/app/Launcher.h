@@ -142,6 +142,7 @@ class Launcher : public QObject {
     // A click on a row only selects it; a double click (or Enter) opens it
     // (Settings::doubleClickToOpen, GitHub #44).
     Q_PROPERTY(bool doubleClickToOpen READ doubleClickToOpen NOTIFY resultOptionsChanged FINAL)
+    Q_PROPERTY(bool defaultSystemMenu READ defaultSystemMenu NOTIFY resultOptionsChanged FINAL)
     // With it, the click shows the row's preview too (Settings::clickPreviews).
     Q_PROPERTY(bool clickPreviews READ clickPreviews NOTIFY resultOptionsChanged FINAL)
     // The modifier that opens the nth row shown with a digit: "ctrl", "alt",
@@ -242,6 +243,8 @@ class Launcher : public QObject {
     // Ctrl while it is in front) hides it. Kept while hidden, until turned
     // off or the program restarts. The app does the rest (App.cpp).
     Q_PROPERTY(bool pinned READ pinned WRITE setPinned NOTIFY pinnedChanged FINAL)
+    // Fading out (App::hideLauncher): tooltips and menus dismiss at once.
+    Q_PROPERTY(bool closing READ closing NOTIFY closingChanged FINAL)
     // Regex mode (Ctrl+R, as Everything's): every word typed is a regular
     // expression on names (parseQuery's regexTerms), in 全部 and 文件; 内容
     // is as ever. Kept in the settings (regexModeChanged).
@@ -573,6 +576,8 @@ public:
     bool showFileSize() const { return m_showFileSize; }
     bool doubleClickToOpen() const { return m_doubleClickToOpen; }
     void setDoubleClickToOpen(bool on);
+    bool defaultSystemMenu() const { return m_defaultSystemMenu; }
+    void setDefaultSystemMenu(bool on);
     bool clickPreviews() const { return m_clickPreviews; }
     void setClickPreviews(bool on);
     void setTabEntersFavoriteFolder(bool on);
@@ -860,6 +865,8 @@ public:
     bool pinned() const { return m_pinned; }
     void setPinned(bool on);
     Q_INVOKABLE void togglePin() { setPinned(!m_pinned); } // Ctrl+T
+    bool closing() const { return m_closing; }
+    void setClosing(bool on);
     bool regexMode() const { return m_regexMode; }
     void setRegexMode(bool on);
     Q_INVOKABLE void toggleRegexMode(); // Ctrl+R: says so in the footer
@@ -973,6 +980,7 @@ signals:
     void panelFiltersOnTopChanged();
     void panelToggleRequested();
     void pinnedChanged();
+    void closingChanged();
     void settingsRequested();
     void shortcutSettingsRequested(); // the settings' overview of all shortcuts
     void folderSettingsRequested(); // the settings' page of the chosen folders
@@ -1428,6 +1436,7 @@ private:
     bool m_panelFiltersOnTop = false;
     PanelColumns m_columns;
     bool m_pinned = false;
+    bool m_closing = false;
     int m_dateChoice = 0;
     QString m_dateFrom;
     QString m_dateTo;
@@ -1459,6 +1468,7 @@ private:
     bool m_showModified = true;
     bool m_showFileSize = false;
     bool m_doubleClickToOpen = false;
+    bool m_defaultSystemMenu = false;
     bool m_clickPreviews = false;
     bool m_tabEntersFavoriteFolder = false;
     // GitHub #361. The path of the row the user chose (chooseRow), for Tab;
