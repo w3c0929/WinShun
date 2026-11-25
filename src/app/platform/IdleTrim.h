@@ -66,6 +66,10 @@ public:
         qint64 megabytes = 0;
     };
     LastTrim lastTrim() const noexcept { return {m_lastTrimAtMs.load(), m_lastTrimMb.load()}; }
+    // Why the memory is, or is not, going back right now, for the diagnostics
+    // package: what holds it (held after a resume, work under way, a window
+    // up without the focus), the last time and what stayed then. GUI thread.
+    QJsonObject status() const;
     // An emptying done by someone else (the settings' button): remembered as the last.
     void noteTrim(qint64 megabytes) noexcept;
     // How long after the last use the memory goes back; 20 s. Shorter for a
@@ -102,7 +106,9 @@ private:
     std::atomic<qint64> m_lastTrimAtMs {0};
     std::atomic<qint64> m_lastTrimMb {0};
     // "idle-trim" entries: the first few, then one every ten minutes; each
-    // resume's hold (notable) up to 30 an hour.
+    // resume's hold, and each giving back that left far more than was kept
+    // (notable), up to 30 an hour. One entry a giving back, written when it
+    // is over: what there was, what was kept, what stayed.
     diagnostics::JournalBudget m_journal;
     std::atomic<bool> m_trimming {false}; // a background trim pass is running
     std::jthread m_worker; // joined on destruction; stopped on used()/resumed()

@@ -73,6 +73,8 @@ class Launcher : public QObject {
     Q_PROPERTY(bool queryHistoryEnabled READ queryHistoryEnabled NOTIFY historyChanged FINAL)
     Q_PROPERTY(QString historyKeys READ historyKeys NOTIFY historyChanged FINAL)
     Q_PROPERTY(QString logoRightClick READ logoRightClick NOTIFY logoRightClickChanged FINAL)
+    // The Logo at the search box's left end (Settings::searchLogo, GitHub #433).
+    Q_PROPERTY(bool searchLogo READ searchLogo NOTIFY searchLogoChanged FINAL)
     Q_PROPERTY(ws::ResultModel* results READ results CONSTANT FINAL)
     // Settings::favoriteTiles: with nothing typed in 全部, the favorites'
     // rows are the first tileRows rows, drawn as tiles over the list
@@ -276,6 +278,13 @@ class Launcher : public QObject {
     Q_PROPERTY(QString sizeMin READ sizeMin NOTIFY filtersChanged FINAL)
     Q_PROPERTY(QString sizeMax READ sizeMax NOTIFY filtersChanged FINAL)
     Q_PROPERTY(QString folderFilter READ folderFilter NOTIFY filtersChanged FINAL)
+    // 名称 (GitHub #457): what the name begins with, ends with and must not
+    // have, each typed in a box of its own for those who do not know the
+    // syntax (nameCondition, Query.h: a condition as a quick filter's).
+    Q_PROPERTY(QString nameStarts READ nameStarts NOTIFY filtersChanged FINAL)
+    Q_PROPERTY(QString nameEnds READ nameEnds NOTIFY filtersChanged FINAL)
+    Q_PROPERTY(QString nameLacks READ nameLacks NOTIFY filtersChanged FINAL)
+    Q_PROPERTY(bool nameFilterSet READ nameFilterSet NOTIFY filtersChanged FINAL)
     Q_PROPERTY(bool filtersActive READ filtersActive NOTIFY filtersChanged FINAL)
     // The quick filters (Settings' [QuickFilters]: a query saved under a
     // name, as Everything's filters), a chip each in the side bar:
@@ -669,6 +678,8 @@ public:
     void setHistoryKeys(const QString& keys);
     QString logoRightClick() const { return m_logoRightClick; }
     void setLogoRightClick(const QString& action);
+    bool searchLogo() const { return m_searchLogo; }
+    void setSearchLogo(bool on);
     Q_INVOKABLE bool navigateQueryHistory(int direction);
     Q_INVOKABLE void recallQuery(int index);
     Q_INVOKABLE void removeQuery(int index);
@@ -933,6 +944,12 @@ public:
     Q_INVOKABLE bool readsAsSize(const QString& text) const; // "40 KB", "1.5 GB", MB when bare
     Q_INVOKABLE bool readsAsDate(const QString& text) const; // "2026", "2026-3", "2026/3/15"
     Q_INVOKABLE void setFolderFilter(const QString& path);
+    QString nameStarts() const { return m_nameStarts; }
+    QString nameEnds() const { return m_nameEnds; }
+    QString nameLacks() const { return m_nameLacks; }
+    bool nameFilterSet() const { return !m_nameCondition.isEmpty(); }
+    Q_INVOKABLE void setNameFilter(const QString& starts, const QString& ends, const QString& lacks);
+    void clearNameFilter(); // the boxes emptied; the caller tells (filtersChanged) and searches
     Q_INVOKABLE void pickFolderFilter(); // the folder dialog
     Q_INVOKABLE void clearFilters();
     QVariantList quickFilters() const;
@@ -968,6 +985,7 @@ signals:
     void historyChanged();
     void queryHistoryChanged();
     void logoRightClickChanged();
+    void searchLogoChanged();
     void contentIndexChanged();
     void contentIndexRequested(bool on);
     void frequentAppsChanged();
@@ -1320,6 +1338,7 @@ private:
     bool m_mergeFileScope = false;
     QString m_historyKeys = QStringLiteral("ctrl");
     QString m_logoRightClick = QStringLiteral("menu");
+    bool m_searchLogo = true;
     ResultModel m_results;
     ResultModel m_tiles; // the favorites as tiles (setFavoriteTiles); empty otherwise
     bool m_favoriteTilesOn = false;
@@ -1532,6 +1551,10 @@ private:
     QString m_sizeMin;
     QString m_sizeMax;
     QString m_folderFilter;
+    QString m_nameStarts; // 名称, as typed in its boxes …
+    QString m_nameEnds;
+    QString m_nameLacks;
+    QString m_nameCondition; // … and as the query carries them (nameCondition)
     QuickFilters m_quickFilters;
     QStringList m_quickFiltersOn; // their names
     SortOrder m_panelSort;

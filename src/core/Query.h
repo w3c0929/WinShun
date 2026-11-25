@@ -36,6 +36,14 @@ FileTypeQuery splitFileTypeQuery(const QString& text, const FileTypes& types, QS
 // drive's "C:" is none): any number of them, and what is left to search for.
 QuickFilterQuery splitQuickFilterQuery(const QString& text, const QuickFilters& filters);
 
+// 名称 in the panel's filters (GitHub #457: what a name begins with, ends
+// with and must not have, without the syntax): the same as a condition
+// typed, for the query to carry as a quick filter's is. `starts` and `ends`
+// are taken whole, spaces and all; `ends` is the end of the name before its
+// extension or with it ("终稿" finds 报告终稿.docx, ".docx" too); `lacks` is
+// words, each one kept out. Quotes are dropped. Empty: nothing asked.
+QString nameCondition(const QString& starts, const QString& ends, const QString& lacks);
+
 // One whitespace-separated piece of the query.
 //
 //   report          name contains "report"
@@ -133,16 +141,30 @@ struct ContentFolderSpec {
     friend bool operator==(const ContentFolderSpec&, const ContentFolderSpec&) = default;
 };
 
+// Which files a content search reads, named among its words as a name search
+// names them (QueryTerm), never quoted:
+//
+//   年度报告 ext:docx    only in files of that type ("ext:py;js": of these)
+//   年度报告 *.docx      the same; "报告*.docx": so named, "!*.min.js": none so named
+//
+// A word with a * needs a dot as well ("*.py"): "**重点**" and "a*b" are
+// what to find. In quotes ("*.py") any of them is.
 struct ContentQuery {
     QString words; // the rest: what to find in the files (contentTerms)
     std::vector<ContentFolderSpec> folders;
+    QStringList files; // as typed: "ext:py", "*.md"; a file is read when it fits every one
+    QString withoutFiles; // the text as typed with those taken out; the text itself when there are none
+
+    // `files` as one query for parseQuery: a condition on the files read.
+    QString fileCondition() const { return files.join(u' '); }
 };
 
-// What a content search was typed as: its words, and the folders named
-// among them (ContentFolderSpec). A line of code is all words: "a/" or
-// "/usr/bin" in it are what it says. So are regular expressions
-// (`regexMode`, as contentPattern takes it: "\d+/" is one), after a folder
-// given by its path at the start.
+// What a content search was typed as: its words, the folders named among
+// them (ContentFolderSpec) and the files it is narrowed to (`files`). A line
+// of code is all words but for those: "a/" or "/usr/bin" in it are what it
+// says. So are regular expressions (`regexMode`, as contentPattern takes it:
+// "\d+/" and "ext:py" are each one), after a folder given by its path at the
+// start.
 ContentQuery splitContentQuery(const QString& text, bool regexMode = false);
 
 // `regexTerms`: every term is a regular expression, as if each had regex:

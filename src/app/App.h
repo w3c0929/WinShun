@@ -50,7 +50,7 @@ class QWinEventNotifier;
 
 namespace ws {
 
-namespace preview { struct DoubleTapActionsProbe; struct IdleOpenProbe; struct ForegroundUseProbe; struct ClipboardAnimationProbe; struct SearchShadowProbe; struct LauncherSettingsProbe; }
+namespace preview { struct DoubleTapActionsProbe; struct IdleOpenProbe; struct ForegroundUseProbe; struct ClipboardAnimationProbe; struct SearchShadowProbe; struct LauncherSettingsProbe; struct EntryHotkeyProbe; }
 
 namespace piedrop {
 class FileOperations;
@@ -61,6 +61,7 @@ class ClipImportJob;
 class ClipStore;
 class Clipboard;
 class ClipboardDisplay;
+class ServiceCaptureSurface;
 class OcrPackage;
 class PluginCommands;
 class PluginSettings;
@@ -146,6 +147,7 @@ class App : public QObject {
     friend struct preview::ClipboardAnimationProbe;
     friend struct preview::SearchShadowProbe;
     friend struct preview::LauncherSettingsProbe;
+    friend struct preview::EntryHotkeyProbe;
 
 public:
     struct StartOptions {
@@ -176,6 +178,13 @@ public:
         qint64 firstFrameMs = -1; // -1 until drawn
     };
     const SettingsOpening& settingsOpening() const { return m_settingsOpening; }
+    // How long after the settings window was closed its pages are put away
+    // (half a minute); shorter for a probe that looks at it.
+    void setSettingsUnloadAfter(int ms)
+    {
+        m_settingsUnloadMs = ms;
+        m_settingsUnload.setInterval(ms);
+    }
 
     App();
     ~App() override;
@@ -432,6 +441,20 @@ private:
     // front. Qt's focus window alone is not that (a refused activation leaves
     // one active in the background, the browser in front: #195).
     bool quickPasteSuspended() const;
+    // The entries' own shortcuts (Clip::hotkey): registered, those that
+    // changed only; let go of while the settings record a shortcut. Why one
+    // does not work goes beside it in the settings, and to a notification
+    // when that is new and the settings are not up.
+    void applyEntryHotkeys();
+    // The settings' list of them (SettingsEditor::clipboardEntryHotkeys):
+    // [{id, title, detail, hotkey, error}], the one 设置快捷键 is for first
+    // listed too while it has no keys yet.
+    QVariantList entryHotkeyRows() const;
+    // 设置快捷键 on an entry (Clipboard::hotkeyRequested): the settings at
+    // its row, recording.
+    void showEntryHotkeySettings(qint64 id);
+    // Keys recorded for an entry in the settings; empty takes them away.
+    void setEntryHotkey(qint64 id, const QString& hotkey);
     void clipCaptured(const ClipCapture& capture);
     void applyTaskbar(bool initial = false); // the [Taskbar] settings: Win+S, typing in the Start menu
     void applyTaskbarHotkeys(); // Win+S and Win+Shift+S; where Win+S stands, for the settings
@@ -720,6 +743,7 @@ private:
     bool m_accessTakenFromTask = false; // the mode was taken over from an old elevated task: said in the settings
     bool m_foldersInEffect = false; // only the chosen folders are indexed (foldersInEffect), as last applied
     QString m_serviceMessage; // ... and how installing or uninstalling the service went
+    QString m_serviceRepair; // the commands that let it be installed, when a folder's permissions stopped it
     bool m_serviceBusy = false; // WinShunService.exe --install / --uninstall running
     QString m_indexDir; // where the index files are, '/' separated
     QString m_indexFolder; // the [Index] Folder setting m_indexDir stands for
@@ -930,6 +954,9 @@ private:
     // GitHub #265, memory short: the pages an opening needs are read back ahead.
     std::shared_ptr<HotPages> m_launcherPages;
     std::shared_ptr<HotPages> m_clipPages;
+    // How much of them stays when the memory is given back (HotPages::kept);
+    // another amount only for a probe (--idle-open-kept). Any thread.
+    std::atomic<std::size_t> m_keptMost {HotPages::kKeptBytes};
     std::shared_ptr<HotPages> m_recordPages; // of the opening under way, told what it used once it is seen
     std::array<qint64, 2> m_openingSeenMs {}; // by TriggerWindow, when each was last seen; ms since 1970, as IdleTrim::LastTrim
     std::array<std::uint64_t, 2> m_lastActivityMs {}; // by TriggerWindow, GetTickCount64() when last shown or hidden
@@ -963,6 +990,7 @@ private:
     std::unique_ptr<Placement> m_clipPlacement; // likewise for the clipboard window
     std::unique_ptr<WindowFrame> m_clipFrame;
     std::unique_ptr<ClipboardDisplay> m_clipDisplay;
+    std::unique_ptr<ServiceCaptureSurface> m_captureSurface;
     bool m_clipDisplayWanted = false;
     bool m_clipDisplayProbe = false;
     std::unique_ptr<win::TextCaret> m_textCaret; // where another program's caret is: the clipboard opens there
@@ -1056,6 +1084,17 @@ private:
     bool m_quickPasteRetrying = false; // a look again at a held digit on its way
     bool m_quickPasteOdd = false; // as last written to the diagnostics
     QString m_quickPasteLogged; // likewise, in short
+    struct EntryHotkey {
+        int id = 0; // the hotkey's (kEntryHotkeyId + n)
+        qint64 clip = 0;
+        QString keys;
+    };
+    std::vector<EntryHotkey> m_entryHotkeys; // registered (applyEntryHotkeys)
+    QHash<qint64, QString> m_entryHotkeyErrors; // an entry -> why its keys do not work
+    // Keys refused as they were recorded (another entry's, Win顺's own): the
+    // entry and why, shown beside it until the next keys.
+    std::pair<qint64, QString> m_entryHotkeyRefused;
+    qint64 m_entryHotkeyPending = 0; // 设置快捷键 asked for it: listed with no keys yet
     QString m_winSState; // likewise for Win+S
     // In front when the launcher last opened: where a screenshot of the
     // history (jt, Enter) is pasted.
@@ -1085,6 +1124,8 @@ private:
     QTimer m_settingsReload;
     QTimer m_indexOptionsApply; // rebuilding the crawler is costly: batch quick edits
     QTimer m_contentStatusTimer; // while the settings window is open
+    QTimer m_settingsUnload; // once it was closed: its pages put away (SettingsWindow.unloadPages)
+    int m_settingsUnloadMs = 30'000;
     QTimer m_cliTallyTimer; // ws runs many a minute: the status line about it is made once in a while
     QTimer m_darkFrameGuard; // see guardDarkFrames
     QElapsedTimer m_darkFrameWatch;

@@ -73,7 +73,6 @@ Item {
     required property bool offline // on a network share that cannot be reached now: dimmed, tagged
     required property bool plugin // a plugin's row
     required property bool windowResult
-    required property bool trayApp // a notification-area program found by 全部's search: tagged 运行
     required property string source // ... the plugin's name
     required property bool pluginCopies // ... with its own text to copy, or Enter copies: its copy button
     required property string folderAway // ... its second line while the keyboard is on another row; "": the folder line
@@ -109,9 +108,6 @@ Item {
     property string actionLetters
     // The window's tip for a name or folder cut short (one for all its rows).
     property NameTip nameTip: null
-    // The pointer moved last (Main.qml): the row under it wears the face; the
-    // keys moved last: the keyboard's row does, wherever the pointer rests.
-    property bool pointerMode: true
     // The window's devicePixelRatio, read once by the list's host (GitHub #111);
     // the list's own Screen where the host gives none.
     property real dpr: ListView.view ? ListView.view.Screen.devicePixelRatio : 1
@@ -168,7 +164,6 @@ Item {
     signal dragRequested(int index) // its file or folder dragged out of the window
     signal previewRequested(int index) // middle click: the preview of this row, the file stays shut
     signal hoverMoved(int index, point globalPos) // the mouse moved over it (not pressed)
-    signal hoverChanged(int index, bool hovered) // the pointer came onto this row, or left it
 
     // Text on whole device pixels. Qt rounds each corner of a glyph's quad to
     // the pixel grid on the GPU, in single precision: on a half pixel (where
@@ -295,17 +290,11 @@ Item {
         anchors.rightMargin: Theme.rowInset
         anchors.topMargin: Theme.edge(row.dpr)
         anchors.bottomMargin: Theme.edge(row.dpr)
-        visible: !row.current && (row.selected || (area.containsMouse && row.pointerMode))
+        visible: !row.current && (row.selected || area.containsMouse)
         lazy: true
         part: Theme.rowHighlight
-        selected: row.selected || (area.containsMouse && row.pointerMode)
-        hovered: area.containsMouse && row.pointerMode
-        // Under the pointer it wears the current row's face too: the raised
-        // face, the border and the bar (brand's) that say where the keys are,
-        // there where the mouse is; the list's own highlight steps aside
-        // meanwhile (Main.qml's hoveredRow). It draws under the row's own
-        // words and icons (this is its first child), so the face hides none.
-        current: area.containsMouse && row.pointerMode
+        selected: row.selected
+        hovered: area.containsMouse
         role: "list"
         dpr: row.dpr
     }
@@ -580,8 +569,7 @@ Item {
             id: badgeText
             anchors.horizontalCenter: parent.horizontalCenter
             y: row.onPixel((badge.height - height) / 2)
-            text: row.windowResult || row.trayApp ? qsTr("运行")
-                : row.plugin ? row.source : row.missing ? qsTr("已不存在")
+            text: row.plugin ? row.source : row.missing ? qsTr("已不存在")
                 : row.adminRun ? qsTr("管理员")
                 : row.favorite ? (row.favoriteKeyword.length > 0 ? qsTr("收藏 · %1").arg(row.favoriteKeyword) : qsTr("收藏"))
                 : row.recent ? qsTr("最近") : row.suggestion ? qsTr("建议") : row.web ? qsTr("网页")
@@ -623,7 +611,6 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-        onContainsMouseChanged: row.hoverChanged(row.index, area.containsMouse)
         onPressed: (mouse) => {
             if (row.nameTip)
                 row.nameTip.dismiss()

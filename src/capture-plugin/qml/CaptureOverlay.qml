@@ -475,6 +475,8 @@ Window {
         z: -1
         shape: overlay.screenModel.cursorShape
         dpr: overlay.dpr
+        brushSize: overlay.screenModel.brushSize // the pen's tip in place of the cross (GitHub #461)
+        brushColor: overlay.screenModel.brushColor
 
         MouseArea {
             anchors.fill: parent
@@ -515,5 +517,16 @@ Window {
         }
         Keys.onPressed: (event) => handleKey(event)
         Keys.onReleased: (event) => handleRelease(event)
+
+        // The overlay is used again: a capture begins with the keys here, not on
+        // a button clicked in the last one, where Enter saved or opened the save
+        // menu instead of copying. Tab still goes on to the buttons from here.
+        Connections {
+            target: overlay.session
+            function onActiveChanged() {
+                if (overlay.session.active)
+                    keys.forceActiveFocus()
+            }
+        }
     }
 }

@@ -4,7 +4,7 @@ import WinShun
 
 // The capture toolbar (docs/design-capture-roadmap.md, 3.5). In the capture
 // overlay it is two cards, left edges together, each as wide as its buttons:
-// the common row (grip, rectangle, ellipse, arrow, pen, text, number, mosaic;
+// the common row (grip, select, rectangle, ellipse, arrow, pen, text, number, mosaic;
 // undo, redo; pin, save; and at the right end cancel and copy, the check mark,
 // the primary one) lies next to the selection; the other row (line, highlighter;
 // OCR, QR; long, record, delay; the "?" that lists every key) on its far side.
@@ -261,6 +261,8 @@ Item {
             }
         }
 
+        SelectButton { objectName: "captureToolbarSelect" }
+
         Repeater {
             model: bar.annot ? bar.annot.tools : []
             delegate: ToolButton { visible: !bar.inSecondRow(modelData.kind) }
@@ -382,7 +384,7 @@ Item {
             glyph: String.fromCharCode(0xEC8F)
             name: qsTr("长截图")
             tipText: qsTr("长截图：滚动着截下选区里更长的内容")
-            tipKeys: "Ctrl+L"
+            tipKeys: bar.annot ? bar.annot.longKeyText : ""
             onClicked: bar.act(CaptureSession.Long)
         }
         ActionButton {
@@ -391,7 +393,7 @@ Item {
             glyph: String.fromCharCode(0xE714)
             name: qsTr("录屏")
             tipText: qsTr("区域录屏：录制选区里的操作，保存为 MP4 或 GIF")
-            tipKeys: "Ctrl+R"
+            tipKeys: bar.annot ? bar.annot.recordKeyText : ""
             onClicked: bar.act(CaptureSession.Record)
         }
         ActionButton {
@@ -423,7 +425,8 @@ Item {
             const tip = bar.tip
             if (tip && tip.tool >= 0 && a) {
                 const t = a.tools[tip.tool]
-                if (!bar.editor && (t.digit === 1 || t.digit === 3))
+                // The digit alone: R and A pick the area in a capture, and a letter may be the user's own key's (#455).
+                if ((!bar.editor && (t.digit === 1 || t.digit === 3)) || t.letter.length === 0)
                     return String(t.digit)
                 return t.digit > 0 ? t.letter + " / " + t.digit : t.letter
             }
@@ -680,6 +683,49 @@ Item {
             hoverEnabled: true
             onClicked: action.clicked()
             onContainsMouseChanged: bar.hover(action, containsMouse, -1)
+        }
+    }
+
+    // No tool: the mouse picks what was drawn, to move, change or delete it
+    // (and moves the selection, crops the picture). The first of the tools and
+    // on while none of them is, so the way back from drawing is in sight: Esc,
+    // a right click and a second click on the tool do the same, but who would
+    // know.
+    component SelectButton: Item {
+        id: select
+
+        readonly property bool current: bar.annot !== null && bar.annot.tool < 0
+        property string tipText: qsTr("选择：点选画好的标注，再移动、修改或删除")
+        property string tipKeys: "Esc"
+
+        width: bar.toolWidth
+        height: bar.buttonHeight
+        Accessible.role: Accessible.Button
+        Accessible.name: qsTr("选择")
+        Accessible.onPressAction: if (bar.annot) bar.annot.tool = -1
+
+        KeyFace {
+            id: selectFace
+            hovered: selectArea.containsMouse
+            pressed: selectArea.pressed
+            checked: select.current
+        }
+        Glyph {
+            x: bar.snap((bar.toolWidth - bar.iconSize) / 2)
+            y: bar.snap((bar.buttonHeight - bar.iconSize) / 2 + selectFace.out("contentOffsetY", 0))
+            width: bar.iconSize
+            height: bar.iconSize
+            iconName: "cursor"
+            size: bar.iconSize
+            color: selectFace.out("foreground", select.current ? Theme.accentText : Theme.text)
+        }
+
+        MouseArea {
+            id: selectArea
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: bar.annot.tool = -1
+            onContainsMouseChanged: bar.hover(select, containsMouse, -1)
         }
     }
 

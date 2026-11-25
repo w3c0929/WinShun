@@ -712,8 +712,10 @@ QVariantList AnnotationModel::toolList() const
 {
     QVariantList list;
     for (const annot::ToolInfo& t : annot::tools()) {
+        // No letter while the user's own key has it (#455): the digit chooses the tool.
+        const bool taken = m_keys.captureTakesLetter(t.letter.toUpper().unicode());
         list.append(QVariantMap {{u"kind"_s, int(t.kind)}, {u"name"_s, annot::toolName(t.kind)},
-            {u"letter"_s, QString(t.letter)}, {u"digit"_s, t.digit}, {u"glyph"_s, t.glyph}});
+            {u"letter"_s, taken ? QString() : QString(t.letter)}, {u"digit"_s, t.digit}, {u"glyph"_s, t.glyph}});
     }
     return list;
 }
@@ -1930,11 +1932,21 @@ void AnnotationModel::finishGesture()
     d->pathNodes.clear();
     std::unique_ptr<annot::Command> command = std::move(d->command);
     const Gesture gesture = std::exchange(m_gesture, Gesture::None);
-    const bool applied = std::exchange(d->applied, false);
+    bool applied = std::exchange(d->applied, false);
     // A shape spans from the press to the release, both inside the
     // selection: a drag along its edge, out of it, made nothing wider.
     const QPoint end = gesture == Gesture::Draw ? clampToSelection(d->last) : d->last;
     const bool shortDrag = (end - d->pressAt).manhattanLength() < dragStart();
+    // A click with the pen or the freehand marker, never dragged: a dot of
+    // its width where it was pressed (GitHub #461). Not the few points a
+    // shaking hand left under the drag start.
+    if (gesture == Gesture::Draw && command && !applied && shortDrag && annot::isStrokeItem(d->before)
+        && !annot::isBrush(d->before)) {
+        auto* add = static_cast<annot::AddItems*>(command.get());
+        add->items[0].points = {d->before.points.first()};
+        touched(add->apply(m_document));
+        applied = true;
+    }
     d->dragging = false;
     if (gesture == Gesture::Marquee)
         d->marqueeBox = QRect(); // the objects it touched stay selected
@@ -2110,6 +2122,31 @@ int AnnotationModel::cursorAt(QPoint p) const
     return itemAt(p) ? Qt::SizeAllCursor : -1;
 }
 
+AnnotationModel::BrushTip AnnotationModel::brushTipAt(QPoint p) const
+{
+    if (m_picking || m_gesture == Gesture::Marquee || cursorAt(p) != Qt::CrossCursor)
+        return {};
+    const std::optional<Kind> kind = toolKind();
+    if (!kind)
+        return {};
+    const annot::StyleMemory::Tool& tool = m_styles.tool(*kind);
+    switch (*kind) {
+    case Kind::Pen:
+        return {tool.width, QColor::fromRgb(tool.color).rgba()};
+    case Kind::Marker:
+        if (tool.markerMode != annot::MarkerMode::Freehand)
+            break;
+        return {tool.width, qRgba(qRed(tool.color), qGreen(tool.color), qBlue(tool.color), 128)};
+    case Kind::Redact:
+        if (tool.shape != annot::RedactShape::Brush)
+            break;
+        return {tool.width, qRgba(128, 128, 128, 128)};
+    default:
+        break;
+    }
+    return {};
+}
+
 bool AnnotationModel::doubleClick(QPoint p)
 {
     if (finishPath())
@@ -2212,7 +2249,8 @@ bool AnnotationModel::key(int key, Qt::KeyboardModifiers modifiers)
         for (qsizetype i = 0; i < annot::tools().size() && action == Action::None; ++i) {
             const annot::ToolInfo& t = annot::tools()[i];
             const bool digit = t.digit >= 1 && t.digit <= 9 && key == Qt::Key_0 + t.digit;
-            if (key == int(t.letter.toUpper().unicode()) || digit) {
+            // The letter is the user's own key's when given to one (#455): the digit stays.
+            if ((key == int(t.letter.toUpper().unicode()) && !m_keys.captureTakesLetter(key)) || digit) {
                 action = Action::Tool;
                 toolIndex = int(i);
             }

@@ -302,10 +302,12 @@ int runCaptureSave(const QStringList& args)
     click(arrow);
     key(Qt::Key_Escape);
     check(!menu->property("visible").toBool() && session->hasSelection(), "Escape closes only the menu");
+    // Esc gives the focus back to the arrow, where Down (like Enter) opens the
+    // menu again, as on any menu button; Left and Right go on to the capture.
     const QRect beforeNudge = session->selectionRect();
-    key(Qt::Key_Up);
-    check(session->selectionRect() == beforeNudge.translated(0, -1), "arrow keys still work after closing the menu");
-    key(Qt::Key_Down);
+    key(Qt::Key_Left);
+    check(session->selectionRect() == beforeNudge.translated(-1, 0), "arrow keys still work after closing the menu");
+    key(Qt::Key_Right);
     int pointerRequests = 0;
     const QMetaObject::Connection pointerWatch = QObject::connect(session, &CaptureSession::cursorMoveRequested, session,
         [&](const QPoint&) { ++pointerRequests; });
@@ -327,6 +329,41 @@ int runCaptureSave(const QStringList& args)
     check(QDir(oldFolder).entryList({u"*.png"_s}, QDir::Files).size() == 1
         && samePixels(QImage(savedPaths.value(2)), quickExpected), "old-folder PNG contains the exact selected pixels");
     check(recorded == 3 && copied == 0, "only confirmed saves enter history; clipboard remains untouched");
+    // The overlay is used again: the next capture starts with the keys on it,
+    // not on the button clicked last, whose Enter opens the menu or saves.
+    const auto closeCapture = [&] { // a failed check leaves no capture open for the next
+        if (session->active())
+            session->act(static_cast<int>(CaptureSession::Action::Cancel));
+        waitFor([&] { return !capture.busy(); });
+    };
+    const auto enterCopies = [&](const char* what) {
+        const int before = copied;
+        if (!begin()) { check(false, "capture reopens for Enter"); return; }
+        select();
+        arm(true); // a Save As that opens is cancelled and fails the check
+        key(Qt::Key_Return);
+        pickerArmed = false;
+        check(waitFor([&] { return copied == before + 1 && !capture.busy(); }) && !pickerSeen, what);
+        closeCapture();
+    };
+    enterCopies("Enter copies in the capture after the save menu was used");
+    if (!begin()) { check(false, "capture reopens for the save button"); return 4; }
+    select();
+    const auto inToolbar = [](const QQuickItem* item) {
+        for (; item; item = item->parentItem())
+            if (item->objectName() == u"captureToolbar"_s)
+                return true;
+        return false;
+    };
+    const bool keysFirst = overlay->activeFocusItem() && !inToolbar(overlay->activeFocusItem());
+    key(Qt::Key_Tab);
+    check(keysFirst && inToolbar(overlay->activeFocusItem()), "a capture begins with the keys off the toolbar; Tab goes on to it");
+    arm(true);
+    click(overlay->findChild<QQuickItem*>(u"captureSaveButton"_s));
+    pickerArmed = false;
+    check(pickerSeen && session->active(), "save button's Save As cancelled, the capture stays");
+    closeCapture();
+    enterCopies("Enter copies in the capture after Save was clicked");
     driver.stop();
     fixture->hide();
     note(u"capture save checks: %1"_s.arg(ok ? u"passed"_s : u"failed"_s));

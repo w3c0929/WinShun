@@ -39,6 +39,23 @@ struct DirtyMemory {
     char* const data;
 };
 
+// The newest entry of this kind in the diagnostics journal; empty: none.
+QJsonObject lastJournalled(QStringView event)
+{
+    QJsonObject found;
+    const auto log = ws::diagnostics::current();
+    if (!log)
+        return found;
+    for (const auto& file : log->snapshot()) {
+        for (const QByteArray& line : file.bytes.split('\n')) {
+            const QJsonObject entry = QJsonDocument::fromJson(line).object();
+            if (entry.value(u"event"_s).toString() == event)
+                found = entry.value(u"details"_s).toObject();
+        }
+    }
+    return found;
+}
+
 } // namespace
 
 class IdleTrimAndTriggerTest : public QObject {
@@ -75,6 +92,62 @@ private slots:
             QTest::qWait(25);
         }
         QVERIFY(true);
+    }
+
+    // What the diagnostics package says of it (summary.json "idle_trim").
+    void statusTellsWhatHoldsTheMemory()
+    {
+        const DirtyMemory memory(40);
+        const char* busy = "reading content";
+        bool up = true;
+        ws::IdleTrim trim([&] { return busy; }, [&] { return up; });
+        QJsonObject status = trim.status();
+        QCOMPARE(status.value(u"waiting_for").toString(), QStringLiteral("reading content"));
+        QCOMPARE(status.value(u"window_up").toBool(), true);
+        QCOMPARE(status.value(u"held_after_resume").toBool(), false);
+        QCOMPARE(status.value(u"last_trim_at").toString(), QString());
+
+        trim.resumed();
+        QCOMPARE(trim.status().value(u"held_after_resume").toBool(), true);
+
+        busy = nullptr;
+        up = false;
+        trim.setAfterUse(30);
+        trim.used(); // in use again: no longer held
+        QTRY_VERIFY_WITH_TIMEOUT(trim.lastTrim().atMs > 0, 2000);
+        status = trim.status();
+        QCOMPARE(status.value(u"waiting_for").toString(), QString());
+        QCOMPARE(status.value(u"window_up").toBool(), false);
+        QCOMPARE(status.value(u"held_after_resume").toBool(), false);
+        QVERIFY(status.value(u"last_trim_at").toString().endsWith(u'Z'));
+        QVERIFY(status.value(u"last_trim_mb").toInt() >= 40);
+    }
+
+    // One journal entry a giving back, written when it is over: what there
+    // was, what was kept and what stayed (GitHub #459: "returned 42 MB" on
+    // the page, and nothing to say that 600 MB were still there).
+    void journalTellsWhatStayed()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        ws::diagnostics::initialize(temp.path());
+        {
+            const DirtyMemory memory(40);
+            const DirtyMemory kept(1);
+            const ws::PageSet keepSet({{reinterpret_cast<std::uintptr_t>(kept.data), kept.bytes}});
+            ws::IdleTrim trim([]() -> const char* { return nullptr; }, [] { return false; }, [&] { return keepSet; });
+            trim.setAfterUse(30);
+            trim.used();
+            QTRY_VERIFY_WITH_TIMEOUT(lastJournalled(u"idle-trim").contains(u"stayed_mb"_s), 3000);
+            const QJsonObject entry = lastJournalled(u"idle-trim");
+            const qint64 before = entry.value(entry.contains(u"private_mb"_s) ? u"private_mb"_s : u"working_set_mb"_s).toInteger(-1);
+            QVERIFY(before >= 40);
+            QCOMPARE(entry.value(u"keep_mb"_s).toInteger(-1), qint64 {1});
+            QVERIFY(entry.value(u"stayed_mb"_s).toInteger(-1) <= before - 39); // all but the megabyte kept went
+            QVERIFY(!entry.contains(u"stopped"_s));
+            QCOMPARE(trim.status().value(u"kept_after_trim_mb"_s).toInteger(-1), entry.value(u"stayed_mb"_s).toInteger(-2));
+        }
+        ws::diagnostics::initialize({});
     }
 
     void triggerJournalRecordsPhaseTimingsAndMemory()

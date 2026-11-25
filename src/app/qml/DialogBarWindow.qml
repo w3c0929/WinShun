@@ -69,26 +69,9 @@ Window {
         value: Theme.matchWeight
     }
 
-    // The row under the pointer, -1 for none: it wears the current row's face
-    // (DialogBarRow's own hook), the list's highlight steps aside, and the keys
-    // go from here rather than from the row they were left on.
-    property int hoveredRow: -1
-    // Whose face is on the rows: the pointer's (it moved last) or the
-    // keyboard's (the keys moved last). Only one of them at a time.
-    property bool pointerMode: true
-    // Where the pointer itself last was, the window's: a row brought under it
-    // by a scroll reports a hover with the same place, and must not take the
-    // face back from the keys.
-    property point lastPointerGlobal: Qt.point(-1, -1)
-
     function move(delta) {
-        if (list.count === 0)
-            return
-        // The keys move from where the face is: the row under the pointer when
-        // it moved last, else the keyboard's own. A press always moves.
-        const from = pointerMode && hoveredRow >= 0 && hoveredRow < list.count ? hoveredRow : list.currentIndex
-        pointerMode = false
-        list.currentIndex = Math.max(0, Math.min(list.count - 1, from + delta))
+        if (list.count > 0)
+            list.currentIndex = Math.max(0, Math.min(list.count - 1, list.currentIndex + delta))
     }
 
     // A row's menu, or the bar's own (index -1). `globalPos` is where the
@@ -734,13 +717,7 @@ Window {
         highlight: Item {
             id: currentHighlight
             width: list.width
-            // Under the rows' own words and icons: the style's raised face
-            // must never hide them (its white covers a whole row).
-            z: -1
-            // Under the pointer on another row, that row wears the face instead
-            // (DialogBarRow's hook): the keyboard's keeps none meanwhile. With
-            // the keys moved last, its row's alone (pointerMode).
-            visible: list.currentItem !== null && (!window.pointerMode || window.hoveredRow < 0 || window.hoveredRow === list.currentIndex)
+            visible: list.currentItem !== null
             transform: ScrollPixelAlignment { // on whole device pixels, as the rows
                 view: list
                 viewY: list.y
@@ -802,30 +779,6 @@ Window {
             copyOnly: window.bar.copyOnly
             nameTip: nameTip
             tipHost: window.bar
-            onHoverChanged: (index, hovered, globalPos) => {
-                // Only the row's place; the pointer takes the face back only
-                // when it itself moved (its global place changed) — a row
-                // brought under it by a scroll reports a hover too and must
-                // not take the face from the keys.
-                if (hovered) {
-                    window.hoveredRow = index
-                    if (globalPos.x !== window.lastPointerGlobal.x || globalPos.y !== window.lastPointerGlobal.y) {
-                        window.lastPointerGlobal = globalPos
-                        window.pointerMode = true
-                    }
-                } else if (window.hoveredRow === index) {
-                    window.hoveredRow = -1
-                }
-            }
-            onPointerMoved: (globalPos) => {
-                // A move a scroll sends with the pointer where it was is none:
-                // only a change of its own place is the pointer moving about.
-                if (globalPos.x === window.lastPointerGlobal.x && globalPos.y === window.lastPointerGlobal.y)
-                    return
-                window.lastPointerGlobal = globalPos
-                window.pointerMode = true // its face, and the place later hovers are weighed against
-            }
-            pointerMode: window.pointerMode
             // On whole device pixels wherever the list has scrolled to (see
             // Main.qml). Below the bar the rows start at 49 logical pixels:
             // at 150 % on a half pixel even before any scrolling.

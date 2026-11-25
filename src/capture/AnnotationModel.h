@@ -49,7 +49,7 @@ class AnnotationModel : public QObject {
     // The tool's index in annot::tools() (the toolbar's order); -1: none.
     Q_PROPERTY(int tool READ tool WRITE setTool NOTIFY toolChanged FINAL)
     // [{kind, name (translated), letter, digit, glyph}] in the toolbar's order.
-    Q_PROPERTY(QVariantList tools READ toolList CONSTANT FINAL)
+    Q_PROPERTY(QVariantList tools READ toolList NOTIFY keysChanged FINAL) // a letter goes to the user's own key (#455)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY historyChanged FINAL)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY historyChanged FINAL)
     Q_PROPERTY(QString undoLabel READ undoLabel NOTIFY historyChanged FINAL)
@@ -102,6 +102,8 @@ class AnnotationModel : public QObject {
     // The pin and save keys as tips and key lists show them ("F3"); empty: none (#187).
     Q_PROPERTY(QString pinKeyText READ pinKeyText NOTIFY keysChanged FINAL)
     Q_PROPERTY(QString saveKeyText READ saveKeyText NOTIFY keysChanged FINAL)
+    Q_PROPERTY(QString longKeyText READ longKeyText NOTIFY keysChanged FINAL)
+    Q_PROPERTY(QString recordKeyText READ recordKeyText NOTIFY keysChanged FINAL)
     // A save folder was chosen: Save and its key go straight into it, and the
     // menu offers 另存为… instead of 保存到旧路径 (#194).
     Q_PROPERTY(bool saveDirect READ saveDirect NOTIFY keysChanged FINAL)
@@ -169,6 +171,18 @@ public:
     // capture's changes); `stylesChanged()` tells whether any changed.
     const annot::StyleMemory& styles() const { return m_styles; }
     bool stylesChanged() const { return m_stylesChanged; }
+    // The round tip a press at `p` would draw with, for the pointer to show
+    // beforehand (GitHub #461): the pen's, the freehand marker's (see-through
+    // as its ink) and the brush redaction's (it has no colour of its own:
+    // grey). `width` in logical px as StyleMemory keeps it; 0: none, another
+    // tool or a place where a press does something else (a handle, a selected
+    // object, the eyedropper). panelChanged() tells of a new width or colour.
+    struct BrushTip {
+        int width = 0;
+        QRgb color = 0;
+        bool operator==(const BrushTip&) const = default;
+    };
+    BrushTip brushTipAt(QPoint p) const;
     // Smart redaction: how the text of the selection is read, the rules to
     // find, and whether to scan on its own (SmartRedact.h). The scan starts
     // 300 ms after the selection (the crop, in the editor) stops changing.
@@ -308,6 +322,8 @@ public:
     const CaptureKeys& keys() const { return m_keys; }
     QString pinKeyText() const { return m_keys.text(KeyAction::Pin); }
     QString saveKeyText() const { return m_keys.text(KeyAction::Save); }
+    QString longKeyText() const { return m_keys.text(KeyAction::Long); }
+    QString recordKeyText() const { return m_keys.text(KeyAction::Record); }
     void setSaveDirect(bool on)
     {
         if (on == m_saveDirect)
@@ -319,6 +335,8 @@ public:
     Q_INVOKABLE bool isFinishKey(int key, int modifiers) const
     {
         const auto mods = Qt::KeyboardModifiers(modifiers);
+        if (keys::isPlainLetter(QKeyCombination(mods & ~Qt::KeypadModifier, Qt::Key(key))))
+            return false; // a letter alone (#455) is typed into the text
         return m_keys.matches(KeyAction::Pin, key, mods) || m_keys.matches(KeyAction::Save, key, mods);
     }
     // Esc, steps 2 and 3 of 3.6: commit the text under way, or cancel the

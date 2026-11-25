@@ -299,6 +299,10 @@ struct Settings {
     bool appsTab = false; // 程序 among the launcher's tabs: the apps as a grid of icons (GitHub #296)
     QString queryHistoryKeys = QStringLiteral("ctrl"); // ctrl | alt | off, local Up/Down navigation
     QString logoRightClick = QStringLiteral("menu"); // menu | top | center | restore
+    // The Logo at the search box's left end (GitHub #433). Off: the words
+    // start there; the grip still moves the window, a pinned box says so by
+    // a key at its right, the settings open by Ctrl+, or the tray.
+    bool searchLogo = true;
     bool favoritesOnStart = true; // show favorites before typing; keywords always work (#135)
     // Those favorites as a grid of icons over the rows, their names under
     // them (feedback 2026-11-12/15); off: rows like the rest.
@@ -574,6 +578,9 @@ struct Settings {
     // "standard" on a taller one, "large" enough to make out its details (forum #137).
     QString clipboardPictureSize = QStringLiteral("standard");
     bool clipboardKeepPlace = false; // pasting from the history leaves the entry where it is (GitHub #122); off: it moves to the top
+    // What was copied before, copied again, is a new entry (Ditto's "allow
+    // duplicates", ClipStore::setKeepsDuplicates); off: the old one moves to the top.
+    bool clipboardDuplicates = false;
     // Where the window opens: "caret" by the text caret or under a field of
     // ours, "pointer" always beside the mouse, over our fields too (GitHub
     // #105), "last" where its user last moved it (GitHub #376; Placement's
@@ -695,6 +702,9 @@ struct Settings {
 
     // [Plugins]: the plugin system's own (the plugin design, §5.5).
     bool pluginDeveloperMode = false; // DeveloperMode=: the log pane, scripts reloaded as they change
+    // GalleryHidden=: the library's plugins put away as 不感兴趣 (GitHub #442), by id;
+    // one installed all the same shows as any other.
+    QStringList pluginGalleryHidden;
     bool pluginBuiltinsExpanded = false; // BuiltinsExpanded=: keep installed plugins within reach
     int pluginMaxResident = 8; // MaxResident=: resident plugins running at once, the longest unused leaving past it; 0: no limit (GitHub #252)
 

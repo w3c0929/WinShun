@@ -408,6 +408,45 @@ void panelQuickFilters(QQmlEngine* engine, const QDir& output, Checks& check)
     settle(window);
     check(!on(0) && !launcher.filtersActive() && launcher.sizeChoice() == 0 && files().size() == 4, u"quick filters: 清除全部 switches them off"_s);
 
+    // 名称 (GitHub #457): three boxes under its row, what they say a condition as a quick filter's.
+    auto* nameRow = item(window->contentItem(), u"panelFilterName"_s);
+    auto* nameStarts = item(window->contentItem(), u"panelNameStarts"_s);
+    auto* nameLacks = item(window->contentItem(), u"panelNameLacks"_s);
+    check(nameRow && nameRow->isVisible() && nameStarts && nameLacks && !nameStarts->isVisible(), u"name filter: a row, its boxes away until asked for"_s);
+    if (!nameRow || !nameStarts || !nameLacks) return;
+    click(nameRow);
+    check(nameStarts->isVisible() && nameLacks->isVisible() && !launcher.filtersActive(), u"name filter: a click shows the boxes, nothing narrowed yet"_s);
+    check(nameLacks->mapToItem(sidebar, QPointF(nameLacks->width(), 0)).x() <= sidebar->width() + 0.5, u"name filter: the boxes stay inside the side bar"_s);
+    click(nameRow);
+    check(!nameStarts->isVisible(), u"name filter: empty, a second click puts the boxes away"_s);
+    launcher.setNameFilter({}, u"REPORT"_s, {});
+    settle(window);
+    check(launcher.filtersActive() && launcher.nameFilterSet() && nameStarts->isVisible() && files().size() == 4,
+        u"name filter: an end is the end before the extension, any case: "_s + files().join(u" | "_s));
+    launcher.setNameFilter(u"report"_s, {}, {});
+    settle(window);
+    check(files().isEmpty(), u"name filter: a beginning is not found in the middle: "_s + files().join(u" | "_s));
+    launcher.setNameFilter(u"WSQuick rep"_s, u".log"_s, {});
+    settle(window);
+    check(files() == QStringList({u"Q:\\$RECYCLE.BIN\\wsquick report.log"_s, u"Q:\\work\\wsquick report.log"_s}),
+        u"name filter: a beginning with a space in it and an extension as the end: "_s + files().join(u" | "_s));
+    launcher.toggleQuickFilter(0);
+    launcher.setNameFilter(u"wsquick"_s, {}, u"docx !nothing"_s);
+    settle(window);
+    check(files() == QStringList({u"Q:\\work\\wsquick report.log"_s}), u"name filter: words kept out, beside a quick filter: "_s + files().join(u" | "_s));
+    check(nameRow->property("value").toString() == u"2 项" && nameRow->property("marked").toBool(),
+        u"name filter: the row says how many of its boxes are set: "_s + nameRow->property("value").toString());
+    check(launcher.query() == u"wsquick", u"name filter: the search box keeps what was typed"_s);
+    check(window->grabWindow().save(output.filePath(u"panel-name-filter.png"_s)), u"capture the name filter, set"_s);
+    click(nameRow);
+    check(nameStarts->isVisible(), u"name filter: set, its boxes stay"_s);
+    launcher.clearFilters();
+    settle(window);
+    check(!launcher.filtersActive() && !launcher.nameFilterSet() && launcher.nameStarts().isEmpty() && files().size() == 4,
+        u"name filter: 清除全部 empties it"_s);
+    click(nameRow);
+    settle(window);
+
     // The +: the settings, with what is typed as a new one's query when it can be one.
     QStringList drafts;
     QObject::connect(&launcher, &Launcher::quickFilterSettingsRequested, window, [&](const QString& draft) { drafts.append(draft); });
@@ -465,6 +504,29 @@ void panelQuickFilters(QQmlEngine* engine, const QDir& output, Checks& check)
         click(chip);
         check(on(0) && chip->property("active").toBool() && files().size() == 2, u"quick filters: a chip over the rows switches one on"_s);
         check(window->grabWindow().save(output.filePath(u"panel-quick-filters-top.png"_s)), u"capture the quick filters over the rows"_s);
+    }
+    // 名称 there: a chip, its boxes beside it in the line.
+    launcher.clearFilters();
+    settle(window);
+    auto* nameChip = item(bar, u"panelFilterName"_s);
+    auto* topStarts = item(bar, u"panelNameStarts"_s);
+    check(nameChip && topStarts && nameChip->isVisible() && !topStarts->isVisible(), u"name filter: a chip over the rows, its boxes away"_s);
+    if (nameChip && topStarts) {
+        click(nameChip);
+        check(topStarts->isVisible(), u"name filter: the chip shows the boxes in the line"_s);
+        auto* topLacks = item(bar, u"panelNameLacks"_s);
+        auto* clear = item(bar, u"panelFilterLayoutKey"_s);
+        const qreal right = topLacks ? topLacks->mapToItem(bar, QPointF(topLacks->width(), 0)).x() : 0;
+        check(topLacks && clear && right > 0 && right <= clear->mapToItem(bar, QPointF(0, 0)).x(),
+            u"name filter: in a narrow window the line moves to show the boxes: right edge at %1"_s.arg(right));
+        launcher.setNameFilter(u"wsquick"_s, u".log"_s, {});
+        settle(window);
+        check(nameChip->property("active").toBool() && files().size() == 2, u"name filter: set over the rows, the chip is on: "_s + files().join(u" | "_s));
+        auto* clearLink = item(bar, u"panelFilterClear"_s);
+        const qreal edge = topLacks ? topLacks->mapToItem(bar, QPointF(topLacks->width(), 0)).x() : 0;
+        check(clearLink && clearLink->isVisible() && edge <= clearLink->mapToItem(bar, QPointF(0, 0)).x(),
+            u"name filter: the boxes stay in view when 清除全部 comes beside them: right edge at %1"_s.arg(edge));
+        check(window->grabWindow().save(output.filePath(u"panel-name-filter-top.png"_s)), u"capture the name filter over the rows"_s);
     }
     launcher.clearFilters();
     launcher.setPanelFiltersOnTop(false);
@@ -690,6 +752,123 @@ bool checkNavigationWorkflows(QQmlEngine* engine, const QDir& output, bool flipp
     folderGroups(engine, output, check);
     check(warnings == 0, u"production QML emits no warnings"_s);
     QFile file(output.filePath(u"navigation-workflows.json"_s));
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    file.write(QJsonDocument(QJsonObject {{u"passed"_s, check.passed}, {u"checks"_s, check.rows}}).toJson());
+    return check.passed;
+}
+
+// --name-filter-poster: the picture of the panel's 名称 filter (GitHub #457)
+// for the release poster. Not one of the workflow checks above: it lists a
+// believable folder of office files (sizes and dates filled, nothing real)
+// and sets the three boxes as someone looking for this year's reports would.
+bool checkNameFilterPoster(QQmlEngine* engine, const QDir& output)
+{
+    Checks check;
+    QTemporaryDir profile;
+    IndexService index(profile.filePath(u"index"_s), {});
+    struct Demo {
+        QString folder; // under D:, split by /
+        QString name;
+        std::uint64_t kilobytes;
+        int daysAgo;
+        int minute; // of the day, local time
+        bool listed; // what the boxes below let through
+    };
+    const QList<Demo> demo {
+        {u"工作/2026 年度/总结"_s, u"2026 年度工作报告.docx"_s, 1280, 1, 17 * 60 + 42, true},
+        {u"工作/2026 年度/总结"_s, u"2026 年度工作报告 草稿.docx"_s, 1236, 6, 11 * 60 + 5, false},
+        {u"工作/2026 年度/总结"_s, u"2026 年度工作报告.pdf"_s, 2410, 1, 17 * 60 + 50, false},
+        {u"工作/2026 年度/销售"_s, u"2026 Q1 销售报告.docx"_s, 482, 62, 10 * 60 + 14, true},
+        {u"工作/2026 年度/销售"_s, u"2026 Q1 销售报告 旧.docx"_s, 455, 70, 15 * 60 + 30, false},
+        {u"工作/2026 年度/销售"_s, u"2026 Q2 销售报告.docx"_s, 516, 33, 9 * 60 + 48, true},
+        {u"工作/2026 年度/销售"_s, u"2026 Q3 销售报告.docx"_s, 538, 5, 14 * 60 + 26, true},
+        {u"工作/2026 年度/市场"_s, u"2026 市场调研报告.docx"_s, 2348, 12, 16 * 60 + 8, true},
+        {u"工作/2026 年度/项目"_s, u"2026 项目验收报告.docx"_s, 724, 3, 11 * 60 + 36, true},
+        {u"工作/2026 年度/财务"_s, u"2026 财务分析报告.docx"_s, 356, 8, 13 * 60 + 52, true},
+        {u"工作/2026 年度/财务"_s, u"2026 财务分析报告.xlsx"_s, 218, 8, 13 * 60 + 40, false},
+        {u"工作/2026 年度/人事"_s, u"2026 年中述职报告.docx"_s, 118, 143, 9 * 60 + 20, true},
+        {u"工作/2025 年度/总结"_s, u"2025 年度工作报告.docx"_s, 1192, 330, 16 * 60 + 15, false},
+        {u"工作/模板"_s, u"报告模板.docx"_s, 64, 210, 10 * 60 + 2, false},
+    };
+    constexpr qint64 today = 1795132800 + 4 * 86400 - 8 * 3600; // 2026-11-24 00:00 in UTC+8
+    {
+        const auto files = index.index();
+        const auto lock = files->writeLock();
+        const EntryId drive = files->addRoot("D:");
+        QHash<QString, EntryId> folders;
+        for (const Demo& entry : demo) {
+            EntryId parent = drive;
+            QString path;
+            for (const QString& part : entry.folder.split(u'/')) {
+                path += u'/' + part;
+                if (!folders.contains(path))
+                    folders.insert(path, files->add(parent, part.toStdString(), EntryFlag::Directory));
+                parent = folders.value(path);
+            }
+            const EntryId id = files->add(parent, entry.name.toStdString(), 0);
+            files->setModified(id, static_cast<FileTime>(today - entry.daysAgo * 86400 + entry.minute * 60));
+            files->setSize(id, packSize(entry.kilobytes * 1024));
+        }
+    }
+    AppCatalog apps;
+    SystemCatalog places;
+    apps.setApps(std::make_shared<const AppList>());
+    places.setPlaces(std::make_shared<const PlaceList>());
+    SearchEngine search(&index, &apps, &places);
+    History history(profile.filePath(u"history.txt"_s));
+    Launcher launcher(&index, &apps, &places, &search, &history);
+    launcher.setPanel(true);
+    launcher.setPanelSidebarVisible(true);
+    ClipStore store(profile.filePath(u"clipboard"_s));
+    store.open(QDateTime::currentMSecsSinceEpoch());
+    ClipboardWatcher watcher({.record = false}, {});
+    Clipboard clipboard(&store, &watcher);
+    Placement placement(profile.filePath(u"state.ini"_s), u"Launcher"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(engine, u"WinShun"_s, u"Main"_s);
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({
+        {u"launcher"_s, QVariant::fromValue(&launcher)}, {u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"placement"_s, QVariant::fromValue(&placement)}, {u"frame"_s, QVariant::fromValue(&frame)}}));
+    auto* window = qobject_cast<QQuickWindow*>(root.get());
+    check(window != nullptr, u"name filter poster: the search window loads: "_s + component.errorString());
+    if (!window) return false;
+    window->create();
+    window->resize(1060, 560);
+    frame.setWindow(window);
+    launcher.setWindow(window);
+    showOffscreen(window);
+    const auto listed = [&] {
+        QStringList names;
+        for (int i = 0; i < launcher.results()->count(); ++i) {
+            if (const QString path = launcher.results()->pathAt(i); path.startsWith(u"D:\\"_s))
+                names.append(path.mid(path.lastIndexOf(u'\\') + 1));
+        }
+        names.sort();
+        return names;
+    };
+    launcher.results()->setThumbnails(false); // synthetic paths: no thumbnail handler or real file access
+    launcher.setScope(Launcher::Files); // names only: no hint about files whose content was not searched
+    launcher.setQuery(u"报告"_s);
+    launcher.sortBy(static_cast<int>(SortKey::Modified)); // the newest first, as clicking 修改时间 does
+    settle(window);
+    check(listed().size() == demo.size(), u"name filter poster: every report is listed before narrowing: "_s + QString::number(listed().size()));
+    launcher.setNameFilter(u"2026"_s, u".docx"_s, u"草稿 旧"_s);
+    settle(window);
+    QStringList expected;
+    for (const Demo& entry : demo) {
+        if (entry.listed)
+            expected.append(entry.name);
+    }
+    expected.sort();
+    check(listed() == expected, u"name filter poster: only what begins 2026, ends .docx and has no 草稿 or 旧: "_s + listed().join(u" | "_s));
+    check(launcher.filtersActive() && launcher.nameFilterSet(), u"name filter poster: the filter is on"_s);
+    for (int i = 0; i < 3; ++i) // the file icons, read on the provider's threads
+        settle(window);
+    check(window->grabWindow().save(output.filePath(u"name-filter-poster.png"_s)), u"capture the name filter on real-looking files"_s);
+    launcher.clearFilters();
+    settle(window);
+    window->hide();
+    QFile file(output.filePath(u"name-filter-poster.json"_s));
     if (!file.open(QIODevice::WriteOnly)) return false;
     file.write(QJsonDocument(QJsonObject {{u"passed"_s, check.passed}, {u"checks"_s, check.rows}}).toJson());
     return check.passed;
@@ -1736,6 +1915,60 @@ bool checkPluginGallerySettings(QQuickWindow* window, SettingsEditor* editor, co
         }
     }
 
+    // 6b. 不感兴趣 (GitHub #442): the eye on a tile puts a plugin not installed
+    // away, kept in the settings; typing finds it all the same; the count by
+    // the filter lists those alone, where the eye brings it back.
+    {
+        auto* hide = item(window->contentItem(), u"pluginHide-probe.uninstalled"_s);
+        auto* hideInstalled = item(window->contentItem(), u"pluginHide-probe.manifest"_s);
+        auto* hiddenButton = item(window->contentItem(), u"galleryHiddenButton"_s);
+        auto* hiddenChip = item(window->contentItem(), u"galleryHiddenChip"_s);
+        auto* hiddenStatus = item(window->contentItem(), u"pluginStatus-probe.uninstalled"_s);
+        check(hide && hide->isVisible() && hideInstalled && !hideInstalled->isVisible()
+                && hiddenButton && !hiddenButton->isVisible() && hiddenChip && !hiddenChip->isVisible() && gallery->hiddenCount() == 0,
+            u"only a plugin not installed offers 不感兴趣; nothing by the filter before one is put away"_s);
+        if (hide && hiddenButton && hiddenChip && hiddenStatus) {
+            const int all = gallery->shownCount();
+            const QRectF hideRect = hide->mapRectToScene(QRectF(0, 0, hide->width(), hide->height()));
+            const QRectF installRect = uninstalledAction->mapRectToScene(QRectF(0, 0, uninstalledAction->width(), uninstalledAction->height()));
+            check(!hideRect.intersects(installRect), u"不感兴趣 and 安装 do not overlap on the tile"_s);
+            QMetaObject::invokeMethod(hide, "clicked");
+            settle(window);
+            Settings saved;
+            saved.load();
+            check(saved.pluginGalleryHidden == QStringList {u"probe.uninstalled"_s} && gallery->hiddenCount() == 1
+                    && gallery->shownCount() == all - 1 && !uninstalledAction->isVisible()
+                    && hiddenButton->isVisible() && hiddenButton->property("text").toString().contains(u"1"_s),
+                u"不感兴趣 puts the tile away, saves it and shows the count by the filter"_s);
+            check(window->grabWindow().save(output.filePath(u"gallery-hidden-count.png"_s)), u"capture the 不感兴趣 count by the filter"_s);
+            gallery->setFilter(u"未安装"_s);
+            settle(window);
+            check(uninstalledAction->isVisible() && hiddenStatus->property("text").toString().contains(u"不感兴趣"_s),
+                u"a plugin put away is still found by typing for it, and says so"_s);
+            gallery->setFilter({});
+            settle(window);
+            QMetaObject::invokeMethod(hiddenButton, "clicked");
+            settle(window);
+            check(gallery->hiddenOnly() && gallery->shownCount() == 1 && uninstalledAction->isVisible()
+                    && hiddenChip->isVisible() && !hiddenButton->isVisible(),
+                u"the count lists the plugins put away alone"_s);
+            check(window->grabWindow().save(output.filePath(u"gallery-hidden-only.png"_s)), u"capture the 不感兴趣 view"_s);
+            QMetaObject::invokeMethod(hide, "clicked");
+            settle(window);
+            Settings restored;
+            restored.load();
+            check(restored.pluginGalleryHidden.isEmpty() && gallery->hiddenCount() == 0 && !gallery->hiddenOnly()
+                    && gallery->shownCount() == all && !hiddenChip->isVisible() && !hiddenButton->isVisible(),
+                u"the eye brings the last one back, and the whole list with it"_s);
+            // Installed all the same: never away.
+            gallery->setHidden(u"probe.manifest"_s, true);
+            settle(window);
+            check(gallery->hiddenCount() == 0 && gallery->shownCount() == all, u"an installed plugin is never put away"_s);
+            gallery->setHidden(u"probe.manifest"_s, false);
+            settle(window);
+        }
+    }
+
     // 7. Removing an open plugin closes the in-place detail card automatically.
     QMetaObject::invokeMethod(manifestBtn, "clicked");
     settle(window);
@@ -2089,6 +2322,24 @@ bool checkLogoPositionSettings(QQuickWindow* window, SettingsEditor* editor, con
     check(start.x() >= 0 && start.x() + choices->width() <= row->width() + 1,
         u"translated position choices fit inside the settings row"_s);
     check(window->grabWindow().save(output.filePath(u"logo-position-settings.png"_s)), u"capture logo position settings"_s);
+    // GitHub #433: the Logo's own switch above it; off, there is nothing to right-click.
+    auto* logoSwitch = item(window->contentItem(), u"searchLogoSwitch"_s);
+    check(editor->searchLogo() && logoSwitch && logoSwitch->isVisible() && logoSwitch->property("checked").toBool(),
+        u"the search box shows its Logo by default, with a switch for it"_s);
+    if (logoSwitch) {
+        QMetaObject::invokeMethod(logoSwitch, "toggled", Q_ARG(bool, false));
+        settle(window);
+        Settings off;
+        off.load();
+        check(!off.searchLogo && !editor->searchLogo() && !logoSwitch->property("checked").toBool() && !row->isVisible(),
+            u"switching the Logo off is saved and puts the right-click row away"_s);
+        check(window->grabWindow().save(output.filePath(u"logo-off-settings.png"_s)), u"capture the Logo switched off"_s);
+        QMetaObject::invokeMethod(logoSwitch, "toggled", Q_ARG(bool, true));
+        settle(window);
+        Settings on;
+        on.load();
+        check(on.searchLogo && editor->searchLogo() && row->isVisible(), u"switching the Logo back on restores the row"_s);
+    }
     QMetaObject::invokeMethod(choices, "activated", Q_ARG(int, 0));
     editor->setLogoRightClick(u"invalid"_s);
     check(editor->logoRightClick() == u"menu", u"settings editor rejects unknown logo actions"_s);

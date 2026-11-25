@@ -4,13 +4,16 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QJsonArray>
 #include <QPointer>
 #include <QThreadPool>
 
 #include <algorithm>
+#include <cmath>
 #include <cwchar>
 
 #include <windows.h>
+#include <psapi.h>
 
 using namespace Qt::StringLiterals;
 
@@ -71,7 +74,126 @@ QString clock(std::int64_t ms)
     return QDateTime::fromMSecsSinceEpoch(ms).toString(u"HH:mm"_s);
 }
 
+// The main process's private working set by what holds it, bytes (the page's
+// parts and the diagnostics package's: one sum for both).
+struct Split {
+    double fileIndex = 0, windows = 0, kept = 0, pictures = 0, program = 0;
+};
+Split split(const memory::Map& m, double main, std::uint64_t fileIndexTables, std::uint64_t cachedPictures, std::uint64_t kept)
+{
+    // On the heap, resident or not: the tables, the pictures. Counted no
+    // further than what is resident of the heap (`other`).
+    double heap = static_cast<double>(m.other);
+    const double tables = std::min<double>(static_cast<double>(fileIndexTables), heap);
+    heap -= tables;
+    Split s;
+    s.pictures = std::min<double>(static_cast<double>(cachedPictures), heap);
+    s.program = static_cast<double>(m.ownProgram + m.qt + m.graphics + m.system + m.stacks);
+    s.fileIndex = static_cast<double>(m.fileIndex) + tables;
+    s.windows = std::max(0.0, main - s.fileIndex - s.pictures - s.program);
+    // Of the windows' share, what stays when the memory is given back, so
+    // that the next opening is quick: a part of its own, or a Win顺 at rest
+    // looks as if its windows were still in use (GitHub #459).
+    s.kept = std::min<double>(static_cast<double>(kept), s.windows);
+    s.windows -= s.kept;
+    return s;
+}
+
+double tenths(double bytes) // MB, one decimal
+{
+    return std::round(bytes / kMb * 10) / 10;
+}
+
 } // namespace
+
+QJsonObject HealthMonitor::snapshot(Blocks fileIndex, std::uint64_t fileIndexTables, std::uint64_t pictures, const Blocks& kept)
+{
+    std::uint64_t keptSet = 0;
+    for (const auto& block : kept)
+        keptSet += block.second;
+    const std::uint64_t keptNow = memory::residentBytes(kept);
+    std::uint64_t held = 0;
+    for (const auto& block : fileIndex)
+        held += block.second;
+    std::size_t hint = 0;
+    const memory::Look look = memory::look(hint);
+    const memory::Map m = memory::map(std::move(fileIndex));
+    QJsonObject out {
+        {u"map_mb"_s, QJsonObject {{u"total"_s, tenths(m.total)}, {u"file_index"_s, tenths(m.fileIndex)},
+            {u"file_index_shared"_s, tenths(m.fileIndexShared)}, {u"own_program"_s, tenths(m.ownProgram)},
+            {u"qt"_s, tenths(m.qt)}, {u"graphics"_s, tenths(m.graphics)}, {u"system"_s, tenths(m.system)},
+            {u"stacks"_s, tenths(m.stacks)}, {u"other"_s, tenths(m.other)}}},
+        {u"file_index_held_mb"_s, tenths(held)},
+        {u"file_index_tables_mb"_s, tenths(fileIndexTables)},
+        {u"cached_pictures_mb"_s, tenths(pictures)},
+        {u"kept_set_mb"_s, tenths(keptSet)}, // what a giving back leaves; in memory now: parts_mb.kept
+    };
+    { // What grows when something leaks, and since when: this process's own counts.
+        const HANDLE self = ::GetCurrentProcess();
+        QJsonObject counters;
+        DWORD handles = 0;
+        if (::GetProcessHandleCount(self, &handles))
+            counters[u"handles"_s] = static_cast<qint64>(handles);
+        counters[u"gdi_objects"_s] = static_cast<qint64>(::GetGuiResources(self, GR_GDIOBJECTS));
+        counters[u"user_objects"_s] = static_cast<qint64>(::GetGuiResources(self, GR_USEROBJECTS));
+        PROCESS_MEMORY_COUNTERS memory {sizeof memory};
+        if (::GetProcessMemoryInfo(self, &memory, sizeof memory)) {
+            counters[u"peak_working_set_mb"_s] = tenths(static_cast<double>(memory.PeakWorkingSetSize));
+            counters[u"peak_commit_mb"_s] = tenths(static_cast<double>(memory.PeakPagefileUsage));
+            counters[u"page_faults"_s] = static_cast<qint64>(memory.PageFaultCount);
+        }
+        FILETIME created {}, exited {}, kernel {}, user {}, now {};
+        if (::GetProcessTimes(self, &created, &exited, &kernel, &user)) {
+            ::GetSystemTimeAsFileTime(&now);
+            const auto ticks = [](const FILETIME& t) { return (static_cast<std::uint64_t>(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
+            counters[u"uptime_minutes"_s] = static_cast<qint64>((ticks(now) - ticks(created)) / 600'000'000ULL);
+            counters[u"cpu_seconds"_s] = static_cast<qint64>((ticks(kernel) + ticks(user)) / 10'000'000ULL);
+        }
+        out[u"main_counters"_s] = counters;
+    }
+    double main = static_cast<double>(m.total); // the map's own total, should the look fail
+    if (look.ok) {
+        const std::vector<const memory::Process*> mine = memory::family(look.processes, look.self);
+        QJsonArray processes;
+        std::uint64_t plugins = 0, documents = 0, service = 0;
+        const auto add = [&processes](const memory::Process& p, const char* kind) {
+            processes.append(QJsonObject {{u"exe"_s, QString::fromWCharArray(p.exe)}, {u"kind"_s, QLatin1StringView(kind)},
+                {u"private_mb"_s, tenths(p.privateBytes)}, {u"working_set_mb"_s, tenths(p.workingSetBytes)},
+                {u"private_commit_mb"_s, tenths(p.privateCommitBytes)}});
+        };
+        for (const memory::Process* p : mine) {
+            if (p->pid == look.self) {
+                main = static_cast<double>(p->privateBytes);
+                add(*p, "main");
+            } else if (document(*p)) {
+                documents += p->privateBytes;
+                add(*p, "document");
+            } else {
+                plugins += p->privateBytes;
+                add(*p, "plugin");
+            }
+        }
+        if (look.full) {
+            for (const memory::Process& p : look.processes) {
+                if (named(p, L"WinShunService.exe") && std::find(mine.begin(), mine.end(), &p) == mine.end()) {
+                    for (const memory::Process* s : memory::family(look.processes, p.pid)) {
+                        service += s->privateBytes;
+                        add(*s, s == &p ? "service" : "service-helper"); // its own helpers: the keys', the drop ring's
+                    }
+                    break;
+                }
+            }
+        }
+        out[u"processes"_s] = processes;
+        out[u"total_mb"_s] = tenths(main + plugins + documents); // Task Manager's row of Win顺
+        out[u"service_mb"_s] = tenths(service);
+        const Split s = split(m, main, fileIndexTables, pictures, keptNow);
+        out[u"parts_mb"_s] = QJsonObject {{u"file_index"_s, tenths(s.fileIndex)}, {u"windows"_s, tenths(s.windows)},
+            {u"kept"_s, tenths(s.kept)}, {u"pictures"_s, tenths(s.pictures)}, {u"program"_s, tenths(s.program)},
+            {u"plugins"_s, tenths(plugins)}, {u"documents"_s, tenths(documents)}};
+    }
+    return out;
+}
 
 HealthMonitor::HealthMonitor(Sources sources, QObject* parent)
     : QObject(parent)
@@ -163,7 +285,7 @@ void HealthMonitor::take()
     // blocks are only addresses to it: asked for under the index's lock here,
     // compared with (never read) on the pool thread.
     std::optional<Mapped> wantMap;
-    Blocks blocks;
+    Blocks blocks, kept;
     if (m_fineCount++ % 3 == 0) {
         std::uint64_t tables = 0;
         if (!m_sources.fileIndex || m_sources.fileIndex(blocks, tables)) {
@@ -172,16 +294,19 @@ void HealthMonitor::take()
             m_fileIndexHeld = 0;
             for (const auto& block : blocks)
                 m_fileIndexHeld += block.second;
+            if (m_sources.kept)
+                kept = m_sources.kept();
         }
     }
     m_looking = true;
     QThreadPool::globalInstance()->start([self = QPointer<HealthMonitor>(this), hint = m_sizeHint,
                                              wantMap = std::move(wantMap), blocks = std::move(blocks),
-                                             pictures = m_sources.cachedPictures]() mutable {
+                                             pictures = m_sources.cachedPictures, kept = std::move(kept)]() mutable {
         memory::Look look = memory::look(hint);
         if (wantMap) {
             wantMap->map = memory::map(std::move(blocks));
             wantMap->pictures = pictures ? pictures() : 0;
+            wantMap->kept = memory::residentBytes(kept);
         }
         QMetaObject::invokeMethod(qApp, [self, hint, look = std::move(look), wantMap = std::move(wantMap)]() mutable {
             if (!self)
@@ -299,16 +424,8 @@ void HealthMonitor::publish()
     };
     if (m_mapped) {
         const memory::Map& m = m_mapped->map;
-        const double main = static_cast<double>(r.main);
-        // On the heap, resident or not: the tables, the pictures. Counted no
-        // further than what is resident of the heap (`other`).
-        double heap = static_cast<double>(m.other);
-        const double tables = std::min<double>(m_mapped->fileIndexTables, heap);
-        heap -= tables;
-        const double pictures = std::min<double>(m_mapped->pictures, heap);
-        const double program = static_cast<double>(m.ownProgram + m.qt + m.graphics + m.system + m.stacks);
-        const double fileIndex = static_cast<double>(m.fileIndex) + tables;
-        const double windows = std::max(0.0, main - fileIndex - pictures - program);
+        const auto [fileIndex, windows, kept, pictures, program]
+            = split(m, static_cast<double>(r.main), m_mapped->fileIndexTables, m_mapped->pictures, m_mapped->kept);
         const double parked = std::max(0.0, static_cast<double>(m_fileIndexHeld)
             - static_cast<double>(m.fileIndex + m.fileIndexShared)) / kMb;
         QString indexNote = tr("搜文件名用的");
@@ -319,6 +436,7 @@ void HealthMonitor::publish()
         part(u"fileIndex"_s, tr("文件索引"), fileIndex,
             indexNote);
         part(u"windows"_s, tr("窗口和数据"), windows, tr("搜索框、设置、剪贴板历史等正在用的"));
+        part(u"kept"_s, tr("快速打开预留"), kept, tr("搜索框和剪贴板下次打开要用的，归还时留着"));
         part(u"pictures"_s, tr("缩略图"), pictures, tr("列表和剪贴板里的小图，再看时不用重读"));
         part(u"program"_s, tr("程序本身"), program, tr("Win顺、Qt 和系统的代码，各个线程"));
     } else {
@@ -376,6 +494,7 @@ HealthMonitor* HealthMonitor::demo(QObject* parent, bool idle)
     mapped.map.other = r.main - mapped.map.fileIndex - 12 * mb;
     mapped.fileIndexTables = (idle ? 0 : 14) * mb;
     mapped.pictures = (idle ? 0 : 9) * mb;
+    mapped.kept = (idle ? 5 : 38) * mb;
     m->m_mapped = mapped;
     m->m_fileIndexHeld = 112 * mb;
 

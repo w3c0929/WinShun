@@ -907,6 +907,7 @@ void Settings::load()
     queryHistoryKeys = readOrDefault(s, u"Launcher/QueryHistoryKeys"_s, d.queryHistoryKeys);
     if (queryHistoryKeys != u"ctrl" && queryHistoryKeys != u"alt" && queryHistoryKeys != u"off")
         queryHistoryKeys = d.queryHistoryKeys;
+    searchLogo = readOrDefault(s, u"Launcher/SearchLogo"_s, d.searchLogo);
     logoRightClick = readOrDefault(s, u"Launcher/LogoRightClick"_s, d.logoRightClick);
     if (logoRightClick != u"menu" && logoRightClick != u"top" && logoRightClick != u"center" && logoRightClick != u"restore")
         logoRightClick = d.logoRightClick;
@@ -1247,6 +1248,7 @@ void Settings::load()
     if (clipboardPictureSize != u"small" && clipboardPictureSize != u"standard" && clipboardPictureSize != u"large")
         clipboardPictureSize = d.clipboardPictureSize;
     clipboardKeepPlace = readOrDefault(s, u"Clipboard/KeepPlace"_s, d.clipboardKeepPlace);
+    clipboardDuplicates = readOrDefault(s, u"Clipboard/KeepDuplicates"_s, d.clipboardDuplicates);
     // Clipboard/AtPointer was a switch until 0.37: on is "pointer".
     clipboardOpenAt = readOrDefault(s, u"Clipboard/OpenAt"_s,
         s.value(u"Clipboard/AtPointer"_s, false).toBool() ? u"pointer"_s : d.clipboardOpenAt).trimmed().toLower();
@@ -1337,6 +1339,9 @@ void Settings::load()
 
     pluginDeveloperMode = readOrDefault(s, u"Plugins/DeveloperMode"_s, d.pluginDeveloperMode);
     pluginBuiltinsExpanded = readOrDefault(s, u"Plugins/BuiltinsExpanded"_s, d.pluginBuiltinsExpanded);
+    pluginGalleryHidden = s.value(u"Plugins/GalleryHidden"_s).toStringList();
+    pluginGalleryHidden.removeAll(QString());
+    pluginGalleryHidden.removeDuplicates();
     pluginMaxResident = std::clamp(readOrDefault(s, u"Plugins/MaxResident"_s, d.pluginMaxResident), 0, 64);
     plugins = readPlugins(s);
     // The former built-in and the old URL sample become one optional plugin.
@@ -1507,6 +1512,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Results/MergeFileScope"_s, mergeFileScope);
     s.setValue(u"Results/AppsTab"_s, appsTab);
     s.setValue(u"Launcher/QueryHistoryKeys"_s, queryHistoryKeys);
+    s.setValue(u"Launcher/SearchLogo"_s, searchLogo);
     s.setValue(u"Launcher/LogoRightClick"_s, logoRightClick);
     s.setValue(u"Results/FavoritesOnStart"_s, favoritesOnStart);
     s.setValue(u"Results/FavoriteTiles"_s, favoriteTiles);
@@ -1598,6 +1604,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Clipboard/PictureSize"_s, clipboardPictureSize);
     s.remove(u"Clipboard/LargePictures"_s); // said by PictureSize now
     s.setValue(u"Clipboard/KeepPlace"_s, clipboardKeepPlace);
+    s.setValue(u"Clipboard/KeepDuplicates"_s, clipboardDuplicates);
     s.setValue(u"Clipboard/OpenAt"_s, clipboardOpenAt);
     s.remove(u"Clipboard/AtPointer"_s); // said by OpenAt now
     s.setValue(u"Clipboard/PreviewRestore"_s, clipboardPreviewRestore);
@@ -1644,6 +1651,10 @@ bool Settings::saveChecked() const
     s.setValue(u"Mcp/Settings"_s, mcpSettings);
     s.setValue(u"Plugins/DeveloperMode"_s, pluginDeveloperMode);
     s.setValue(u"Plugins/BuiltinsExpanded"_s, pluginBuiltinsExpanded);
+    if (pluginGalleryHidden.isEmpty())
+        s.remove(u"Plugins/GalleryHidden"_s);
+    else
+        s.setValue(u"Plugins/GalleryHidden"_s, pluginGalleryHidden);
     s.setValue(u"Plugins/MaxResident"_s, pluginMaxResident);
     auto pluginConfigs = plugins;
     auto web = std::find_if(pluginConfigs.begin(), pluginConfigs.end(), [](const PluginConfig& c) { return c.id == webplugin::kId; });

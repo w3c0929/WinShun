@@ -800,6 +800,19 @@ add_test(NAME tst_capture COMMAND tst_capture)
 set_tests_properties(tst_capture PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
+# The Band-2 UIAccess capture surface protocol and plugin-side bridge.
+qt_add_executable(tst_capturesurface tst_capturesurface.cpp
+    ${PROJECT_SOURCE_DIR}/src/capture/CaptureSurfaceBridge.cpp
+    ${PROJECT_SOURCE_DIR}/src/capture/CaptureSurfaceBridge.h)
+target_include_directories(tst_capturesurface PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/capture ${PROJECT_SOURCE_DIR}/src/app ${PROJECT_SOURCE_DIR}/src/core)
+target_link_libraries(tst_capturesurface PRIVATE winshun_options Qt6::Quick Qt6::Test user32 advapi32)
+set_target_properties(tst_capturesurface PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+add_test(NAME tst_capturesurface COMMAND tst_capturesurface)
+set_tests_properties(tst_capturesurface PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
 # The live loupe and the picture area's native alpha cursor, without App or user data.
 qt_add_executable(tst_captureui tst_captureui.cpp
     ${PROJECT_SOURCE_DIR}/src/capture/CaptureImage.cpp
@@ -1575,6 +1588,34 @@ target_link_libraries(tst_expander PRIVATE winshun_options Qt6::Test user32)
 set_target_properties(tst_expander PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_expander COMMAND tst_expander)
 set_tests_properties(tst_expander PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# winshun.topmost's windows (src/topmost-plugin/Pins) and the line round one
+# on top (Border), built in again: which windows are the user's, the switch
+# itself and the line's pieces, on windows of the test's own.
+qt_add_executable(tst_topmost tst_topmost.cpp
+    ${PROJECT_SOURCE_DIR}/src/topmost-plugin/Pins.cpp
+    ${PROJECT_SOURCE_DIR}/src/topmost-plugin/Border.cpp)
+target_include_directories(tst_topmost PRIVATE ${PROJECT_SOURCE_DIR}/src/topmost-plugin)
+target_link_libraries(tst_topmost PRIVATE winshun_options Qt6::Test user32 gdi32 dwmapi d2d1 shcore)
+set_target_properties(tst_topmost PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_topmost COMMAND tst_topmost)
+set_tests_properties(tst_topmost PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# winshun.archive (src/archive-plugin): its index of the names inside archives
+# (Index), built in again; the reading of archives (libarchive, linked into
+# the plugin's program with the C runtime) is asked of WinShunArchive.exe
+# itself, on the small archives of fixtures/archives.
+qt_add_executable(tst_archive tst_archive.cpp ${PROJECT_SOURCE_DIR}/src/archive-plugin/Index.cpp)
+target_include_directories(tst_archive PRIVATE ${PROJECT_SOURCE_DIR}/src/archive-plugin)
+target_link_libraries(tst_archive PRIVATE winshun_options Qt6::Test)
+target_compile_definitions(tst_archive PRIVATE WINSHUN_ARCHIVE_EXE="$<TARGET_FILE:WinShunArchive>"
+    WINSHUN_ARCHIVE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/archives")
+add_dependencies(tst_archive WinShunArchive)
+set_target_properties(tst_archive PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_archive COMMAND tst_archive)
+set_tests_properties(tst_archive PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 # winshun.bookmarks (src/bookmarks-plugin/Bookmarks), built in again: reading

@@ -62,11 +62,11 @@
 | | 功能 | 一句话说明 |
 |:-:|---|---|
 | 🔍 | [搜文件](docs/使用说明.md#搜文件) | 按名字、拼音、首字母找；本机磁盘、U 盘、NAS 和共享文件夹、WSL 都能搜 |
-| 📄 | [搜文件里的字](docs/使用说明.md#搜文件里的文字) | Word、Excel、PPT、PDF、WPS 和文本、代码，结果显示命中的那一行；可以用正则表达式 |
-| 🗂️ | [搜索面板](docs/使用说明.md#搜索面板筛选和排序) | `Ctrl+E` 展开：按类型、时间、大小、位置筛选，常用条件可存成一点就用的快捷筛选，按列排序，大图浏览 |
+| 📄 | [搜文件里的字](docs/使用说明.md#搜文件里的文字) | Word、Excel、PPT、PDF、WPS 和文本、代码，结果显示命中的那一行；可以用正则表达式，也能直接写 `*.docx`、`ext:py` 指定只读哪类文件 |
+| 🗂️ | [搜索面板](docs/使用说明.md#搜索面板筛选和排序) | `Ctrl+E` 展开：按类型、时间、大小、位置、名称筛选，常用条件可存成一点就用的快捷筛选，按列排序，大图浏览 |
 | 👀 | [预览](docs/使用说明.md#预览文件) | `Alt+P` 看一眼图片、文档、PDF，不用打开 |
 | 🚀 | [应用和系统设置](docs/使用说明.md#打开应用和系统设置) | 开始菜单里的应用和约 1200 个设置页，`vsc`、`网卡` 都能找到；可以加一个把应用排成图标网格的“应用”标签，还能切换已打开的窗口；`关机`、`重启`、`锁屏` 也直接打得出（关机、重启要先确认） |
-| 📋 | [剪贴板历史](docs/使用说明.md#剪贴板历史) ¹ | 代替 `Win+V`，保存文字、图片和文件，支持分组查找与悬停预览 |
+| 📋 | [剪贴板历史](docs/使用说明.md#剪贴板历史) ¹ | 代替 `Win+V`，保存文字、图片和文件，支持分组查找、悬停预览和单条快捷键 |
 | 📂 | [“打开”“另存为”对话框](docs/使用说明.md#打开另存为对话框) ² | 对话框旁多一个搜索框；`Ctrl+G` 转到文件管理器正开着的文件夹 |
 | 🖱️ | [在资源管理器里](docs/使用说明.md#在资源管理器里) ² | 双击空白处弹出常用文件夹，可一层层走进子文件夹；在文件列表里直接打字就搜 |
 | ⭐ | [收藏夹](docs/使用说明.md#收藏夹) | 给常用的文件、文件夹、应用起个关键词，一打就开；点列头按名称、日期、类型、大小排好；还能自定义命令，也可放进文件的右键菜单 |
@@ -99,6 +99,8 @@
 | [鼠标手势](src/gestures-plugin/package/README.md) | 按住右键（或中键、侧键，还有组合手势）画一下：后退、关窗口、切标签页；选中文字再画或按快捷键：复制、搜索、翻译；画圈、屏幕角落、屏幕边、右键+滚轮、按程序设置，关机重启先倒数；`手势` 暂停 | 插件库 |
 | 缩写展开 | 在任何地方打 `cmd` 再按空格就换成 `command`，缩写和内容自己设，紧接着按退格撤回；`缩写` 列出、暂停 | 插件库 |
 | 资源管理器标签页 | 新开的资源管理器窗口并成标签页，还能在下次登录后打开上次的标签页（Windows 11 22H2 起） | 插件库 |
+| 窗口置顶 | `Win+Ctrl+T` 让当前窗口一直显示在其他窗口上面，再按一次取消；打 `置顶` 从打开的窗口里挑一个 | 插件库 |
+| [压缩包搜索](src/archive-plugin/package/README.md) | 按文件名找 zip、7z、rar、tar.gz 等压缩包里的文件：直接搜，或打 `zip 名字` 只看压缩包里的；后台只读文件列表，不解压 | 插件库 |
 | [云备份](docs/使用说明.md#外观设置和备份) | 设置自动备份到 WebDAV（坚果云、NAS）或 GitHub 私有仓库，`cloud` 立即备份或恢复 | 插件库 |
 | 开发工具 | `json` 格式化、压缩、转义剪贴板里的 JSON，`Enter` 打开树形窗口查看、搜索键名和值；直接粘贴 JSON 也认 | 插件库 |
 
@@ -198,6 +200,23 @@ winget install LingCore.WinShun
 </details>
 
 ### 最近更新
+
+**0.47.0**
+
+- ⌨️ 剪贴板里常用的一条能**设自己的快捷键**，在任何程序里一按就粘贴它；📋 可以**保留重复项**，同样的内容再复制一次也记一条（和 Ditto 一样）。
+- 🗜️ 新插件**压缩包搜索**：按文件名找 zip、7z、rar、tar.gz 里的文件，不用解压；🖊️ 截图画笔**点一下就是一个点**，指针显示笔尖大小，工具栏多了“选择”按钮（#461）。
+- 🛠️ **改进** 全屏游戏里打开的剪贴板面板不再一闪就没（#452）。
+
+详见 [0.47.0 发布说明](docs/release-notes/v0.47.0.md)。
+
+**0.46.0**
+
+- 🎬 **全屏看视频也能截图**：“媒体播放器”这类商店应用全屏时，装了索引服务的话截图直接盖在它上面，不用先退出全屏（截图与录屏 1.1.36）；⌨️ 长截图、录屏的键能自己改，截图时的键可以是**单个字母**（#455）；📌 收在屏幕顶边的贴图能**左右拖开**（#456）。
+- 🔎 搜索面板的筛选多了**名称**：开头是、结尾是、不包含（#457）；📄 搜文件里的字时直接写 `年度报告 *.docx`、`TODO ext:py;js`，只读这类文件；📂 文件夹窗口里打字，`Tab` 补全并走进子文件夹（#454）；⏻ `gj`、`cq` 这样的拼音直接找到关机、重启；🔗 指向文件夹的链接不再被标成“空文件夹”（#460）。
+- 🧩 新插件**窗口置顶**（`Win+Ctrl+T`）；👁️ 插件库里用不上的插件点“**不感兴趣**”收起来（#442）；📊 插件能在自己的卡片上**显示进度**，“按意思找”建索引时看得到做到哪、还要多久，还能暂停（#458）；🪟 搜索框的 **Logo 可以关掉**（#433）。
+- 🛠️ **改进** 闲着时留给“快速打开”的内存最多 64 MB，关掉设置窗口半分钟后看过的页面自动释放（#459）；索引服务装不上时写明是哪个文件夹、为什么，并给出能复制的修复命令（#426）；资源管理器图片右键菜单里的“贴到屏幕（Win顺）”回到靠前的位置；托盘和贴图的菜单字号和别的菜单一样。
+
+详见 [0.46.0 发布说明](docs/release-notes/v0.46.0.md)。
 
 **0.45.0**
 
@@ -438,11 +457,11 @@ No installer, or Scoop and WinGet? See [Download and install](#download-and-inst
 | | Feature | In one line |
 |:-:|---|---|
 | 🔍 | [File search](docs/features.en.md#file-search) | By name, pinyin or initials; local drives, USB drives, NAS and network shares, WSL |
-| 📄 | [Text inside files](docs/features.en.md#full-text-search) | Word, Excel, PowerPoint, PDF, WPS, text and code, showing the matching line; regular expressions too |
-| 🗂️ | [Search panel](docs/features.en.md#file-search) | `Ctrl+E` expands it: filter by kind, date, size and folder, save your own quick filters, sort by column, large icons |
+| 📄 | [Text inside files](docs/features.en.md#full-text-search) | Word, Excel, PowerPoint, PDF, WPS, text and code, showing the matching line; regular expressions too, and `*.docx` or `ext:py` typed among the words picks which files to read |
+| 🗂️ | [Search panel](docs/features.en.md#file-search) | `Ctrl+E` expands it: filter by kind, date, size, folder and name, save your own quick filters, sort by column, large icons |
 | 👀 | [Preview](docs/features.en.md#file-search) | `Alt+P` shows a picture, document or PDF without opening it |
 | 🚀 | [Apps and settings](docs/features.en.md#apps-and-settings) | Start menu apps and about 1,200 Windows settings pages; an optional Apps tab shows the apps as a grid of icons and switches to open windows; shut down, restart and lock are one typed word away (shut down and restart ask first) |
-| 📋 | [Clipboard history](docs/features.en.md#clipboard-history) ¹ | Replaces `Win+V` with text, pictures and files, group search and hover previews |
+| 📋 | [Clipboard history](docs/features.en.md#clipboard-history) ¹ | Replaces `Win+V` with text, pictures and files, group search, hover previews and per-entry shortcuts |
 | 📂 | [Open / Save dialogs](docs/features.en.md#open-and-save-dialogs) ² | A search bar beside the dialog; `Ctrl+G` jumps to the folder open in your file manager |
 | 🖱️ | [In File Explorer](docs/features.en.md#in-file-explorer) ² | Double-click empty space for your folders and the folders inside them; type in a file list to search |
 | ⭐ | [Favorites](docs/features.en.md#favorites) | Give files, folders and apps a keyword to open them; sort them by name, date, type or size with a click; your own commands too, also in the right-click menu of files |
@@ -475,6 +494,8 @@ Some plugins come with WinShun; the rest are installed when you want them from *
 | [Mouse gestures](src/gestures-plugin/package/README.md) | Hold the right button (or the middle or a side button, or a chord) and draw: back, close the window, switch tabs; select text, then draw or press a shortcut: copy, search, translate; circles, screen corners and edges, the wheel with the right button, rules per program, a countdown before shutting down; `gestures` pauses them | Plugin library |
 | Text expander | Type `cmd` and a space anywhere and it becomes `command`, with abbreviations of your own; Backspace right after takes it back; `expander` lists and pauses them | Plugin library |
 | Explorer tabs | New File Explorer windows open as tabs, and the tabs from last time come back after a logon (Windows 11 22H2 or newer) | Plugin library |
+| Always on top | `Win+Ctrl+T` keeps the window in front above the others and takes it off again; `top` lists the open windows to pick one | Plugin library |
+| [Archive search](src/archive-plugin/package/README.md) | Finds files by name inside zip, 7z, rar, tar.gz and other archives: just search, or type `zip name` for archives only; only the lists of files are read, nothing is unpacked | Plugin library |
 | [Cloud backup](docs/features.en.md#looks-and-settings) | Keeps the settings backup on a WebDAV server or in a private GitHub repository; `cloud` backs up or restores | Plugin library |
 | Developer tools | `json` formats, minifies or escapes the JSON on the clipboard, `Enter` opens a tree to browse and search it; JSON pasted into the box works too | Plugin library |
 
@@ -574,6 +595,23 @@ Standard and portable packages install enhanced text recognition on demand. Open
 </details>
 
 ### What's new
+
+**0.47.0**
+
+- ⌨️ A clipboard entry you use often can have **a shortcut of its own** that pastes it in any program; 📋 **Keep duplicates** records the same content copied again as a new entry (both as in Ditto).
+- 🗜️ New plugin **Archive search**: files inside zip, 7z, rar and tar.gz found by name, without unpacking; 🖊️ a click with the capture pen **leaves a dot**, the pointer shows the tip, and the toolbar has a Select button (#461).
+- 🛠️ **Improved** the clipboard panel stays up over a full-screen game (#452).
+
+See the [0.47.0 release notes](docs/release-notes/v0.47.0.md).
+
+**0.46.0**
+
+- 🎬 **Capture over a full-screen video**: when a Store app such as Media Player is full screen, the capture comes up over it, without leaving full screen, if the index service is installed (Screenshot and recording 1.1.36); ⌨️ the keys for the **long screenshot and the recording can be changed**, and a capture key may be a **single letter** (#455); 📌 a pin folded to the top edge of the screen **can be dragged along it** (#456).
+- 🔎 The search panel's filters gain **Name**: starts with, ends with, without (#457); 📄 type `annual report *.docx` or `TODO ext:py;js` in a content search to read only those files; 📂 typing in a folder's window, **`Tab` completes and steps into subfolders** (#454); ⏻ pinyin such as `gj` and `cq` finds shut down and restart; 🔗 a link to a folder is no longer marked “Empty folder” (#460).
+- 🧩 New plugin **Always on top** (`Win+Ctrl+T`); 👁️ **Not interested** puts away a plugin you don't want in the plugin library (#442); 📊 plugins can **show progress on their card**: Search by meaning says how far the index has got and how long is left, and can be paused (#458); 🪟 the search box's **logo can be switched off** (#433).
+- 🛠️ **Improved**: at most 64 MB kept for a quick opening while idle, and the settings pages looked at are put away half a minute after the window closes (#459); when the index service cannot be installed, the settings name the folder and the reason and give commands to copy (#426); Pin to screen (WinShun) is back near the top of File Explorer's picture menu; the tray and pin menus use the same text size as the other menus.
+
+See the [0.46.0 release notes](docs/release-notes/v0.46.0.md).
 
 **0.45.0**
 

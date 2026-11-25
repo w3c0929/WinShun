@@ -74,6 +74,7 @@
 #include <QJsonObject>
 #include <QScopeGuard>
 #include <QSignalSpy>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -82,6 +83,7 @@
 
 #include <windows.h>
 #include <psapi.h>
+#include <aclapi.h>
 #include <sddl.h>
 #include <tlhelp32.h>
 #include <winioctl.h>
@@ -3153,6 +3155,52 @@ private slots:
     }
 
     // Folders named among the words of a content search (ContentFolderSpec).
+    // The files a content search is narrowed to, named among its words
+    // (ContentQuery::files): "ext:py", "*.md".
+    void contentFileWords()
+    {
+        const auto split = [](const QString& text, bool regex = false) { return ws::splitContentQuery(text, regex); };
+        ws::ContentQuery q = split(u"年度报告 *.docx"_s);
+        QCOMPARE(q.words, u"年度报告 "_s);
+        QCOMPARE(q.files, QStringList {u"*.docx"_s});
+        QCOMPARE(q.withoutFiles, u"年度报告"_s);
+        QCOMPARE(q.fileCondition(), u"*.docx"_s);
+        q = split(u"ext:py;js TODO fix"_s); // the ; is no sign of code here
+        QCOMPARE(q.words, u"TODO fix"_s);
+        QCOMPARE(q.files, QStringList {u"ext:py;js"_s});
+        q = split(u"EXT:PDF 合同 报告*.pdf !*.bak.pdf"_s);
+        QCOMPARE(ws::contentTerms(q.words), QStringList {u"合同"_s});
+        QCOMPARE(q.files, (QStringList {u"EXT:PDF"_s, u"报告*.pdf"_s, u"!*.bak.pdf"_s}));
+        QCOMPARE(q.withoutFiles, u"合同"_s);
+        // With a folder named too, in any order.
+        q = split(u"年度报告 *.docx abc/"_s);
+        QCOMPARE(q.words, u"年度报告"_s);
+        QCOMPARE(q.files, QStringList {u"*.docx"_s});
+        QCOMPARE(q.folders.size(), std::size_t {1});
+        QCOMPARE(q.folders[0].typed, u"abc/"_s);
+        // A line of code is still searched for as it is, without them.
+        q = split(u"printf(x) *.c"_s);
+        QCOMPARE(ws::contentTerms(q.words), QStringList {u"printf(x)"_s});
+        QCOMPARE(q.files, QStringList {u"*.c"_s});
+        q = split(u"if (a) *.c return b;"_s);
+        QCOMPARE(ws::contentTerms(q.words), QStringList {u"if (a) return b;"_s});
+        // What is something to find: quoted, no dot, no name, every file, a
+        // path, text with a ? in it, "ext:" alone; and in regex mode all of it.
+        for (const QString& text : {u"年度报告 \"*.docx\""_s, u"**重点** 报告"_s, u"a*b"_s, u"报告 *.*"_s, u"报告 src/*.py"_s,
+                 u"怎么办? 报告.docx"_s, u"ext: 报告"_s, u"glob(\"*.py\")"_s}) {
+            q = split(text);
+            QVERIFY2(q.files.isEmpty(), qPrintable(text));
+            QCOMPARE(q.withoutFiles, text);
+        }
+        q = split(u"TODO ext:py"_s, true);
+        QVERIFY(q.files.isEmpty());
+        QCOMPARE(q.words, u"TODO ext:py"_s);
+        // Alone: nothing to find yet.
+        q = split(u"*.py"_s);
+        QVERIFY(q.words.trimmed().isEmpty());
+        QCOMPARE(q.files, QStringList {u"*.py"_s});
+    }
+
     void contentFolderSpecs()
     {
         using Spec = ws::ContentFolderSpec;
@@ -4028,6 +4076,20 @@ private slots:
             QVERIFY(!indexedIn(service, back + u"\\docs\\a.txt"_s));
             QVERIFY(!indexedIn(service, inModules + u"\\o.txt"_s));
             QVERIFY(!indexedIn(service, inDotFolder + u"\\o.txt"_s));
+            // GitHub #460: a link not gone through has nothing under it here,
+            // and is not taken for an empty folder: flagged as found on the disk.
+            {
+                const auto index = service.index();
+                const auto lock = index->readLock();
+                for (const QString& link : {inDotFolder, up, back}) {
+                    const EntryId id = index->findPath(link.toStdWString());
+                    QVERIFY2(id != kNoEntry, qPrintable(link));
+                    const Entry e = index->entry(id);
+                    QVERIFY2(e.isDir() && e.firstChild() == kNoEntry && (e.flags & EntryFlag::Offline), qPrintable(link));
+                }
+                const EntryId plain = index->findPath(other.toStdWString()); // the folder they lead to: a plain one
+                QVERIFY(plain != kNoEntry && !(index->entry(plain).flags & EntryFlag::Offline));
+            }
             // Followed live under the link, and a link made since.
             QFile added(other + u"\\new.txt"_s);
             QVERIFY(added.open(QIODevice::WriteOnly));
@@ -5816,6 +5878,7 @@ private slots:
         QVERIFY(contents->times);
         QCOMPARE(loaded->modified(report), FileTime {1'700'000'123});
         QVERIFY(contents->created);
+        QVERIFY(contents->linkFlags); // version 11; an older file has the volumes read once more (IndexService)
         QCOMPARE(loaded->created(report), FileTime {1'600'000'456});
         QCOMPARE(loaded->modified(loaded->findPath(L"C:\\Windows")), FileTime {0xFFFF'FFFF});
         QCOMPARE(loaded->modified(loaded->findPath(L"C:\\Users\\me\\Documents")), FileTime {5});
@@ -9550,6 +9613,9 @@ private slots:
             const EntryId full = index->add(root, "zqfull", EntryFlag::Directory);
             inFull = index->add(full, "inside.txt", 0);
             index->add(root, "zqhidden", EntryFlag::Directory | EntryFlag::Hidden);
+            // GitHub #460: a junction or a symbolic link to a folder is not gone
+            // into, so it has no children here, yet it leads to a folder that has.
+            index->add(root, "zqlink", Crawler::attributeFlags(FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
             index->setSize(index->add(root, "zqzero.txt", 0), packSize(0));
         }
         SearchEngine engine(&service);
@@ -9573,6 +9639,9 @@ private slots:
         QVERIFY(rows[u"zqempty"_s]);
         QVERIFY(!rows[u"zqfull"_s]);
         QVERIFY(!rows.value(u"zqhidden"_s)); // listed or not: never marked
+        QVERIFY(rows.contains(u"zqlink"_s) && !rows[u"zqlink"_s]);
+        QCOMPARE(Crawler::attributeFlags(FILE_ATTRIBUTE_DIRECTORY), EntryFlag::Directory); // a plain folder: as before
+        QCOMPARE(Crawler::attributeFlags(FILE_ATTRIBUTE_REPARSE_POINT), std::uint8_t {0}); // a file that is a link: not offline
         QVERIFY(!rows[u"zqzero.txt"_s]);
         {
             const auto index = service.index();
@@ -11795,6 +11864,91 @@ private slots:
         const SearchResults rows = spy.first().at(1).value<SearchResults>();
         QVERIFY(rows.size() >= 2);
         QCOMPARE(rows.first().name, u"GJ Notes"_s);
+
+        // The whole name by its initials or pinyin ("gj", "guanji": 关机;
+        // "cq": 重启, a keyword) is asked for (PlaceHit::entire); part of a
+        // name is not.
+        const auto hitOf = [&](const QString& text, QStringView command) -> std::optional<PlaceHit> {
+            const ParsedQuery query = ws::parseQuery(text);
+            const NameMatcher matcher(query);
+            for (const PlaceHit& hit : searchPlaces(zh, query, matcher, {})) {
+                if (zh[hit.index].command == command)
+                    return hit;
+            }
+            return std::nullopt;
+        };
+        struct Asked {
+            QStringView text;
+            QStringView command;
+            bool entire;
+        };
+        const Asked askedFor[] = {
+            {u"gj", u"winshun:power/shutdown", true},
+            {u"guanji", u"winshun:power/shutdown", true},
+            {u"关机", u"winshun:power/shutdown", true},
+            {u"cq", u"winshun:power/restart", true},
+            {u"cqdn", u"winshun:power/restart", true},
+            {u"sm", u"winshun:power/sleep", true},
+            {u"zx", u"winshun:power/signout", true},
+            {u"sp", u"winshun:power/lock", true},
+            {u"dn", u"winshun:power/restart", false}, // 电脑, the end of its name
+            {u"关", u"winshun:power/shutdown", false},
+        };
+        for (const Asked& a : askedFor) {
+            const std::optional<PlaceHit> hit = hitOf(a.text.toString(), a.command);
+            QVERIFY2(hit.has_value(), qPrintable(a.text.toString()));
+            QVERIFY2(hit->entire == a.entire, qPrintable(a.text.toString()));
+        }
+
+        // So asked for, a command that asks before it acts is no guess: it
+        // ranks by its match among the apps, no longer behind the pages a
+        // keyword's initials happen to fit, and behind an app spelled so. A
+        // word for them all ("dy": 电源) names none, and the one that acts
+        // at once (锁定, "sp") stays behind.
+        const auto addApp = [&](const QString& name) {
+            AppInfo info;
+            info.name = name;
+            info.id = u"Test."_s + name;
+            info.prepare();
+            programs->push_back(info);
+        };
+        addApp(u"工具集"_s); // "gj"
+        addApp(u"传奇世界"_s); // "cq", half of it
+        addApp(u"电影"_s); // "dy"
+        addApp(u"视频"_s); // "sp"
+        apps.setApps(std::make_shared<AppList>(*programs));
+        const auto order = [&](const QString& text) {
+            QSignalSpy answered(&engine, &SearchEngine::resultsReady);
+            SearchEngine::Request ask;
+            ask.text = text;
+            ask.scope = Scope::All;
+            ask.limit = 30;
+            const quint64 id = engine.submit(std::move(ask));
+            QStringList names;
+            [&] {
+                QTRY_VERIFY_WITH_TIMEOUT(
+                    std::ranges::any_of(answered, [&](const QList<QVariant>& a) { return a.at(0).toULongLong() == id; }), 5000);
+            }();
+            for (const QList<QVariant>& a : answered) {
+                if (a.at(0).toULongLong() == id) {
+                    names.clear();
+                    for (const SearchResult& r : a.at(1).value<SearchResults>())
+                        names.append(r.name);
+                }
+            }
+            return names;
+        };
+        QStringList listed = order(u"gj"_s);
+        QVERIFY2(listed.indexOf(u"关机"_s) > listed.indexOf(u"GJ Notes"_s) && listed.indexOf(u"GJ Notes"_s) >= 0,
+            qPrintable(listed.join(u", ")));
+        listed = order(u"cq"_s);
+        QVERIFY2(listed.indexOf(u"重启电脑"_s) >= 0 && listed.indexOf(u"重启电脑"_s) <= 1, qPrintable(listed.join(u", ")));
+        listed = order(u"guanji"_s);
+        QVERIFY2(listed.indexOf(u"关机"_s) == 0, qPrintable(listed.join(u", ")));
+        listed = order(u"dy"_s);
+        QVERIFY2(listed.indexOf(u"电影"_s) >= 0 && listed.indexOf(u"电影"_s) < listed.indexOf(u"关机"_s), qPrintable(listed.join(u", ")));
+        listed = order(u"sp"_s);
+        QVERIFY2(listed.indexOf(u"视频"_s) >= 0 && listed.indexOf(u"视频"_s) < listed.indexOf(u"锁定屏幕"_s), qPrintable(listed.join(u", ")));
     }
 
     void switchPlaceSearch()
@@ -14170,6 +14324,28 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(complete, 15'000);
         QCOMPARE(results.size(), qsizetype(1));
         QCOMPARE(results[0].path, profile + u"\\needle.txt"_s);
+        // The files named among the words (ContentQuery::files): only those
+        // are read, and the scope says which were asked for.
+        request.conditions.clear();
+        const auto found = [&](const QString& text) {
+            complete = false;
+            results.clear();
+            request.text = text;
+            asked = engine.submit(request);
+            [&] { QTRY_VERIFY_WITH_TIMEOUT(complete, 15'000); }();
+            return results.size();
+        };
+        QCOMPARE(found(u"needle *.txt"_s), qsizetype(3));
+        QCOMPARE(scope.files, QStringList {u"*.txt"_s});
+        QCOMPARE(scope.words.trimmed(), u"needle"_s);
+        QCOMPARE(found(u"ext:txt needle"_s), qsizetype(3));
+        QCOMPARE(found(u"needle nee*.txt"_s), qsizetype(3));
+        QCOMPARE(found(u"needle ext:md"_s), qsizetype(0));
+        QCOMPARE(found(u"needle *.md"_s), qsizetype(0));
+        QCOMPARE(found(u"needle !nee*.txt"_s), qsizetype(0));
+        QCOMPARE(found(u"needle *.txt docs/"_s), qsizetype(2));
+        QCOMPARE(found(u"needle \"*.txt\""_s), qsizetype(0)); // quoted: looked for in the files
+        QVERIFY(scope.files.isEmpty());
     }
 
     // A pass that looks only at the files the Lookout lists (changed since
@@ -17666,6 +17842,28 @@ private slots:
         QCOMPARE(doubleCtrlIgnoreReason(captured, defaults), IgnoreReason::None);
     }
 
+    // GitHub #452: a game left exclusive full screen as the clipboard showed
+    // over it and minimized itself; the panel stays instead of going as a menu.
+    void panelOverLeftFullScreen()
+    {
+        const PanelFrontMove left {.overFullScreen = true, .targetMinimized = true, .keyPressed = false, .shownMs = 430};
+        QVERIFY(leftFullScreenForPanel(left)); // as in the report's package
+        static_assert(leftFullScreenForPanel({.overFullScreen = true, .targetMinimized = true, .shownMs = kFullScreenExitMs}));
+
+        PanelFrontMove ordinary = left; // over an ordinary window: minimized by its user, or by itself
+        ordinary.overFullScreen = false;
+        QVERIFY(!leftFullScreenForPanel(ordinary));
+        PanelFrontMove stillThere = left; // another program came over the game, which stays
+        stillThere.targetMinimized = false;
+        QVERIFY(!leftFullScreenForPanel(stillThere));
+        PanelFrontMove switched = left; // Alt+Tab, Win+D: its user went elsewhere
+        switched.keyPressed = true;
+        QVERIFY(!leftFullScreenForPanel(switched));
+        PanelFrontMove later = left; // long after it opened: not its doing
+        later.shownMs = kFullScreenExitMs + 1;
+        QVERIFY(!leftFullScreenForPanel(later));
+    }
+
     void hiddenForTypingRule()
     {
         // A key (not a modifier) went down to this window shortly before the hide.
@@ -18558,13 +18756,115 @@ private slots:
         QVERIFY(err.find(L"owner ") != std::wstring::npos || err.find(L"ACE ") != std::wstring::npos);
 
         // anyProtectedDirUsable & ensureAnyProtectedDir fall back past an unsafe candidate.
-        std::wstring firstBad;
+        svcloc::Weakness firstBad;
         QVERIFY(!svcloc::anyProtectedDirUsable({unsafeChild}, &firstBad));
-        QVERIFY(!firstBad.empty());
+        QVERIFY(firstBad);
+        QVERIFY(!firstBad.path.empty());
+        QVERIFY(firstBad.kind == svcloc::Weakness::Kind::Owner || firstBad.kind == svcloc::Weakness::Kind::Rights);
+        QVERIFY(firstBad.sid.starts_with(L"S-1-"));
         QVERIFY(svcloc::anyProtectedDirUsable({unsafeChild, LR"(C:\Windows\System32\WinShunProbeNonExistent)"}));
         std::wstring chosen;
         QVERIFY(svcloc::ensureAnyProtectedDir({unsafeChild, LR"(C:\Windows\System32)"}, chosen, &err));
         QCOMPARE(chosen, std::wstring(LR"(C:\Windows\System32)"));
+    }
+
+    // What is wrong with a folder and the commands that put it right (GitHub
+    // #426: C:\ owned by the user, Program Files open to Authenticated Users,
+    // and a message that only said "restore the default permissions").
+    void serviceFolderWeaknessAndRepair()
+    {
+        using svcloc::Role;
+        using Kind = svcloc::Weakness::Kind;
+        const auto weaknessOfSddl = [](const wchar_t* sddl, Role role) {
+            PSECURITY_DESCRIPTOR descriptor = nullptr;
+            if (!::ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &descriptor, nullptr))
+                return svcloc::Weakness {Kind::Unreadable};
+            BOOL present = FALSE;
+            BOOL defaulted = FALSE;
+            PSID owner = nullptr;
+            PACL dacl = nullptr;
+            ::GetSecurityDescriptorOwner(descriptor, &owner, &defaulted);
+            ::GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted);
+            svcloc::Weakness weak = svcloc::weakness(owner, present ? dacl : nullptr, role);
+            ::LocalFree(descriptor);
+            return weak;
+        };
+        // The reporter's C:\ and Program Files, as their service.log had them.
+        svcloc::Weakness weak = weaknessOfSddl(L"O:S-1-5-21-1771902938-1124112840-1087772244-1004D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", Role::Ancestor);
+        QCOMPARE(weak.kind, Kind::Owner);
+        QCOMPARE(weak.sid, std::wstring(L"S-1-5-21-1771902938-1124112840-1087772244-1004"));
+        weak.path = LR"(C:\)";
+        // A root bare: in quotes its backslash would swallow the closing one.
+        QVERIFY(svcloc::repairCommands(weak) == (std::vector<std::wstring> {LR"(takeown /f C:\ /a)"}));
+        weak = weaknessOfSddl(L"O:BAD:(A;;FA;;;BA)(A;OICIIO;GA;;;BA)(A;;FA;;;SY)(A;;0x1301bf;;;AU)(A;OICIIO;0x1301bf;;;AU)(A;;0x1200a9;;;BU)", Role::Ancestor);
+        QCOMPARE(weak.kind, Kind::Rights);
+        QCOMPARE(weak.sid, std::wstring(L"S-1-5-11"));
+        QCOMPARE(weak.mask, DWORD {0x1301bf});
+        weak.path = LR"(C:\Program Files)";
+        QVERIFY(svcloc::repairCommands(weak)
+            == (std::vector<std::wstring> {LR"(icacls "C:\Program Files" /inheritance:d)",
+                LR"(icacls "C:\Program Files" /grant:r *S-1-5-11:(OI)(CI)(RX))"}));
+        // Protected, or nothing a command of ours should touch: none.
+        weak = weaknessOfSddl(L"O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)", Role::Object);
+        QVERIFY(!weak);
+        QVERIFY(svcloc::repairCommands(weak).empty());
+        weak = weaknessOfSddl(L"O:BA", Role::Ancestor); // no DACL at all
+        QCOMPARE(weak.kind, Kind::NoAcl);
+        QVERIFY(svcloc::repairCommands(weak).empty());
+        QCOMPARE(svcloc::weaknessOf(LR"(C:\WinShun no such folder 426)", Role::Ancestor).kind, Kind::Unreadable);
+        // Names for the message: Windows' own for a well-known account, the
+        // SID where there is none.
+        QVERIFY(!svcloc::accountName(L"S-1-5-11").starts_with(L"S-1-"));
+        QCOMPARE(svcloc::accountName(L"S-1-5-21-1-2-3-424242"), std::wstring(L"S-1-5-21-1-2-3-424242"));
+
+        // The rights commands run for real: a folder that inherits "everyone
+        // signed in may change it" from the one above, as the reporter's
+        // Program Files did from C:\. After them nobody but administrators may
+        // change it (this account, its owner here, is asked the same way).
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString above = QDir::toNativeSeparators(temp.filePath(u"above"_s));
+        const QString folder = above + u"\\Program Files"_s; // a space, as the real one
+        QVERIFY(QDir().mkpath(above));
+        const auto run = [](const QString& command) {
+            QProcess process;
+            process.setProgram(u"cmd.exe"_s);
+            process.setNativeArguments(u"/d /c "_s + command);
+            process.start();
+            return process.waitForFinished(30'000) && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+        };
+        QVERIFY(run(u"icacls \"%1\" /grant *S-1-5-11:(OI)(CI)(M)"_s.arg(above)));
+        QVERIFY(QDir().mkpath(folder));
+        BYTE admins[SECURITY_MAX_SID_SIZE] {};
+        DWORD adminsSize = sizeof admins;
+        QVERIFY(::CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, admins, &adminsSize));
+        // The folder's DACL as it is on the disk, under an administrator owner.
+        const auto rightsWeakness = [&] {
+            PSECURITY_DESCRIPTOR descriptor = nullptr;
+            PACL dacl = nullptr;
+            svcloc::Weakness found {Kind::Unreadable};
+            if (::GetNamedSecurityInfoW(folder.toStdWString().c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr,
+                    &dacl, nullptr, &descriptor)
+                == ERROR_SUCCESS) {
+                found = svcloc::weakness(admins, dacl, Role::Ancestor);
+                ::LocalFree(descriptor);
+            }
+            found.path = folder.toStdWString();
+            return found;
+        };
+        QStringList seen;
+        svcloc::Weakness found = rightsWeakness();
+        for (int round = 0; round < 6 && found; ++round) {
+            QCOMPARE(found.kind, Kind::Rights);
+            seen.append(QString::fromStdWString(found.sid));
+            for (const std::wstring& command : svcloc::repairCommands(found))
+                QVERIFY2(run(QString::fromStdWString(command)), qPrintable(QString::fromStdWString(command)));
+            found = rightsWeakness();
+        }
+        const bool repaired = !found;
+        QVERIFY(run(u"icacls \"%1\" /reset"_s.arg(folder))); // ours to delete again
+        QVERIFY2(repaired, qPrintable(seen.join(u' ')));
+        QVERIFY(seen.contains(u"S-1-5-11"_s));
     }
 };
 

@@ -762,6 +762,7 @@ ContentScope resolveScope(const FileIndex& index, const SearchEngine::Request& r
     ContentScope out;
     const ContentQuery typed = splitContentQuery(request.text, request.regex);
     out.words = typed.words;
+    out.files = typed.files;
     for (const ContentFolderSpec& spec : typed.folders) {
         ContentScope::Place place = resolvePlace(index, spec, request, pool, isCancelled, scope);
         if (place.status == ContentScope::Status::Words) // "abc/" is what to find, then
@@ -1845,6 +1846,7 @@ void SearchEngine::runNameSearch(const Job& job)
                 int score;
                 SearchResult result;
                 bool guessedAction = false; // a switch or power command found by a guess (PlaceHit::weak)
+                bool askedInPinyin = false; // a power command asked for by its whole name, in pinyin ("gj")
             };
             std::vector<Ranked> ranked;
             // Win顺's own places (GitHub #389, #390), whether or not places
@@ -1881,7 +1883,17 @@ void SearchEngine::runNameSearch(const Job& job)
             }
             const std::size_t appCount = ranked.size();
             std::size_t shown = 0; // places other than switches (those are few, and each one a concept)
-            for (const PlaceHit& hit : request.places ? searchPlaces(*places, query, matcher, request.history, request.historyAffinity) : std::vector<PlaceHit> {}) {
+            const std::vector<PlaceHit> placeHits
+                = request.places ? searchPlaces(*places, query, matcher, request.history, request.historyAffinity) : std::vector<PlaceHit> {};
+            // A power command that asks before it acts, its whole name typed
+            // ("gj": 关机, "cq": 重启): Enter only asks, so it is no guess and
+            // ranks as any place does. A word for all of them ("dy": 电源)
+            // names none; one that acts at once (锁定) stays a guess.
+            const auto askedFor = [&](const PlaceHit& hit) {
+                return hit.entire && powerCommandNeedsConfirm((*places)[hit.index].command);
+            };
+            const bool oneAskedFor = std::ranges::count_if(placeHits, askedFor) == 1;
+            for (const PlaceHit& hit : placeHits) {
                 const PlaceInfo& place = (*places)[hit.index];
                 if (isOwnPlace(place)) // above
                     continue;
@@ -1894,11 +1906,12 @@ void SearchEngine::runNameSearch(const Job& job)
                     [&](const Ranked& r) { return r.result.name.compare(place.name, Qt::CaseInsensitive) == 0; });
                 if (isApp)
                     continue;
-                ranked.push_back({hit.score, fromPlace(place, false), (isSwitch || isPower) && hit.weak});
+                const bool asked = hit.weak && oneAskedFor && askedFor(hit);
+                ranked.push_back({hit.score, fromPlace(place, false), (isSwitch || isPower) && hit.weak && !asked, asked});
                 shown += isSwitch ? 0 : 1;
             }
             // A wrong Enter on an app opens it; on a switch or power command it
-            // changes system state. So one found only by a weak guess ("ly", "gj")
+            // changes system state. So one found only by a weak guess ("ly", "sp")
             // goes behind every app and page found as well, and first only where
             // there are none.
             int behind = std::numeric_limits<int>::max();
@@ -1906,9 +1919,19 @@ void SearchEngine::runNameSearch(const Job& job)
                 if (r.result.switchId.isEmpty() && !isPowerCommand(r.result.target))
                     behind = std::min(behind, r.score);
             }
+            // Asked for in pinyin ("gj": 关机), it still gives way to what has
+            // those letters in its name as typed ("GJ Notes").
+            const QString typedText = request.text.trimmed();
+            int behindSpelled = std::numeric_limits<int>::max();
+            for (const Ranked& r : ranked) {
+                if (!r.askedInPinyin && !r.guessedAction && r.result.name.contains(typedText, Qt::CaseInsensitive))
+                    behindSpelled = std::min(behindSpelled, r.score);
+            }
             for (Ranked& r : ranked) {
                 if (r.guessedAction)
                     r.score = std::min(r.score, behind - 1);
+                else if (r.askedInPinyin)
+                    r.score = std::min(r.score, behindSpelled - 1);
             }
             // "关蓝牙", "音量 30", "蓝牙设置": the switch with what was asked of
             // it, above everything but a typed keyword; the plain row of the
@@ -2675,6 +2698,10 @@ void SearchEngine::runContentSearch(const Job& job)
         request.contentInLowPriority || set == ContentSet::LowPriority};
     const ExtensionFilter skipped(request.excludedTypes); // packed once, asked of each candidate
     const ExtensionFilter onlyTypes(request.contentTypes); // the kinds 内容 is narrowed to; empty: any
+    // The files named among the words ("ext:py", "*.md"): by their names, as a name search.
+    const ParsedQuery typedFiles = parseQuery(where.files.join(u' '));
+    const std::optional<NameMatcher> onlyFiles
+        = typedFiles.isEmpty() || !typedFiles.error.isEmpty() ? std::nullopt : std::optional<NameMatcher>(std::in_place, typedFiles, false);
     const std::vector<std::string> skippedNames = foldedExtensions(request.excludedFileNames);
     // The quick filters: a file to read is one they let through, by its name,
     // folders, size and time, as a name search would.
@@ -2753,6 +2780,7 @@ void SearchEngine::runContentSearch(const Job& job)
             UnderFolder inProfile(*index, personalFolders);
             UnderFolders inScope(*index, scope);
             std::vector<NameMatcher::Folders> conditionFolders(conditions.size());
+            NameMatcher::Folders onlyFilesFolders;
             HiddenFolders::Memo hiddenMemo;
             const auto first = static_cast<EntryId>(c << FileIndex::kChunkBits);
             auto k = static_cast<std::size_t>(std::lower_bound(lookup.known.begin(), lookup.known.end(), first,
@@ -2773,6 +2801,10 @@ void SearchEngine::runContentSearch(const Job& job)
                 const ContentVerdict verdict = filter.classify(*index, e, name, extLength);
                 // Not of the kinds chosen: neither read nor counted as passed over.
                 if (verdict != ContentVerdict::Never && !onlyTypes.empty() && !onlyTypes.matches(name, extLength))
+                    continue;
+                // Nor of the files typed: the same.
+                if (verdict != ContentVerdict::Never && onlyFiles
+                    && onlyFiles->match(*index, e, onlyFilesFolders, static_cast<EntryId>(first + i)) < 0)
                     continue;
                 switch (verdict) {
                 case ContentVerdict::Never:

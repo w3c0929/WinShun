@@ -19,6 +19,10 @@
 
 class QTimer;
 
+namespace ws::svcloc {
+struct Weakness;
+}
+
 namespace ws {
 
 class CliSetup;
@@ -171,6 +175,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool indexServiceInstallable READ indexServiceInstallable NOTIFY indexAccessStateChanged FINAL)
     Q_PROPERTY(bool indexServiceUnsafeLocation READ indexServiceUnsafeLocation NOTIFY indexAccessStateChanged FINAL)
     Q_PROPERTY(QString indexServiceMessage READ indexServiceMessage NOTIFY indexAccessStateChanged FINAL)
+    Q_PROPERTY(QString indexServiceRepair READ indexServiceRepair NOTIFY indexAccessStateChanged FINAL)
     Q_PROPERTY(bool indexServiceUpdatable READ indexServiceUpdatable NOTIFY indexAccessStateChanged FINAL)
     Q_PROPERTY(QString indexServiceVersion READ indexServiceVersion NOTIFY indexAccessStateChanged FINAL)
     // 索引哪些地方 (Settings::indexScope, GitHub #52): auto | drives | folders,
@@ -238,6 +243,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool appsTab READ appsTab WRITE setAppsTab NOTIFY changed FINAL)
     Q_PROPERTY(QString queryHistoryKeys READ queryHistoryKeys WRITE setQueryHistoryKeys NOTIFY changed FINAL)
     Q_PROPERTY(QString logoRightClick READ logoRightClick WRITE setLogoRightClick NOTIFY changed FINAL)
+    Q_PROPERTY(bool searchLogo READ searchLogo WRITE setSearchLogo NOTIFY changed FINAL)
     Q_PROPERTY(bool favoritesOnStart READ favoritesOnStart WRITE setFavoritesOnStart NOTIFY changed FINAL)
     Q_PROPERTY(bool favoriteTiles READ favoriteTiles WRITE setFavoriteTiles NOTIFY changed FINAL)
     Q_PROPERTY(bool clearOnOpen READ clearOnOpen WRITE setClearOnOpen NOTIFY changed FINAL)
@@ -300,12 +306,17 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(QString clipboardUiSize READ clipboardUiSize WRITE setClipboardUiSize NOTIFY changed FINAL) // follow | dense | compact | standard | roomy
     Q_PROPERTY(QString clipboardPictureSize READ clipboardPictureSize WRITE setClipboardPictureSize NOTIFY changed FINAL)
     Q_PROPERTY(bool clipboardKeepPlace READ clipboardKeepPlace WRITE setClipboardKeepPlace NOTIFY changed FINAL)
+    Q_PROPERTY(bool clipboardDuplicates READ clipboardDuplicates WRITE setClipboardDuplicates NOTIFY changed FINAL)
     Q_PROPERTY(QString clipboardOpenAt READ clipboardOpenAt WRITE setClipboardOpenAt NOTIFY changed FINAL) // caret | pointer | last
     Q_PROPERTY(bool clipboardPreviewRestore READ clipboardPreviewRestore WRITE setClipboardPreviewRestore NOTIFY changed FINAL)
     // The tab the clipboard opens on (GitHub #404, Settings::clipboardOpenTab),
     // out of clipboardOpenTabs: [{value, text}] (Clipboard::openTabChoices, set by the app).
     Q_PROPERTY(QString clipboardOpenTab READ clipboardOpenTab WRITE setClipboardOpenTab NOTIFY changed FINAL)
     Q_PROPERTY(QVariantList clipboardOpenTabs READ clipboardOpenTabs NOTIFY clipboardOpenTabsChanged FINAL)
+    // The clipboard entries with a shortcut of their own (Clip::hotkey), set
+    // by the app: [{id, title, detail, hotkey, error}]; also the one 设置快捷键
+    // was chosen for, with no keys yet (App::entryHotkeyRows).
+    Q_PROPERTY(QVariantList clipboardEntryHotkeys READ clipboardEntryHotkeys NOTIFY clipboardEntryHotkeysChanged FINAL)
     Q_PROPERTY(bool clipboardPauseInFullScreen READ clipboardPauseInFullScreen WRITE setClipboardPauseInFullScreen NOTIFY changed FINAL)
     Q_PROPERTY(bool clipboardFlipAbove READ clipboardFlipAbove WRITE setClipboardFlipAbove NOTIFY changed FINAL)
     Q_PROPERTY(bool clipboardHoldToStep READ clipboardHoldToStep WRITE setClipboardHoldToStep NOTIFY changed FINAL)
@@ -641,6 +652,7 @@ public:
         bool serviceUnsafeLocation = false; // installed from a user-writable folder (an old portable copy): offer to repair
         bool serviceBusy = false; // --install / --uninstall running
         QString serviceMessage; // how the last install or uninstall went
+        QString serviceRepair; // ... and, where a folder's permissions stopped it, the commands that put them right (a line each)
         bool serviceUpdate = false; // this copy's own service is older than it: one click updates it (ServiceUpdate.h)
         QString serviceVersion; // the running service's, from its last handshake; empty when unknown
         bool foldersInEffect = false; // only the chosen folders are indexed (App::foldersInEffect)
@@ -661,6 +673,10 @@ public:
     bool indexServiceInstallable() const { return m_indexAccessState.serviceInstallable; }
     bool indexServiceUnsafeLocation() const { return m_indexAccessState.serviceUnsafeLocation; }
     QString indexServiceMessage() const { return m_indexAccessState.serviceMessage; }
+    QString indexServiceRepair() const { return m_indexAccessState.serviceRepair; }
+    // Why the service cannot go into a protected folder, said for the user:
+    // which folder, what is wrong with it and who is behind it (GitHub #426).
+    static QString serviceBlockedMessage(const svcloc::Weakness& weak);
     bool indexServiceUpdatable() const { return m_indexAccessState.serviceUpdate; }
     QString indexServiceVersion() const { return m_indexAccessState.serviceVersion; }
     // The app restarts Win顺 as administrator (UAC asks once), installs or
@@ -826,6 +842,8 @@ public:
     void setClipboardPictureSize(const QString& size);
     bool clipboardKeepPlace() const { return m_settings.clipboardKeepPlace; }
     void setClipboardKeepPlace(bool on);
+    bool clipboardDuplicates() const { return m_settings.clipboardDuplicates; }
+    void setClipboardDuplicates(bool on);
     QString clipboardOpenAt() const { return m_settings.clipboardOpenAt; }
     bool clipboardPreviewRestore() const { return m_settings.clipboardPreviewRestore; }
     void setClipboardPreviewRestore(bool on);
@@ -833,6 +851,14 @@ public:
     void setClipboardOpenTab(const QString& key);
     QVariantList clipboardOpenTabs() const { return m_clipboardOpenTabs; }
     void setClipboardOpenTabs(const QVariantList& tabs); // set by the app
+    QVariantList clipboardEntryHotkeys() const { return m_clipboardEntryHotkeys; }
+    void setClipboardEntryHotkeys(const QVariantList& rows); // set by the app
+    // Keys recorded for an entry; empty takes its shortcut away. The app
+    // keeps them in the history and says in the list whether they work.
+    Q_INVOKABLE void setClipboardEntryHotkey(qint64 id, const QString& hotkey)
+    {
+        emit clipboardEntryHotkeyRequested(id, hotkey.trimmed());
+    }
     bool clipboardPauseInFullScreen() const { return m_settings.clipboardPauseInFullScreen; }
     void setClipboardPauseInFullScreen(bool on);
     void setClipboardOpenAt(const QString& at);
@@ -1243,6 +1269,8 @@ public:
     void setQueryHistoryKeys(const QString& keys);
     QString logoRightClick() const { return m_settings.logoRightClick; }
     void setLogoRightClick(const QString& action);
+    bool searchLogo() const { return m_settings.searchLogo; }
+    void setSearchLogo(bool on);
     void setPluginBuiltinsExpanded(bool expanded);
     OcrPackage* ocrPackage() const { return m_ocrPackage; }
     void useOcrPackage(OcrPackage* package); // before the settings window is created
@@ -1278,6 +1306,8 @@ signals:
     void fileManagersChanged();
     void clipboardCountChanged();
     void clipboardOpenTabsChanged();
+    void clipboardEntryHotkeysChanged();
+    void clipboardEntryHotkeyRequested(qint64 id, const QString& hotkey);
     void numberKeysNoteChanged();
     void doubleCtrlClashChanged();
     void doubleTapActionsChanged();
@@ -1369,6 +1399,7 @@ private:
     QString m_clipboardHotkeyError;
     int m_clipboardCount = 0;
     QVariantList m_clipboardOpenTabs;
+    QVariantList m_clipboardEntryHotkeys;
     bool m_clipboardImporting = false;
     QString m_clipboardImportMessage;
     QPointer<QWindow> m_window;

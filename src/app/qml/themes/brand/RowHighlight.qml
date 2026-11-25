@@ -60,9 +60,7 @@ Item {
         y: row.look ? row.look.snap((row.height - height) / 2, row.dpr) : 0
         radius: row.look ? (row.look.rounded ? width / 2 : 0) : 0
         color: row.look ? row.look.indicator : "transparent"
-        // The chosen row's, and the keyboard's while its face is here (the
-        // hover wears it too, see DialogBarRow/ResultRow).
-        scale: row.selected || row.current ? 1 : 0
+        scale: row.selected ? 1 : 0
         Behavior on scale { enabled: row.look !== null && row.look.animations && (row.Window.window?.visible ?? false); NumberAnimation { duration: row.look ? row.look.animMove : 0; easing.type: Easing.Bezier; easing.bezierCurve: row.look ? row.look.easeOut : [0, 0, 0, 1, 1, 1] } }
     }
 }

@@ -32,6 +32,7 @@
 ### 2.2 异步写库与 SQLite（`ClipStore`）
 
 - **线程边界**：内存列表（前 64K 字符）仅主线程访问；SQLite 与图片读写交单写库线程 `ClipStore::Writer` 串行队列。写操作先改内存、单调分配不复用 ID 入队，读盘同队列保序；落盘前 `imagePending` 为真，完成经 `pictureSaved` 刷新、失败经 `lost` 回滚，退出排空。
+- **去重与单条快捷键**：`add` 默认按 `hash` 合并到已有条目并移到最前；`setKeepsDuplicates`（`[Clipboard] KeepDuplicates`）开启后只合并与最新一条相同的（连按 `Ctrl+C`），启动时读入的 `initial` 仍全表合并，自己写出的粘贴经 `ours` 走 `touch` 不新增。`clips.hotkey`（`NOT NULL DEFAULT ''`，旧库 `ALTER` 补列；空值绑 `COALESCE(?, '')`）存单条快捷键，一键一条（`setHotkey` 夺回他条，无分组的入 `kPinned`），`restore` 遇键已被占则清空。`Clipboard::entryHotkeys` 变化 → `App::applyEntryHotkeys` 以 `RegisterHotKey` id 100–299 注册，与 Win顺 自身键、他程占用冲突写入设置行 `error` 与 `noteApplyProblem`；按下走 `pasteByHotkey`（面板开着时同面板粘贴，否则 `pasteDirect`）。
 - **SQLite 回收**：仅用 Qt SQLite 驱动，WAL（`journal_size_limit` ≤ 1 MB）+ `auto_vacuum=FULL`（旧库写库线程 `VACUUM` 迁移），删除提交即截断空闲页；图片原格式存盘，撤销期保留。
 
 ### 2.3 图片原格式、动图与公式
@@ -81,6 +82,7 @@
 | 提权对话框跳转 | `OpenDialogNav` / `kCapabilityDialogNav`、`kCapabilityDialogNavName` | `mayNavigateDialogs`（同目录或 `--installed-from`；其余 `kCapabilityDialogNavBesideOnly`） | 每 PID 限 1（`ERROR_BUSY`），Job | 复制路径 |
 | 管理员代按粘贴 | `OpenPaste` / `kCapabilityPasteRelay` | 同 `mayNavigateDialogs`（非本份隐藏能力位，回 `ERROR_ACCESS_DENIED`） | 每 PID 限 1，限 3 s | 仅复制提示 |
 | UIAccess 独立显示 | `OpenClipboardDisplay`（小版本 5） | `requesterIsWinShun`（同目录且路径/所有者受保护 `WinShun.exe`） | 租约 + Job + 双端 PID + 白名单环境 | 普通独立窗 |
+| UIAccess 截图表面 | `OpenCaptureSurface` / `kCapabilityCaptureSurface`（小版本 9） | `mayNavigateDialogs` + 自身路径受保护；宿主限 `winshun.capture` 并注入真实插件 PID | 每 PID 限 1（`ERROR_BUSY`）、Job（限 1 进程）、双端管道 PID、仅覆盖非提权 Band>1 `ApplicationFrameWindow`、失活即自毁 | `Win+Shift+Enter` 退全屏 |
 
 ### 4.3 文件对话框粘贴与图片导出（`ClipFiles`）
 
@@ -104,6 +106,6 @@
 ### 5.2 诊断与测试入口
 
 - **诊断键**：`trigger`（`tap_from`/`listener_ms`/`queued_ms`）、`double-tap-near-miss`、`double-tap-dropped`、`idle-trim`、`key-helper`、`clipboard-hold-end`/`skipped`、`Launcher: lost the front ...`。
-- **CTest（输入/剪贴板）**：`tst_core`（`hotkeySteps`/`pasteKeys`/`pasteGuard`）、`tst_keylistener`、`tst_keyrouter`、`tst_winkeys`、`tst_admintaphint`、`tst_service`、`tst_clipboard`、`tst_cliplifecycle`、`tst_clipselect`、`tst_clipimage`、`tst_clipfiles`、`tst_pinclipboard`、`tst_clipboarddisplay`。
+- **CTest（输入/剪贴板）**：`tst_core`（`hotkeySteps`/`pasteKeys`/`pasteGuard`）、`tst_keylistener`、`tst_keyrouter`、`tst_winkeys`、`tst_admintaphint`、`tst_service`、`tst_clipboard`、`tst_cliplifecycle`、`tst_clipselect`、`tst_clipimage`、`tst_clipfiles`、`tst_pinclipboard`、`tst_clipboarddisplay`、`tst_capturesurface`。
 - **CTest（粘贴/OCR/下载）**：`tst_paster`、`tst_servicepaste`、`tst_servicedialognav`、`tst_pastefile`、`WINSHUN_TEST_NATIVE_DIALOG=1 tst_filepaste`（默认跳过）、`tst_ocr`、`tst_ocrpackage`、`tst_download`、`tst_download_cmake`。
 - **实时验证夹具**：`docs/validation/issue277-20261111/`（管理员代按粘贴）、`docs/validation/issue287-20261111/`（按住连按粘贴）；其余早期验证与审计记录存于 Git 历史。
