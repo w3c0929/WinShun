@@ -193,7 +193,9 @@ try {
         $work = Join-Path $deltaWork $from
         if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
         New-Item -ItemType Directory -Path $work | Out-Null
-        gh release download $earlierTag --repo w3c0929/WinShun --pattern "WinShun-$from-x64-portable.zip" --dir $work
+        # curl with resume and retries: a large portable over a proxy that
+        # drops now and then comes through, where gh's single GET gives up.
+        & curl.exe -L --fail --retry 5 --retry-delay 2 -C - --silent --show-error -o (Join-Path $work "WinShun-$from-x64-portable.zip") "https://github.com/w3c0929/WinShun/releases/download/$earlierTag/WinShun-$from-x64-portable.zip"
         if ($LASTEXITCODE) { throw "Could not download the portable package of $earlierTag." }
         Expand-Archive -LiteralPath (Join-Path $work "WinShun-$from-x64-portable.zip") -DestinationPath (Join-Path $work 'old')
         $old = Join-Path $work 'old\WinShun'
