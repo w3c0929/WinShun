@@ -179,7 +179,7 @@ function Get-TreeHashes([string] $folder) {
     $map
 }
 try {
-    $earlier = @(gh release list --repo LingCore/WinShun --limit 20 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName')
+    $earlier = @(gh release list --repo w3c0929/WinShun --limit 20 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName')
     if ($LASTEXITCODE) { throw 'Could not list the earlier releases for delta packages.' }
     $earlier = @($earlier | Where-Object { $_ -match '^v(\d+\.\d+\.\d+)$' -and [version]$Matches[1] -lt [version]$version } |
             Sort-Object { [version]$_.TrimStart('v') } -Descending | Select-Object -First $DeltaCount)
@@ -188,12 +188,12 @@ try {
     foreach ($earlierTag in $earlier) {
         $from = $earlierTag.TrimStart('v')
         # Only a version that can apply one (its source has UpdateDelta.cpp).
-        gh api "repos/LingCore/WinShun/contents/src/app/UpdateDelta.cpp?ref=$earlierTag" --silent 2>$null
+        gh api "repos/w3c0929/WinShun/contents/src/app/UpdateDelta.cpp?ref=$earlierTag" --silent 2>$null
         if ($LASTEXITCODE) { Write-Host "No delta from $from`: it cannot apply one"; continue }
         $work = Join-Path $deltaWork $from
         if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
         New-Item -ItemType Directory -Path $work | Out-Null
-        gh release download $earlierTag --repo LingCore/WinShun --pattern "WinShun-$from-x64-portable.zip" --dir $work
+        gh release download $earlierTag --repo w3c0929/WinShun --pattern "WinShun-$from-x64-portable.zip" --dir $work
         if ($LASTEXITCODE) { throw "Could not download the portable package of $earlierTag." }
         Expand-Archive -LiteralPath (Join-Path $work "WinShun-$from-x64-portable.zip") -DestinationPath (Join-Path $work 'old')
         $old = Join-Path $work 'old\WinShun'
