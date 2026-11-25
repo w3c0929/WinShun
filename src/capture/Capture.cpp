@@ -2,6 +2,7 @@
 
 #include "CaptureOcr.h"
 #include "DiagnosticLog.h"
+#include "PictureWrite.h"
 #include "QrCode.h"
 #include "platform/Foreground.h"
 #include "platform/KeyRouter.h" // kOwnInput
@@ -31,6 +32,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 #include <thread>
 
 using namespace Qt::StringLiterals;
@@ -49,6 +51,22 @@ constexpr qint64 kFlyoutSettleMs = 500;
 // Hiding waits for a frame drawn without the pictures (their textures go
 // with it); one that does not come does not hold the windows up.
 constexpr auto kHideTimeout = 200ms;
+// A Store app in full screen: the hotkey's keys up first (Ctrl of Ctrl+1
+// down would make Win+Shift+Enter another chord), at most this long; then out
+// of full screen, measured in 3 ms (the Media Player), given this long.
+constexpr qint64 kKeysUpWaitMs = 1500;
+constexpr qint64 kFullScreenWaitMs = 1000;
+// The overlays gone: the app has the foreground back and the keys are up
+// (Ctrl of Ctrl+C) within this, or it is left out of full screen. Then the
+// switch waits a little more: sent the moment the app has the foreground
+// again, it is not taken (measured: 3 of 3 then, 100 ms later it is, in
+// some 20 ms); not back after the check time, it is sent once more.
+constexpr qint64 kPutBackWaitMs = 1500;
+constexpr qint64 kPutBackSettleMs = 150;
+constexpr qint64 kPutBackCheckMs = 400;
+// ZBID_DESKTOP: the band of the Z order every desktop program's windows are
+// in, topmost or not.
+constexpr DWORD kDesktopBand = 1;
 
 HMONITOR monitorOf(QScreen* screen)
 {
@@ -144,6 +162,84 @@ void sendEscape()
     ::SendInput(2, keys, sizeof keys[0]);
 }
 
+// The window's band of the Z order (user32's GetWindowBand, Windows 8 on,
+// not documented); 0: not known.
+DWORD windowBand(HWND window)
+{
+    using GetWindowBand = BOOL(WINAPI*)(HWND, DWORD*);
+    static const auto get = reinterpret_cast<GetWindowBand>(
+        reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "GetWindowBand")));
+    DWORD band = 0;
+    return get && get(window, &band) ? band : 0;
+}
+
+// A Store app in full screen (a video in the Media Player, F11): its frame
+// goes into a band over the desktop's (8), where no desktop program's window
+// comes, topmost or not, nor takes the foreground from it. The overlay stayed
+// under it, and the keys went to the app: Esc took it out of full screen, and
+// then showed the capture still there, out of the keys' reach. PixPin's
+// overlay does not come over it either (measured).
+bool fullScreenStoreApp(HWND window)
+{
+    wchar_t name[32] {};
+    if (!window || !::GetClassNameW(window, name, static_cast<int>(std::size(name)))
+        || std::wstring_view(name) != L"ApplicationFrameWindow")
+        return false;
+    if (const DWORD band = windowBand(window); band == 0 || band == kDesktopBand)
+        return false;
+    RECT frame {};
+    MONITORINFO monitor {sizeof monitor};
+    return ::GetWindowRect(window, &frame)
+        && ::GetMonitorInfoW(::MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor)
+        && frame.left <= monitor.rcMonitor.left && frame.top <= monitor.rcMonitor.top
+        && frame.right >= monitor.rcMonitor.right && frame.bottom >= monitor.rcMonitor.bottom;
+}
+
+bool modifiersDown()
+{
+    for (const int key : {VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN}) {
+        if (::GetAsyncKeyState(key) & 0x8000)
+            return true;
+    }
+    return false;
+}
+
+// Win+Shift+Enter: Windows' own switch for the full screen of the Store app
+// in front, both ways (out in 3 ms, measured).
+void sendFullScreenSwitch()
+{
+    constexpr WORD chord[] {VK_LWIN, VK_SHIFT, VK_RETURN};
+    constexpr std::size_t n = std::size(chord);
+    INPUT keys[2 * n] {};
+    for (std::size_t i = 0; i < n; ++i) {
+        INPUT& down = keys[i];
+        INPUT& up = keys[2 * n - 1 - i];
+        down.type = up.type = INPUT_KEYBOARD;
+        down.ki.wVk = up.ki.wVk = chord[i];
+        up.ki.dwFlags = KEYEVENTF_KEYUP;
+        down.ki.dwExtraInfo = up.ki.dwExtraInfo = kOwnInput;
+    }
+    ::SendInput(static_cast<UINT>(std::size(keys)), keys, sizeof keys[0]);
+}
+
+// What leaves nothing of ours to be seen once the overlays are gone: the
+// app goes back into full screen after these. Not after a pin, the words
+// read, a recording, a long screenshot: they would be under it.
+bool putsBack(CaptureSession::Action action)
+{
+    using Action = CaptureSession::Action;
+    switch (action) {
+    case Action::Copy:
+    case Action::Save:
+    case Action::SaveAs:
+    case Action::SavePrevious:
+    case Action::Cancel:
+        return true;
+    default:
+        return false;
+    }
+}
+
 } // namespace
 
 Capture::Capture(QQmlEngine* engine, Callbacks callbacks, QObject* parent)
@@ -222,6 +318,10 @@ Capture::Capture(QQmlEngine* engine, Callbacks callbacks, QObject* parent)
         m_flyout = nullptr;
         show();
     });
+    m_fullScreenWait.setInterval(10ms);
+    connect(&m_fullScreenWait, &QTimer::timeout, this, &Capture::fullScreenTick);
+    m_putBackWait.setInterval(10ms);
+    connect(&m_putBackWait, &QTimer::timeout, this, &Capture::putBackTick);
     m_hideTimeout.setSingleShot(true);
     m_hideTimeout.setInterval(kHideTimeout);
     connect(&m_hideTimeout, &QTimer::timeout, this, &Capture::hideAll);
@@ -387,36 +487,67 @@ void Capture::trigger()
 
 void Capture::triggerOcr(OcrPurpose purpose)
 {
+    triggerQuick(purpose == OcrPurpose::Translate ? QuickPurpose::Translate : QuickPurpose::ReadText);
+}
+
+void Capture::triggerPin()
+{
+    triggerQuick(QuickPurpose::Pin);
+}
+
+void Capture::triggerQuick(QuickPurpose purpose)
+{
+    if (purpose == QuickPurpose::None)
+        return;
     if ((m_recorder && m_recorder->active()) || m_countdown || (m_long && m_long->running()))
         return;
     if (m_state == State::Idle) {
-        start(true, purpose);
-    } else if (m_ocrOnly && (m_state == State::Waiting || m_state == State::Showing)) {
-        if (purpose == m_ocrPurpose) {
-            m_session.act(static_cast<int>(CaptureSession::Action::Cancel)); // what the key opened, it closes
-        } else {
-            m_ocrPurpose = purpose; // the other key: the same picking, for the other end
-            if (m_state == State::Showing)
-                m_session.notify(ocrNotice());
-        }
+        start(purpose);
+        return;
+    }
+    if (m_state != State::Waiting && m_state != State::Showing)
+        return;
+    if (m_quickPurpose == purpose) {
+        m_session.act(static_cast<int>(CaptureSession::Action::Cancel)); // what the key opened, it closes
+        return;
+    }
+    // Pressing the capture-and-pin hotkey while a regular capture already has a selection pins it directly.
+    if (purpose == QuickPurpose::Pin && m_quickPurpose == QuickPurpose::None && m_session.hasSelection()) {
+        m_session.act(static_cast<int>(CaptureSession::Action::Pin));
+        return;
+    }
+    if (m_quickPurpose != QuickPurpose::None || (purpose == QuickPurpose::Pin && !m_session.hasSelection())) {
+        m_quickPurpose = purpose; // switch the active picking purpose seamlessly
+        m_session.setQuickMode(purpose == QuickPurpose::Pin ? CaptureSession::QuickMode::Pin : CaptureSession::QuickMode::Ocr);
+        if (m_state == State::Showing)
+            m_session.notify(quickNotice());
     }
 }
 
-QString Capture::ocrNotice() const
+QString Capture::quickNotice() const
 {
-    return m_ocrPurpose == OcrPurpose::Translate ? tr("截图翻译：拖选区域，或单击窗口 · Esc 取消")
-                                                 : tr("识别文字：拖选区域，或单击窗口 · Esc 取消");
+    switch (m_quickPurpose) {
+    case QuickPurpose::Translate:
+        return tr("截图翻译：拖选区域，或单击窗口 · Esc 取消");
+    case QuickPurpose::ReadText:
+        return tr("识别文字：拖选区域，或单击窗口 · Esc 取消");
+    case QuickPurpose::Pin:
+        return tr("截图并贴图：拖选区域，或单击窗口 · Esc 取消");
+    case QuickPurpose::None:
+        break;
+    }
+    return {};
 }
 
-void Capture::start(bool ocrOnly, OcrPurpose purpose)
+void Capture::start(QuickPurpose purpose)
 {
     const bool quiet = std::exchange(m_quietStart, false);
     if (m_overlays.empty())
         return;
     if (m_callbacks.starting)
         m_callbacks.starting();
-    m_ocrOnly = ocrOnly;
-    m_ocrPurpose = ocrOnly ? purpose : OcrPurpose::Read;
+    m_quickPurpose = purpose;
+    const bool ocrOnly = purpose == QuickPurpose::ReadText || purpose == QuickPurpose::Translate;
     m_clock.start();
     m_faultsBefore = pageFaults();
     m_reported = false;
@@ -430,6 +561,15 @@ void Capture::start(bool ocrOnly, OcrPurpose purpose)
     // flyout in front stays in the picture (wanted), and is closed after.
     const HWND foreground = ::GetForegroundWindow();
     const bool flyout = win::isShellFlyout(foreground);
+    // A Store app in full screen stays in the picture too, and goes out of
+    // full screen for the overlays to come over it (fullScreenTick).
+    const bool fullScreen = !flyout && fullScreenStoreApp(foreground);
+    m_fullScreenWait.stop();
+    m_putBackWait.stop(); // a capture right after one that put an app back: this one's
+    m_putBack = false;
+    m_fullScreen = nullptr;
+    m_fullScreenSent = false;
+    m_fullScreenMs = -1;
     m_shots = m_grabber.grab(&m_grabReport, m_hdrFile);
     if (m_includeCursor)
         drawCursorInShots();
@@ -486,6 +626,12 @@ void Capture::start(bool ocrOnly, OcrPurpose purpose)
             }
         }
     }
+    // Nor does EnumWindows list a Store app's frame in full screen (measured):
+    // the hover found the windows under it, not in the picture. Over them all.
+    if (RECT r {}; fullScreen && ::GetWindowRect(foreground, &r) && !::IsRectEmpty(&r)) {
+        windows.tops.insert(windows.tops.begin(), QRect(r.left, r.top, r.right - r.left, r.bottom - r.top));
+        ++extra;
+    }
     windows.children = [this, extra](std::size_t i) {
         return i < extra ? std::vector<QRect> {} : m_snapshot.children(i - extra);
     };
@@ -497,7 +643,9 @@ void Capture::start(bool ocrOnly, OcrPurpose purpose)
     }
     forgetHistory();
     m_liveWindows = windows;
-    m_session.setOcrOnly(ocrOnly);
+    m_session.setQuickMode(purpose == QuickPurpose::Pin ? CaptureSession::QuickMode::Pin
+        : ocrOnly                                       ? CaptureSession::QuickMode::Ocr
+                                                        : CaptureSession::QuickMode::None);
     m_session.begin(byIndex, std::move(windows));
     m_beginMs = m_clock.elapsed();
     if (quiet)
@@ -511,7 +659,103 @@ void Capture::start(bool ocrOnly, OcrPurpose purpose)
         m_flyoutWait.start();
         return;
     }
+    if (fullScreen) {
+        m_fullScreen = foreground;
+        m_fullScreenClock.start();
+        m_state = State::Waiting;
+        m_fullScreenWait.start();
+        return;
+    }
     show();
+}
+
+void Capture::fullScreenTick()
+{
+    if (m_state != State::Waiting || !m_fullScreen) {
+        m_fullScreenWait.stop();
+        return;
+    }
+    if (!m_fullScreenSent) {
+        if (modifiersDown() && m_fullScreenClock.elapsed() < kKeysUpWaitMs)
+            return;
+        sendFullScreenSwitch();
+        m_fullScreenSent = true;
+        m_fullScreenClock.restart();
+        return;
+    }
+    // Closed meanwhile: nothing over the overlays either.
+    const DWORD band = ::IsWindow(m_fullScreen) ? windowBand(m_fullScreen) : kDesktopBand;
+    if (band != kDesktopBand && m_fullScreenClock.elapsed() < kFullScreenWaitMs)
+        return;
+    m_fullScreenWait.stop();
+    m_fullScreenMs = m_fullScreenClock.elapsed();
+    const QString program = foreground::programOf(m_fullScreen);
+    diagnostics::record(u"capture-full-screen-app"_s, {{u"program"_s, program}, {u"band"_s, static_cast<qint64>(band)},
+        {u"left_full_screen"_s, band == kDesktopBand}, {u"ms"_s, m_fullScreenMs}});
+    if (band == kDesktopBand) {
+        show();
+        return;
+    }
+    // Still over every window of ours: overlays under it would show to no one
+    // and take no key. Ended, and said why.
+    qWarning().noquote() << u"Screen capture: %1 stayed in full screen (band %2) %3 ms after Win+Shift+Enter; the capture ended"_s
+                                .arg(program)
+                                .arg(band)
+                                .arg(m_fullScreenMs);
+    m_fullScreen = nullptr;
+    m_session.act(static_cast<int>(CaptureSession::Action::Cancel));
+    if (m_callbacks.cannotShow)
+        m_callbacks.cannotShow(tr("全屏的应用挡住了截图，请先退出全屏再截图"));
+}
+
+void Capture::putBackTick()
+{
+    const HWND app = m_fullScreen;
+    const auto done = [this] {
+        m_putBackWait.stop();
+        m_fullScreen = nullptr;
+    };
+    if (m_state != State::Idle || !app || !::IsWindow(app)) {
+        done();
+        return;
+    }
+    const qint64 now = m_fullScreenClock.elapsed();
+    if (m_putBackSent > 0) {
+        if (windowBand(app) != kDesktopBand) {
+            qInfo().noquote() << u"Screen capture: %1 back in full screen (%2 ms after the overlays went, %3 switch(es))"_s
+                                     .arg(foreground::programOf(app))
+                                     .arg(now)
+                                     .arg(m_putBackSent);
+            done();
+            return;
+        }
+        if (now - m_putBackSentMs < kPutBackCheckMs)
+            return;
+        if (m_putBackSent >= 2) {
+            qWarning().noquote() << u"Screen capture: %1 did not go back into full screen after %2 switches"_s.arg(
+                foreground::programOf(app)).arg(m_putBackSent);
+            done();
+            return;
+        }
+    }
+    if (::GetForegroundWindow() != app || modifiersDown()) {
+        m_putBackReadyMs = -1;
+        if (now >= kPutBackWaitMs) {
+            const HWND front = ::GetForegroundWindow();
+            qInfo().noquote() << u"Screen capture: %1 left out of full screen (%2 in front%3)"_s.arg(
+                foreground::programOf(app), front ? foreground::programOf(front) : u"no window"_s,
+                modifiersDown() ? u", keys down"_s : QString());
+            done();
+        }
+        return;
+    }
+    if (m_putBackReadyMs < 0)
+        m_putBackReadyMs = now;
+    if (now - m_putBackReadyMs < kPutBackSettleMs)
+        return;
+    sendFullScreenSwitch();
+    ++m_putBackSent;
+    m_putBackSentMs = now;
 }
 
 void Capture::show()
@@ -557,8 +801,8 @@ void Capture::show()
     m_showMs = m_clock.elapsed();
     if (underIndex >= 0)
         m_session.pointerMove(underIndex, underAt); // the hover and the magnifier before the mouse moves
-    if (m_ocrOnly) // where the pointer is, at the top: what this capture is for
-        m_session.notify(ocrNotice());
+    if (m_quickPurpose != QuickPurpose::None) // where the pointer is, at the top: what this capture is for
+        m_session.notify(quickNotice());
     startWatch();
     // Nothing more here: the first frame is drawn when this returns to the
     // event loop, and what is done before that is time with no overlay.
@@ -567,12 +811,13 @@ void Capture::show()
 void Capture::afterUp()
 {
     m_pointerFacts = diag::pointerFacts(); // the registry, the system's cursors
-    // The capture before, read meanwhile: , shows it at once (not for reading words).
-    if (m_history.enabled() && !m_ocrOnly) {
+    // The capture before, read meanwhile: , shows it at once (regular capture only).
+    const bool regular = m_quickPurpose == QuickPurpose::None;
+    if (m_history.enabled() && regular) {
         m_historyIds = m_history.ids(); // a folder listed
         prefetchHistory(0);
     }
-    m_session.setHistoryAvailable(m_history.enabled() && !m_ocrOnly && !m_historyIds.isEmpty()); // the key hints' , .
+    m_session.setHistoryAvailable(m_history.enabled() && regular && !m_historyIds.isEmpty()); // the key hints' , .
     if (m_callbacks.shown)
         m_callbacks.shown();
 }
@@ -801,7 +1046,10 @@ void Capture::frameDrawn(QQuickWindow* window)
                                  .arg(m_grabReport)
                                  .arg(m_snapshot.windows().size())
                                  .arg(m_listMs - m_grabMs)
-                                 .arg(m_flyoutMs >= 0 ? u"; waited %1 ms for the Start menu to close"_s.arg(m_flyoutMs) : QString())
+                                 .arg(m_flyoutMs >= 0 ? u"; waited %1 ms for the Start menu to close"_s.arg(m_flyoutMs)
+                                         : m_fullScreen && m_fullScreenMs >= 0
+                                         ? u"; %1 out of full screen in %2 ms"_s.arg(foreground::programOf(m_fullScreen)).arg(m_fullScreenMs)
+                                         : QString())
                                  .arg(m_beginMs)
                                  .arg(m_showMs)
                                  .arg(m_upFaults);
@@ -837,8 +1085,8 @@ void Capture::finish(CaptureSession::Action action, int screen, const QRect& rec
 {
     if (m_state != State::Showing && m_state != State::Waiting)
         return;
-    const bool ocrOnly = std::exchange(m_ocrOnly, false); // triggerOcr's: only OcrCopy or Cancel come here
-    const OcrPurpose ocrPurpose = std::exchange(m_ocrPurpose, OcrPurpose::Read);
+    const QuickPurpose quickPurpose = std::exchange(m_quickPurpose, QuickPurpose::None);
+    const bool ocrOnly = quickPurpose == QuickPurpose::ReadText || quickPurpose == QuickPurpose::Translate;
     QString savePath;
     if (action == CaptureSession::Action::Save) {
         // The picker over the monitor of the toolbar (one over several monitors has it on one, #409).
@@ -872,6 +1120,10 @@ void Capture::finish(CaptureSession::Action action, int screen, const QRect& rec
     }
     m_flyoutWait.stop();
     m_flyout = nullptr;
+    m_fullScreenWait.stop();
+    m_putBack = m_fullScreen && m_fullScreenSent && putsBack(action);
+    if (!m_putBack)
+        m_fullScreen = nullptr;
     QImage picture;
     QByteArray project;
     std::optional<QList<RedactLine>> prescanned;
@@ -958,6 +1210,7 @@ void Capture::finish(CaptureSession::Action action, int screen, const QRect& rec
     }
     // Taken: into the history, as the overlays show it (a capture brought
     // back and taken again replaces itself there).
+    QString captureHistoryId;
     if (!picture.isNull() && m_history.enabled() && !ocrOnly) {
         HistoryShot shot;
         shot.id = QString::number(QDateTime::currentMSecsSinceEpoch());
@@ -972,8 +1225,10 @@ void Capture::finish(CaptureSession::Action action, int screen, const QRect& rec
         shot.spans = screen == CaptureSession::kDesktop; // over several monitors (#409): on their picture together
         if (m_session.hasAnnotations() && m_session.annotationScreen() == screen)
             shot.document = QJsonDocument(annot::toJson(annotation->committedDocument())).toJson(QJsonDocument::Compact);
-        if (shot.screen >= 0 || (shot.spans && shot.screens.size() > 1))
+        if (shot.screen >= 0 || (shot.spans && shot.screens.size() > 1)) {
+            captureHistoryId = shot.id;
             m_history.add(std::move(shot), m_historyAt >= 0 ? m_historyShown : QString());
+        }
     }
     forgetHistory();
     recordCapture(action, rect);
@@ -1012,7 +1267,7 @@ void Capture::finish(CaptureSession::Action action, int screen, const QRect& rec
     if (ocrOnly) {
         // Its words only: not the last capture (贴图 pins that), no copy of the picture.
         const QRect where(origin, picture.size());
-        if (ocrPurpose == OcrPurpose::Translate) {
+        if (quickPurpose == QuickPurpose::Translate) {
             // 截图翻译 (#356): what the toolbar's 翻译 does, without the toolbar.
             if (m_callbacks.ocrThen)
                 m_callbacks.ocrThen(picture, dpr, where, CaptureSession::Action::OcrTranslate);
@@ -1026,10 +1281,11 @@ void Capture::finish(CaptureSession::Action action, int screen, const QRect& rec
     m_lastProject = project;
     m_lastClipboardSequence = ::GetClipboardSequenceNumber();
     m_lastClipboardId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    PinWindow* pinned = nullptr;
     switch (action) {
     case CaptureSession::Action::CopyPin:
         if (PinManager* pins = m_callbacks.pins ? m_callbacks.pins() : nullptr)
-            pins->pin(picture, origin, true, project, std::move(prescanned));
+            pinned = pins->pin(picture, origin, true, project, std::move(prescanned));
         [[fallthrough]]; // copying records the picture once, including its editable project
     case CaptureSession::Action::Copy:
         if (m_callbacks.copy)
@@ -1043,7 +1299,7 @@ void Capture::finish(CaptureSession::Action action, int screen, const QRect& rec
         break;
     case CaptureSession::Action::Pin:
         if (PinManager* pins = m_callbacks.pins ? m_callbacks.pins() : nullptr)
-            pins->pin(picture, origin, true, project, std::move(prescanned));
+            pinned = pins->pin(picture, origin, true, project, std::move(prescanned));
         if (m_callbacks.record)
             m_callbacks.record(picture, project);
         break;
@@ -1077,6 +1333,17 @@ void Capture::finish(CaptureSession::Action action, int screen, const QRect& rec
     case CaptureSession::Action::Long:
     case CaptureSession::Action::Record:
         break;
+    }
+    if (m_callbacks.captured) {
+        m_callbacks.captured(CapturedShot {
+            .image = picture,
+            .project = project,
+            .origin = origin,
+            .captureHistoryId = captureHistoryId,
+            .clipboardOriginId = m_lastClipboardId,
+            .clipboardSeq = m_lastClipboardSequence,
+            .pinned = pinned,
+        });
     }
 }
 
@@ -1217,13 +1484,25 @@ void Capture::restoreDraft()
     if (picture.isNull())
         return;
     const QByteArray project = annot::writeProject(draft.project.doc, draft.project.base);
+    PinWindow* pinned = nullptr;
     if (PinManager* pins = m_callbacks.pins ? m_callbacks.pins() : nullptr)
-        pins->pin(picture, draft.origin, true, project);
+        pinned = pins->pin(picture, draft.origin, true, project);
     m_last = picture;
     m_lastOrigin = draft.origin;
     m_lastProject = project;
     m_lastClipboardSequence = ::GetClipboardSequenceNumber();
     m_lastClipboardId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    if (m_callbacks.captured) {
+        m_callbacks.captured(CapturedShot {
+            .image = picture,
+            .project = project,
+            .origin = draft.origin,
+            .captureHistoryId = {},
+            .clipboardOriginId = m_lastClipboardId,
+            .clipboardSeq = m_lastClipboardSequence,
+            .pinned = pinned,
+        });
+    }
 }
 
 void Capture::findFlyout()
@@ -1284,6 +1563,12 @@ void Capture::hideAll()
     }
     m_state = State::Idle;
     m_pulse.disarm(); // (recordCapture did, for every way out through finish)
+    if (std::exchange(m_putBack, false)) {
+        m_fullScreenClock.restart();
+        m_putBackSent = 0;
+        m_putBackReadyMs = -1;
+        m_putBackWait.start(); // once Windows has given the app the foreground back
+    }
     if (m_callbacks.ended)
         m_callbacks.ended();
     if (std::exchange(m_delayAfter, false))
@@ -1492,26 +1777,28 @@ void saveImage(std::jthread& thread, QObject* context, const QImage& image, cons
         const QFileInfo info(picture);
         return QDir::toNativeSeparators(info.dir().filePath(info.completeBaseName() + u".jxr"_s));
     };
-    // PNG encoding of a whole screen takes a moment: not on the GUI thread.
+    // Encoding a whole screen takes a moment: not on the GUI thread.
     thread = std::jthread([context, done = std::move(done), image, folder, chosen = path, hdr = std::move(hdr), hdrPath] {
         QString path = chosen;
         QString error;
-        if (!path.isEmpty()) { // 另存为…
-            if (!image.save(path, "PNG"))
-                error = Capture::tr("无法保存到 %1").arg(path);
-        } else if (folder.isEmpty()) {
-            error = Capture::tr("找不到“屏幕截图”文件夹");
-        } else {
-            const QDir dir(folder);
-            // A name neither file has yet.
-            path = QDir::toNativeSeparators(dir.filePath(screenshotFileName(QDateTime::currentDateTime(), [&](const QString& name) {
-                return QFileInfo::exists(dir.filePath(name)) || (hdr && QFileInfo::exists(hdrPath(dir.filePath(name))));
-            })));
-            if (!image.save(path, "PNG"))
-                error = Capture::tr("无法保存到 %1").arg(path);
+        try {
+            if (!path.isEmpty()) { // 另存为… or direct save-back (#427)
+                error = writeImageFile(image, path);
+            } else if (folder.isEmpty()) {
+                error = Capture::tr("找不到“屏幕截图”文件夹");
+            } else {
+                const QDir dir(folder);
+                // A name neither file has yet.
+                path = QDir::toNativeSeparators(dir.filePath(screenshotFileName(QDateTime::currentDateTime(), [&](const QString& name) {
+                    return QFileInfo::exists(dir.filePath(name)) || (hdr && QFileInfo::exists(hdrPath(dir.filePath(name))));
+                })));
+                error = writeImageFile(image, path);
+            }
+            if (hdr && error.isEmpty() && !writeJxr(hdrPath(path), *hdr))
+                error = Capture::tr("截图已保存，但 HDR 图片没能保存到 %1").arg(hdrPath(path));
+        } catch (...) {
+            error = Capture::tr("无法保存到 %1").arg(path);
         }
-        if (hdr && error.isEmpty() && !writeJxr(hdrPath(path), *hdr))
-            error = Capture::tr("截图已保存，但 HDR 图片没能保存到 %1").arg(hdrPath(path));
         QMetaObject::invokeMethod(context, [done, path, error] {
             if (done)
                 done(path, error);

@@ -108,6 +108,7 @@ qt_add_executable(WinShun WIN32
     platform/Http.cpp platform/Http.h
     platform/HotPages.cpp platform/HotPages.h
     platform/IdleTrim.cpp platform/IdleTrim.h
+    platform/ThreadQos.h
     platform/UiStall.cpp platform/UiStall.h
     platform/CodeAddress.cpp platform/CodeAddress.h
     platform/CrashRecord.cpp platform/CrashRecord.h
@@ -164,6 +165,7 @@ set(qml_files
     qml/Theme.qml
     qml/Hook.qml
     qml/UiScale.qml
+    qml/UiSizeToast.qml
     qml/WindowEdge.qml
     qml/SearchBar.qml
     qml/ScopeTabs.qml
@@ -265,6 +267,7 @@ set(qml_files
     qml/ShareCard.qml
     qml/ShareScanControls.qml
     qml/CenteredNumber.qml
+    qml/RowHintSlot.qml
     qml/IconNumber.qml
     qml/NumberHints.qml
     qml/ShownRows.qml
@@ -461,7 +464,9 @@ qt_add_resources(WinShun "ocr_component"
 qt_add_resources(WinShun "branding"
     PREFIX /branding
     BASE "${PROJECT_SOURCE_DIR}/resources"
-    FILES "${PROJECT_SOURCE_DIR}/resources/logo.svg")
+    FILES "${PROJECT_SOURCE_DIR}/resources/logo.svg"
+          "${PROJECT_SOURCE_DIR}/resources/onboarding-rail-light.svg"
+          "${PROJECT_SOURCE_DIR}/resources/onboarding-rail-dark.svg")
 # The icons: Phosphor Icons 2.1.2 (MIT), Regular and Fill (see Phosphor.h).
 qt_add_resources(WinShun "phosphor"
     PREFIX /fonts

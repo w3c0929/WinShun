@@ -269,6 +269,21 @@ DialogBar::DialogBar(SearchEngine* engine, History* history, Favorites* favorite
         if (m_inFront)
             follow();
     });
+    m_flashTimer.setSingleShot(true);
+    m_flashTimer.setInterval(1800ms);
+    connect(&m_flashTimer, &QTimer::timeout, this, [this] {
+        if (m_statusFlash.isEmpty())
+            return;
+        m_statusFlash.clear();
+        emit statusFlashChanged();
+    });
+}
+
+void DialogBar::flash(const QString& message)
+{
+    m_statusFlash = message;
+    m_flashTimer.start();
+    emit statusFlashChanged();
 }
 
 DialogBar::~DialogBar()
@@ -373,11 +388,13 @@ void DialogBar::setDialog(HWND dialog)
         const filedialog::Kind kind = filedialog::kind(dialog);
         const bool opens = filedialog::opensFiles(dialog, kind);
         const bool elevated = integrity::higherThanOurs(dialog);
-        const bool copyOnly = elevated && !m_elevatedNavAvailable;
-        if (kind != m_kind || opens != m_opens || copyOnly != m_copyOnly || elevated != m_elevated) {
+        const bool tessoa = filedialog::isTessoaPicker(dialog);
+        const bool copyOnly = tessoa || (elevated && !m_elevatedNavAvailable);
+        if (kind != m_kind || opens != m_opens || copyOnly != m_copyOnly || elevated != m_elevated || tessoa != m_tessoa) {
             m_kind = kind;
             m_opens = opens;
             m_copyOnly = copyOnly;
+            m_tessoa = tessoa;
             m_elevated = elevated;
             emit dialogKindChanged();
         }
@@ -673,9 +690,25 @@ void DialogBar::setSuggestOnFocus(bool on)
         showSuggestions(); // the list as it is to be: up, or gone
 }
 
+void DialogBar::setSuggestionSources(SuggestionSources sources)
+{
+    if (m_suggestSources == sources)
+        return;
+    const bool newlyEnabled = (sources.clipboard && !m_suggestSources.clipboard)
+        || (sources.favorites && !m_suggestSources.favorites)
+        || (sources.recent && !m_suggestSources.recent);
+    m_suggestSources = sources;
+    if (!m_suggestSources.any())
+        m_suggestionsAsked = false;
+    if (newlyEnabled && m_dialog)
+        lookAround(); // scan sources skipped while disabled
+    if (m_window && m_window->isActive() && m_query.trimmed().isEmpty())
+        showSuggestions();
+}
+
 bool DialogBar::askSuggestions()
 {
-    if (suggesting() || !m_query.trimmed().isEmpty())
+    if (!dialogbar::canAskSuggestions(m_suggestSources, m_suggestOnFocus, m_suggestionsAsked, m_query))
         return false;
     m_suggestionsAsked = true;
     showSuggestions();
@@ -731,6 +764,7 @@ void DialogBar::search()
     request.kindOrder = m_kind == filedialog::Kind::Save ? KindOrder::FoldersFirst : KindOrder::FilesFirst;
     request.excludedTypes = m_excludedTypes;
     request.excludedFileNames = m_excludedFileNames;
+    request.fuzzyMode = m_fuzzyMode;
     if (m_recordHistory)
         request.history = m_history->items();
     if (m_favorites)
@@ -766,7 +800,8 @@ void DialogBar::onResults(quint64 id, const SearchResults& results)
     QStringList tags;
     for (const SearchResult& r : std::as_const(rows))
         tags.append(r.favorite ? favoriteTag(r.favoriteKeyword) : QString());
-    setRows(std::move(rows), std::move(tags), parseQuery(m_query).highlights);
+    const ParsedQuery parsed = parseQuery(m_query);
+    setRows(std::move(rows), std::move(tags), parsed.highlights, false, parsed.fuzzyHighlights);
 }
 
 void DialogBar::browse(const pathtext::TypedPath& typed)
@@ -792,7 +827,8 @@ void DialogBar::browse(const pathtext::TypedPath& typed)
     });
 }
 
-void DialogBar::setRows(SearchResults rows, QStringList tags, const QStringList& highlights, bool refresh)
+void DialogBar::setRows(SearchResults rows, QStringList tags, const QStringList& highlights, bool refresh,
+    const QStringList& fuzzyHighlights)
 {
     m_listPending = false;
     // Then a key pressed for these rows: once the view has them (resultsReplaced).
@@ -818,7 +854,7 @@ void DialogBar::setRows(SearchResults rows, QStringList tags, const QStringList&
         return;
     m_nothingFound = rows.isEmpty();
     m_tags = std::move(tags);
-    m_results.assign(std::move(rows), highlights);
+    m_results.assign(std::move(rows), highlights, fuzzyHighlights);
     emit resultsReplaced();
     if (m_window && m_window->isVisible())
         place();
@@ -827,36 +863,28 @@ void DialogBar::setRows(SearchResults rows, QStringList tags, const QStringList&
 void DialogBar::showSuggestions(bool refresh)
 {
     m_requestId = 0;
-    if (!suggesting()) { // until something is typed, or ↓ asks for them (GitHub #417)
+    if (!suggesting()) { // until something is typed, or ↓ asks for them (GitHub #417, #438)
         setRows({}, {}, {}, refresh);
         return;
     }
-    SearchResults rows;
-    QStringList tags;
-    QStringList seen;
-    const auto add = [&](const QString& path, bool isDir, const QString& tag, bool recent = false, const QString& name = {}) {
-        if (seen.contains(path, Qt::CaseInsensitive))
-            return;
-        seen.append(path);
-        SearchResult row;
-        row.path = path;
-        row.name = name.isEmpty() ? nameOf(path) : name;
-        row.isDir = isDir;
-        row.recent = recent;
-        rows.append(row);
-        tags.append(tag);
-    };
-    for (qsizetype i = 0; i < std::min<qsizetype>(m_explorer.size(), kMaxExplorer); ++i)
-        add(m_explorer[i], true, managerName(m_explorerKinds.value(i)));
-    if (!m_clipboard.isEmpty())
-        add(m_clipboard, m_clipboardIsDir, tr("剪贴板"));
-    for (const SearchResult& f : std::as_const(m_favoritesThere)) {
-        if (!foldersOnly() || f.isDir)
-            add(f.path, f.isDir, favoriteTag(f.favoriteKeyword), false, f.name); // as its user named it
-    }
-    for (const QString& folder : std::as_const(m_recent))
-        add(folder, true, tr("最近"), true);
-    setRows(std::move(rows), std::move(tags), {}, refresh);
+    dialogbar::SuggestionInputs inputs;
+    inputs.explorer = m_explorer;
+    inputs.explorerTags.reserve(m_explorer.size());
+    for (qsizetype i = 0; i < m_explorer.size(); ++i)
+        inputs.explorerTags.append(managerName(m_explorerKinds.value(i)));
+    inputs.clipboard = m_clipboard;
+    inputs.clipboardIsDir = m_clipboardIsDir;
+    inputs.clipboardTag = tr("剪贴板");
+    inputs.favorites = m_favoritesThere;
+    inputs.favoriteTags.reserve(m_favoritesThere.size());
+    for (const SearchResult& f : std::as_const(m_favoritesThere))
+        inputs.favoriteTags.append(favoriteTag(f.favoriteKeyword));
+    inputs.recent = m_recent;
+    inputs.recentTag = tr("最近");
+    inputs.foldersOnly = foldersOnly();
+    inputs.maxExplorer = kMaxExplorer;
+    dialogbar::SuggestionList list = dialogbar::buildSuggestions(inputs, m_suggestSources, nameOf);
+    setRows(std::move(list.rows), std::move(list.tags), {}, refresh);
 }
 
 void DialogBar::lookAround()
@@ -874,42 +902,48 @@ void DialogBar::lookAround()
     const HWND dialog = m_dialog;
     const bool foldersOnly = this->foldersOnly();
     const bool recordHistory = m_recordHistory;
-    QStringList history = m_recordHistory ? m_history->items() : QStringList();
-    FavoriteList favorites = m_favorites ? m_favorites->items() : FavoriteList();
-    m_worker.post([this, lookup, dialog, foldersOnly, recordHistory, history = std::move(history),
+    const SuggestionSources sources = m_suggestSources;
+    QStringList history = recordHistory && sources.recent ? m_history->items() : QStringList();
+    FavoriteList favorites = m_favorites && sources.favorites ? m_favorites->items() : FavoriteList();
+    m_worker.post([this, lookup, dialog, foldersOnly, recordHistory, sources, history = std::move(history),
                       favorites = std::move(favorites)] {
         if (lookup != m_lookups)
             return; // another is on its way
         Found found;
+        // Open file manager folders also power the quick-jump button and auto-jump prompt.
         for (const filemanager::Folder& folder : filemanager::openFolders()) {
             found.explorer.append(QString::fromStdWString(folder.path));
             found.explorerKinds.append(folder.shownIn);
         }
         const LocalDrives drives;
-        if (recordHistory)
+        if (recordHistory && sources.recent)
             found.recent = recentfolders::recent(history, kMaxRecent);
-        for (const Favorite& f : favorites) { // one on a network drive or share is kept unasked
-            if (!f.isFileOrFolder() || (foldersOnly && f.kind != Favorite::Kind::Folder))
-                continue;
-            const bool isDir = f.kind == Favorite::Kind::Folder;
-            if (drives.contain(f.path)) {
-                const DWORD attributes = attributesOf(f.path);
-                if (attributes == INVALID_FILE_ATTRIBUTES || bool(attributes & FILE_ATTRIBUTE_DIRECTORY) != isDir)
+        if (sources.favorites) {
+            for (const Favorite& f : favorites) { // one on a network drive or share is kept unasked
+                if (!f.isFileOrFolder() || (foldersOnly && f.kind != Favorite::Kind::Folder))
                     continue;
+                const bool isDir = f.kind == Favorite::Kind::Folder;
+                if (drives.contain(f.path)) {
+                    const DWORD attributes = attributesOf(f.path);
+                    if (attributes == INVALID_FILE_ATTRIBUTES || bool(attributes & FILE_ATTRIBUTE_DIRECTORY) != isDir)
+                        continue;
+                }
+                SearchResult r;
+                r.path = f.path;
+                r.name = f.name;
+                r.isDir = isDir;
+                r.favorite = true;
+                r.favoriteKeyword = f.keyword;
+                found.favorites.append(r);
             }
-            SearchResult r;
-            r.path = f.path;
-            r.name = f.name;
-            r.isDir = isDir;
-            r.favorite = true;
-            r.favoriteKeyword = f.keyword;
-            found.favorites.append(r);
         }
-        const QString path = clipboardPath();
-        const DWORD attributes = drives.contain(path) ? attributesOf(path) : INVALID_FILE_ATTRIBUTES;
-        if (attributes != INVALID_FILE_ATTRIBUTES) {
-            found.clipboardIsDir = foldersOnly || (attributes & FILE_ATTRIBUTE_DIRECTORY);
-            found.clipboard = (attributes & FILE_ATTRIBUTE_DIRECTORY) || !foldersOnly ? path : parentOf(path);
+        if (sources.clipboard) {
+            const QString path = clipboardPath();
+            const DWORD attributes = drives.contain(path) ? attributesOf(path) : INVALID_FILE_ATTRIBUTES;
+            if (attributes != INVALID_FILE_ATTRIBUTES) {
+                found.clipboardIsDir = foldersOnly || (attributes & FILE_ATTRIBUTE_DIRECTORY);
+                found.clipboard = (attributes & FILE_ATTRIBUTE_DIRECTORY) || !foldersOnly ? path : parentOf(path);
+            }
         }
         if (dialog)
             found.extensions = pathtext::filterExtensions(QString::fromStdWString(filedialog::fileType(dialog)));
@@ -962,8 +996,9 @@ void DialogBar::setElevatedNavAvailable(bool on)
     if (on == m_elevatedNavAvailable)
         return;
     m_elevatedNavAvailable = on;
-    // An elevated dialog is copy-only only when the service cannot drive it.
-    const bool copyOnly = m_elevated && !on;
+    // An elevated dialog is copy-only only when the service cannot drive it;
+    // Tessoa's own window is, whatever the service can do.
+    const bool copyOnly = m_tessoa || (m_elevated && !on);
     const bool copyOnlyChanged = copyOnly != m_copyOnly;
     m_copyOnly = copyOnly;
     emit dialogKindChanged(); // copyOnly / elevatedJump / canOpen for the current dialog
@@ -1108,8 +1143,10 @@ QVariantList DialogBar::menuItems(int row) const
             items.append(entry(ToggleFolderOnly, tr("搜索整个电脑"), u"Ctrl+Shift+D"_s, u"\uE721"_s)); // Search
         else if (!current.isEmpty())
             items.append(entry(ToggleFolderOnly, tr("只搜“%1”里面").arg(nameOf(current)), u"Ctrl+Shift+D"_s, u"\uE8B7"_s)); // Folder
-        items.append(entry(ToggleSuggestions, m_suggestOnFocus ? tr("点进来时不列出常用位置") : tr("点进来就列出常用位置"), {},
-            u"\uE81C"_s)); // History
+        if (m_suggestSources.any()) {
+            items.append(entry(ToggleSuggestions, m_suggestOnFocus ? tr("点进来时不列出常用位置") : tr("点进来就列出常用位置"), {},
+                u"\uE81C"_s)); // History
+        }
         items.append(separator);
         items.append(entry(HideHere, tr("这次不显示"), {}, u"\uE711"_s)); // Cancel
         if (!m_dialogApp.isEmpty())

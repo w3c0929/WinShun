@@ -27,6 +27,7 @@ Item {
     readonly property int pad: 4 // card edge to the controls
     readonly property int controlHeight: 32
     readonly property int cellWidth: 28 // a swatch, a size dot, a fill or toggle button
+    readonly property int compactCell: 24 // compact number format and stepper cells (whole device px at 125%–200%)
     readonly property int swatchSize: 20
     readonly property int checkSize: 12 // the tick on the chosen swatch
     readonly property var dots: [4, 8, 12] // the three widths' dots, thin to thick
@@ -37,7 +38,7 @@ Item {
     readonly property int stepGlyph: 12 // the start value's minus and plus
     readonly property int layerGlyph: 14 // up, down, delete
     readonly property int boldGlyph: 16
-    readonly property int startWidth: 28 // the start value's number
+    readonly property int startWidth: 24 // the start value's number
     readonly property int textPad: 8 // each side of a word button's text
     readonly property int separatorWidth: 12 // a 1 device px line in the middle
     readonly property int separatorHeight: 20
@@ -46,8 +47,9 @@ Item {
 
     // ---- what it shows ----
     readonly property var p: annot ? annot.panel : ({})
-    readonly property int kind: p.kind !== undefined ? p.kind : -1 // AnnotationStyles: Rect 0 … Redact 8
+    readonly property int kind: p.kind !== undefined ? p.kind : -1 // AnnotationStyles: Rect 0 … Redact 8, Spotlight 9
     readonly property bool redact: kind === 8
+    readonly property bool spotlight: kind === 9
     readonly property bool showColors: p.color !== undefined && (!redact || p.mode === "solid")
     readonly property bool showWidths: p.widths !== undefined
     readonly property bool showFill: p.fill !== undefined
@@ -62,6 +64,7 @@ Item {
     readonly property bool showCells: p.cells !== undefined && p.mode !== "solid" && p.mode !== "smooth"
     // The redaction's shape (box, or along a stroke) is the tool's, so it is not offered for a selected object.
     readonly property bool showShape: redact && p.shape !== undefined && !showObject
+    readonly property bool showSpotlight: spotlight && p.spotlightShape !== undefined
     readonly property bool showNumber: p.start !== undefined
     readonly property bool showObject: p.selected === true
     readonly property bool inPalette: {
@@ -73,7 +76,7 @@ Item {
         return false
     }
 
-    property PanelButton tipItem: null
+    property var tipItem: null
 
     onStrokeOnChanged: if (!strokeOn) strokeMode = false
     onKindChanged: strokeMode = false
@@ -192,7 +195,44 @@ Item {
             }
         }
 
-        Separator { visible: panel.redact && panel.showColors }
+        Row { // Spotlight: rectangle or ellipse cutout, plus veil opacity (100 % = opaque discontinuous mask)
+            visible: panel.showSpotlight
+            Repeater {
+                model: [["rect", qsTr("矩形"), qsTr("矩形聚光灯，可多次框选实现不连续高亮")],
+                    ["ellipse", qsTr("圆形"), qsTr("圆形/椭圆聚光灯，按住 Shift 画正圆")]]
+                delegate: WordButton {
+                    required property var modelData
+                    words: modelData[1]
+                    tip: modelData[2]
+                    checked: panel.p.spotlightShape === modelData[0]
+                    onClicked: panel.change({spotlightShape: modelData[0]})
+                }
+            }
+        }
+        Separator { visible: panel.showSpotlight }
+        Row {
+            visible: panel.showSpotlight
+            Repeater {
+                model: panel.p.spotlightOpacities !== undefined ? panel.p.spotlightOpacities : []
+                delegate: WordButton {
+                    required property int modelData
+                    words: modelData + "%"
+                    checked: panel.p.spotlightOpacity === modelData
+                    tip: modelData === 100
+                        ? qsTr("遮罩不透明度 100%（全遮盖，只显示框选区域，支持多选区不连续截图）")
+                        : qsTr("遮罩不透明度 %1%").arg(modelData)
+                    tipKeys: "[  ]"
+                    onClicked: panel.change({spotlightOpacity: modelData})
+                }
+            }
+            ValueLabel {
+                value: panel.p.spotlightOpacity !== undefined ? panel.p.spotlightOpacity : 0
+                presets: panel.p.spotlightOpacities !== undefined ? panel.p.spotlightOpacities : []
+                suffix: "%"
+            }
+        }
+
+        Separator { visible: (panel.redact || panel.showSpotlight) && panel.showColors }
         WordButton { // the outline's colour is the automatic one: opposite the text's
             visible: panel.showColors && panel.strokeColors
             words: qsTr("自动")
@@ -457,48 +497,6 @@ Item {
         }
 
         Separator { visible: panel.showNumber }
-        Row { // numbers: the group's first number, a new group
-            visible: panel.showNumber
-            WordLabel { words: qsTr("起始") }
-            PanelButton {
-                enabled: panel.p.start !== undefined && panel.p.start > 0
-                tip: qsTr("起始值减 1")
-                onClicked: panel.annot.setStart(panel.p.start - 1)
-
-                Glyph {
-                    anchors.centerIn: parent
-                    anchors.verticalCenterOffset: parent.markOffsetY
-                    glyph: String.fromCharCode(0xE738) // Remove
-                    size: panel.stepGlyph
-                    color: parent.foreground
-                }
-            }
-            WordLabel {
-                words: panel.p.start !== undefined ? String(panel.p.start) : ""
-                minWidth: panel.startWidth
-                strong: true
-            }
-            PanelButton {
-                enabled: panel.p.start !== undefined && panel.p.start < 99999
-                tip: qsTr("起始值加 1")
-                onClicked: panel.annot.setStart(panel.p.start + 1)
-
-                Glyph {
-                    anchors.centerIn: parent
-                    anchors.verticalCenterOffset: parent.markOffsetY
-                    glyph: String.fromCharCode(0xE710) // Add
-                    size: panel.stepGlyph
-                    color: parent.foreground
-                }
-            }
-            WordButton {
-                words: qsTr("另起一组")
-                tip: qsTr("之后的序号从 1 重新数")
-                onClicked: panel.annot.newSeries()
-            }
-        }
-
-        Separator { visible: panel.showNumber }
         Row { // how this group writes its numbers
             visible: panel.showNumber
             Repeater {
@@ -507,11 +505,89 @@ Item {
                     ["circled", "①", qsTr("序号写成 ① ② ③（圈里的数字）")]]
                 delegate: WordButton {
                     required property var modelData
+                    width: panel.compactCell
                     words: modelData[1]
                     checked: panel.p.format === modelData[0]
                     tip: modelData[2]
                     onClicked: panel.change({format: modelData[0]})
                 }
+            }
+        }
+
+        Separator { visible: panel.showNumber }
+        Row { // numbers: the group's first number, a new group
+            visible: panel.showNumber
+            PanelButton {
+                id: startMinus
+                width: panel.compactCell
+                enabled: panel.p.start !== undefined && panel.p.start > 0
+                tip: qsTr("起始值减 1")
+                onClicked: panel.annot.setStart(panel.p.start - 1)
+
+                Glyph {
+                    anchors.centerIn: parent
+                    anchors.verticalCenterOffset: startMinus.markOffsetY
+                    iconName: "minus"
+                    size: panel.stepGlyph
+                    color: startMinus.foreground
+                }
+            }
+            Item {
+                id: startValue
+                property string tip: qsTr("当前组起始值（滚轮或点两侧增减）")
+                property string tipKeys: ""
+                width: Math.max(panel.startWidth, Math.ceil((startText.implicitWidth + 8) / 4) * 4)
+                height: panel.controlHeight
+
+                Text {
+                    id: startText
+                    anchors.centerIn: parent
+                    text: panel.p.start !== undefined ? String(panel.p.start) : ""
+                    color: Theme.text
+                    font.pixelSize: Theme.fontCaption
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    acceptedButtons: Qt.NoButton
+                    onContainsMouseChanged: {
+                        if (containsMouse)
+                            panel.tipItem = startValue
+                        else if (panel.tipItem === startValue)
+                            panel.tipItem = null
+                    }
+                    onWheel: (wheel) => {
+                        if (panel.p.start === undefined || !panel.annot)
+                            return
+                        const step = wheel.angleDelta.y > 0 ? 1 : wheel.angleDelta.y < 0 ? -1 : 0
+                        if (step !== 0) {
+                            const next = Math.max(0, Math.min(99999, panel.p.start + step))
+                            if (next !== panel.p.start)
+                                panel.annot.setStart(next)
+                        }
+                        wheel.accepted = true
+                    }
+                }
+            }
+            PanelButton {
+                id: startPlus
+                width: panel.compactCell
+                enabled: panel.p.start !== undefined && panel.p.start < 99999
+                tip: qsTr("起始值加 1")
+                onClicked: panel.annot.setStart(panel.p.start + 1)
+
+                Glyph {
+                    anchors.centerIn: parent
+                    anchors.verticalCenterOffset: startPlus.markOffsetY
+                    iconName: "plus"
+                    size: panel.stepGlyph
+                    color: startPlus.foreground
+                }
+            }
+            WordButton {
+                words: qsTr("新组")
+                tip: qsTr("另起一组：之后的序号从 1 重新数")
+                onClicked: panel.annot.newSeries()
             }
         }
 
@@ -530,6 +606,7 @@ Item {
             visible: panel.showObject
             PanelButton {
                 id: raiseButton
+                visible: !panel.spotlight
                 enabled: panel.p.canRaise === true
                 tip: qsTr("上移一层")
                 tipKeys: "Ctrl+]"
@@ -545,6 +622,7 @@ Item {
             }
             PanelButton {
                 id: lowerButton
+                visible: !panel.spotlight
                 enabled: panel.p.canLower === true
                 tip: qsTr("下移一层")
                 tipKeys: "Ctrl+["
@@ -690,9 +768,10 @@ Item {
     component ValueLabel: WordLabel {
         property int value
         property var presets: []
+        property string suffix: ""
 
         visible: value > 0 && presets.indexOf(value) < 0
-        words: String(value)
+        words: String(value) + suffix
         strong: true
     }
 

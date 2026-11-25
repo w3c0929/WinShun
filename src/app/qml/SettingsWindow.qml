@@ -91,7 +91,8 @@ Window {
             holdKey: window.editor.clipboardHotkey,
             captureKeys: window.editor.screenshotHotkeys.join(" / "),
             folderTyping: true,
-            intoField: false
+            intoField: false,
+            plainByDefault: window.editor.clipboardPlainByDefault
         }
         const sections = []
         for (const where of ["global", "launcher", "clipboard"]) {
@@ -140,7 +141,10 @@ Window {
     }
     function closeWebForm() {
         webEditing = -2
-        const card = pageItem(pluginsPage)?.parts.pluginsSection.cardOf("winshun.web") // the form opens from that page
+        const parts = pageItem(pluginsPage)?.parts
+        const card = currentTab === 1
+            ? parts?.pluginGallerySection?.cardOf("winshun.web")
+            : parts?.pluginsSection?.cardOf("winshun.web") // the form opens from either 插件 tab
         const button = webReturnFocus || card?.webOptions?.addButton
         if (button && button.visible)
             button.forceActiveFocus()
@@ -173,8 +177,9 @@ Window {
     readonly property bool searching: settingsSearch.active
     readonly property bool modalOpen: updateDialog.open || readmeDialog.open || notesDialog.open
                                       || pluginDialog.open || donateDialog.open || webDialog.active
-    readonly property bool pluginDetailActive: !searching && currentPage === pluginsPage && currentTab === 0
-                                               && (pluginsSlot.item?.parts.pluginsSection.detailOpen ?? false)
+    readonly property bool pluginDetailActive: !searching && currentPage === pluginsPage
+                                               && ((currentTab === 0 && (pluginsSlot.item?.parts.pluginsSection.detailOpen ?? false))
+                                                   || (currentTab === 1 && (pluginsSlot.item?.parts.pluginGallerySection.detailOpen ?? false)))
     readonly property bool canNavigateBack: navHistory.canBack || searching
     readonly property bool canNavigateForward: navHistory.canForward
     readonly property string backTargetLabel: searching ? placeLabel(navHistory.currentEntry)
@@ -259,6 +264,7 @@ Window {
         webEditing = -2
         webReturnFocus = null
         closePopups()
+        uiSizeToast.dismiss()
         editor.plugins.gallery.filter = ""
         editor.plugins.gallery.updatesOnly = false
         editor.forgetMessages()
@@ -478,7 +484,8 @@ Window {
     EdgeScrollGate {
         id: edgeGate
         objectName: "settingsEdgeScrollGate"
-        enabled: window.visible && !window.searching && !window.modalOpen
+        sensitivity: window.editor.settingsEdgeScroll
+        enabled: window.visible && window.editor.settingsEdgeScroll !== "off" && !window.searching && !window.modalOpen
                  && !window.editor.recordingHotkey && !window.pluginDetailActive
         canPrevious: window.adjacentView(-1) !== null
         canNext: window.adjacentView(1) !== null
@@ -494,6 +501,11 @@ Window {
         }
         onTriggered: (dir) => window.stepAdjacentView(dir)
     }
+    // Subtle elastic pull on the scrolled content while pushing past a boundary;
+    // strictly 0 at rest so ScrollPixelAlignment keeps resting text razor-sharp.
+    readonly property real edgePullY: edgeGate.direction !== 0
+                                      ? -edgeGate.direction * Theme.snap(7 * (1 - Math.pow(1 - edgeGate.progress, 2)), window.dpr)
+                                      : 0
 
     Connections {
         target: window.frame
@@ -507,10 +519,17 @@ Window {
     }
 
     function activePluginDetailId() {
-        if (searching || currentPage !== pluginsPage || currentTab !== 0)
+        if (searching || currentPage !== pluginsPage)
             return ""
-        const section = pageItem(pluginsPage)?.parts.pluginsSection
-        return section && section.detailOpen && section.expandedIds.length > 0 ? section.expandedIds[0] : ""
+        if (currentTab === 0) {
+            const section = pageItem(pluginsPage)?.parts.pluginsSection
+            return section && section.detailOpen && section.expandedIds.length > 0 ? section.expandedIds[0] : ""
+        }
+        if (currentTab === 1) {
+            const section = pageItem(pluginsPage)?.parts.pluginGallerySection
+            return section && section.detailOpen ? section.detailPluginId : ""
+        }
+        return ""
     }
 
     function recordPlace(scrollY) {
@@ -535,7 +554,7 @@ Window {
             return ""
         const title = pages[index].title
         const pid = entry.pluginId ?? ""
-        if (index === pluginsPage && (entry.tab ?? 0) === 0 && pid.length > 0) {
+        if (index === pluginsPage && ((entry.tab ?? 0) === 0 || (entry.tab ?? 0) === 1) && pid.length > 0) {
             const card = pageItem(pluginsPage)?.parts.pluginsSection.cardOf(pid)
             return title + " › " + (card?.name ?? pid)
         }
@@ -636,6 +655,15 @@ Window {
                         section.open(targetPlugin)
                     else
                         section.expandedIds = []
+                }
+            } else if (index === pluginsPage && currentTab === 1) {
+                const section = pageItem(pluginsPage)?.parts.pluginGallerySection
+                if (section) {
+                    const targetPlugin = entry.pluginId ?? ""
+                    if (targetPlugin.length > 0 && window.editor.plugins.hasPlugin(targetPlugin))
+                        section.open(targetPlugin)
+                    else
+                        section.closeDetail()
                 }
             }
             if (index === gleaningPage) {
@@ -1187,6 +1215,29 @@ Window {
         onActivated: window.cycleTab(-1)
     }
 
+    function stepUiSize(delta) {
+        const result = window.editor.stepUiSize(delta)
+        uiSizeToast.present(result.message, result.level, result.count)
+    }
+    Shortcut { // Ctrl++ / Ctrl+=: larger interface size
+        sequences: SearchKeys.zoomInSequences
+        enabled: !window.editor.recordingHotkey && !window.modalOpen
+        autoRepeat: false
+        onActivated: window.stepUiSize(1)
+    }
+    Shortcut { // Ctrl+-: smaller interface size
+        sequences: SearchKeys.zoomOutSequences
+        enabled: !window.editor.recordingHotkey && !window.modalOpen
+        autoRepeat: false
+        onActivated: window.stepUiSize(-1)
+    }
+    Shortcut { // Ctrl+0: restore default interface size
+        sequences: SearchKeys.zoomResetSequences
+        enabled: !window.editor.recordingHotkey && !window.modalOpen
+        autoRepeat: false
+        onActivated: window.stepUiSize(0)
+    }
+
     function showUpdateDialog() { updateDialog.show() } // App::showUpdate
     function showClipboardPage() { showPage(clipboardPage) } // App::showClipboardSettings
     function showWebPage() { showPluginPage("winshun.web") } // App::showWebSettings
@@ -1285,39 +1336,47 @@ Window {
                 edgeGate.noteSwitched(0)
         }
     }
-    // 已安装的插件: a plugin opened in place of the grid shows from the top;
+    // 已安装的插件 / 插件库: a plugin opened in place of the grid shows from the top;
     // back, the grid is where it was left.
     property real pluginGridY: 0
-    function pluginDetailToggled(open) {
+    property real galleryGridY: 0
+    function pluginDetailToggled(open, tab) {
         if (navHistory.restoring)
             return
+        const targetTab = tab ?? 0
         const previousY = flick.contentY
         flick.stopScrolling()
         edgeGate.cancel()
         if (open) {
-            pluginGridY = previousY
+            if (targetTab === 1)
+                galleryGridY = previousY
+            else
+                pluginGridY = previousY
             flick.contentY = 0
-            if (visible && !searching && currentPage === pluginsPage && currentTab === 0) {
-                navHistory.updateScroll(pluginGridY)
+            if (visible && !searching && currentPage === pluginsPage && currentTab === targetTab) {
+                navHistory.updateScroll(previousY)
                 recordPlace(0)
                 edgeGate.noteSwitched(0)
             }
             return
         }
-        if (visible && !searching && currentPage === pluginsPage && currentTab === 0) {
+        const savedY = targetTab === 1 ? galleryGridY : pluginGridY
+        if (visible && !searching && currentPage === pluginsPage && currentTab === targetTab) {
             navHistory.updateScroll(previousY)
-            recordPlace(pluginGridY)
+            recordPlace(savedY)
             edgeGate.noteSwitched(0)
         }
         layoutNow()
-        Qt.callLater(() => flick.contentY = Math.max(0, Math.min(window.pluginGridY, flick.contentHeight - flick.height)))
+        Qt.callLater(() => flick.contentY = Math.max(0, Math.min(savedY, flick.contentHeight - flick.height)))
     }
     function showPluginLibrary(pluginId) {
+        pageItem(pluginsPage)?.parts.pluginGallerySection?.closeDetail()
         window.editor.plugins.gallery.updatesOnly = false
         window.editor.plugins.gallery.filter = pluginId
         showPage(pluginsPage, 1)
     }
     function showPluginUpdates() {
+        pageItem(pluginsPage)?.parts.pluginGallerySection?.closeDetail()
         window.editor.plugins.gallery.filter = ""
         window.editor.plugins.gallery.updatesOnly = true
         showPage(pluginsPage, 1)
@@ -1573,7 +1632,7 @@ Window {
     Item { // category list
         id: nav
         y: titleBar.height
-        width: 248
+        width: [236, 248, 268][Theme.step]
         height: parent.height - y
         // The window's parts each one element for UI Automation, so that a
         // client (screen reader, input method, assistant) finds a handful
@@ -1722,7 +1781,7 @@ Window {
                 anchors.rightMargin: 12
                 anchors.verticalCenter: parent.verticalCenter
                 width: Math.max(height, badgeText.implicitWidth + 10)
-                height: 18
+                height: [18, 18, 22][Theme.step]
                 radius: Theme.pillRadius(height)
                 color: Theme.accentFill
                 Accessible.role: Accessible.Button
@@ -1786,7 +1845,7 @@ Window {
                 Column {
                     id: navList
 
-                    readonly property int itemHeight: 40
+                    readonly property int itemHeight: [36, 40, 44][Theme.step]
 
                     x: 12
                     y: 8
@@ -1904,6 +1963,7 @@ Window {
         anchors.bottom: parent.bottom
         editor: window.editor
         updater: window.updater
+        edgePullY: window.warm ? window.edgePullY : 0
         onContentYChanged: {
             if (gleaningWheelScroll.writing || !visible)
                 return
@@ -2038,12 +2098,21 @@ Window {
             // shader's rounding would go either way with float error from one
             // scroll position to the next. A hair past the half, it always
             // goes the same way.
-            transform: ScrollPixelAlignment {
-                view: flick
-                viewY: flick.y
-                itemY: page.y
-                pixelBias: 0.02
-            }
+            transform: [
+                ScrollPixelAlignment {
+                    view: flick
+                    viewY: flick.y
+                    itemY: page.y
+                    pixelBias: 0.02
+                },
+                Translate {
+                    y: !window.warm ? window.edgePullY : 0
+                    Behavior on y {
+                        enabled: SystemTheme.animations
+                        NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+                    }
+                }
+            ]
 
             Column { // nothing fits the words typed
                 id: noResults
@@ -3043,6 +3112,7 @@ Window {
                 index: window.appearancePage
                 content: Component { SettingsPage {
                     host: settingsContext
+                    parts: ({ uiSizeRow: uiSizeRow })
             // <page appearance>
             SettingsSection {
                 page: window.appearancePage
@@ -3279,9 +3349,10 @@ Window {
                 }
 
                 SettingRow {
+                    id: uiSizeRow
                     title: qsTr("界面大小")
-                    keywords: qsTr("缩放;大小;字号;字体大小;行高;密集;紧凑;宽松;一行;小字;scale;size;zoom;font;dense;compact").split(";")
-                    description: qsTr("搜索框、剪贴板和对话框旁搜索框的文字和行高；设置窗口不变。密集是每条结果一行的小字")
+                    keywords: qsTr("缩放;大小;字号;字体大小;行高;密集;紧凑;宽松;一行;小字;Ctrl++;Ctrl+-;Ctrl+0;scale;size;zoom;font;dense;compact").split(";")
+                    description: qsTr("搜索框、搜索面板、设置窗口、剪贴板和对话框旁搜索框的文字与行高；也可按 Ctrl++ / Ctrl+- / Ctrl+0 快速切换。密集是每条结果一行的小字")
 
                     ScopeTabs {
                         readonly property var sizes: ["dense", "compact", "standard", "roomy"]
@@ -3364,6 +3435,33 @@ Window {
                     }
                 }
 
+                SettingRow { // GitHub #445
+                    id: settingsEdgeScrollRow
+                    objectName: "settingsEdgeScrollRow"
+                    readonly property var modes: ["off", "light", "standard", "steady"]
+                    title: qsTr("设置页滚轮触边翻页")
+                    keywords: qsTr("翻页;自动翻页;滚轮;触底;触顶;切页;灵敏度;误触;后退;前进;edge;scroll;page;sensitivity").split(";")
+                    description: {
+                        switch (window.editor.settingsEdgeScroll) {
+                        case "off":
+                            return qsTr("滚到顶部或底部时停在本页，不自动切到上一页或下一页")
+                        case "light":
+                            return qsTr("滚到头略停后继续滚约 2 格即可切页，反应更轻快")
+                        case "steady":
+                            return qsTr("滚到头停顿更久并继续滚约 5 格才切页，最大限度防误触")
+                        default:
+                            return qsTr("滚到头停顿后继续滚约 3 格切页，快速连滚不会误触发")
+                        }
+                    }
+
+                    ScopeTabs {
+                        objectName: "settingsEdgeScrollTabs"
+                        labels: [qsTr("关闭"), qsTr("轻快"), qsTr("标准"), qsTr("稳重")]
+                        current: Math.max(0, settingsEdgeScrollRow.modes.indexOf(window.editor.settingsEdgeScroll))
+                        onActivated: (index) => window.editor.settingsEdgeScroll = settingsEdgeScrollRow.modes[index]
+                    }
+                }
+
                 SettingRow { // GitHub #365, #377
                     title: qsTr("弹出动画")
                     description: qsTr("搜索框和剪贴板打开时轻轻滑入并淡入，关闭时淡出。关掉后立即出现、立即消失")
@@ -3378,17 +3476,48 @@ Window {
                     }
                 }
 
-                SettingRow { // GitHub #368
+                SettingRow { // GitHub #368, #440
+                    id: hoverTipsRow
                     title: qsTr("悬停提示")
-                    description: qsTr("鼠标停在图标或按钮上时，弹出一行说明，比如类型条上各类型的扩展名。熟悉以后可以关掉，图标和功能不变")
+                    description: qsTr("鼠标停在按钮、图标或文件夹菜单上时弹出说明；开启后可在下方按类别细分")
                     tip: qsTr("关掉后，设置里带“i”的说明照常显示；名字太长被截断时，停在行上仍会显示完整名字")
                     keywords: qsTr("悬停;提示;气泡;工具提示;说明;遮挡;tooltip;hover;tip").split(";")
+                    unlocks: [hoverTipKindsRow]
                     ToggleSwitch {
                         objectName: "hoverTipsToggle"
                         dpr: window.dpr
                         checked: window.editor.hoverTips
                         Accessible.name: qsTr("悬停提示")
                         onToggled: (on) => window.editor.hoverTips = on
+                    }
+                }
+
+                SettingRow { // GitHub #440
+                    id: hoverTipKindsRow
+                    sub: true
+                    shown: window.editor.hoverTips
+                    stackControl: true
+                    title: qsTr("显示哪些悬停提示")
+                    description: qsTr("至少保留一项；未勾选的不再弹出。截断的完整名称和设置里的“i”说明不受影响")
+                    keywords: qsTr("悬停;提示;分类;界面;按钮;类型条;结果行;操作;剪贴板;文件夹菜单;路径;tooltip;hover;actions;paths").split(";")
+
+                    ScopeTabs {
+                        objectName: "hoverTipKindsTabs"
+                        multiSelect: true
+                        dpr: window.dpr
+                        labels: [qsTr("界面与按钮"), qsTr("结果行操作"), qsTr("文件夹菜单路径")]
+                        checkedIndices: {
+                            const list = []
+                            if (window.editor.hoverTipsInterface) list.push(0)
+                            if (window.editor.hoverTipsActions) list.push(1)
+                            if (window.editor.hoverTipsPaths) list.push(2)
+                            return list
+                        }
+                        onToggled: (index, on) => {
+                            if (index === 0) window.editor.hoverTipsInterface = on
+                            else if (index === 1) window.editor.hoverTipsActions = on
+                            else if (index === 2) window.editor.hoverTipsPaths = on
+                        }
                     }
                 }
 
@@ -4862,6 +4991,21 @@ Window {
                         onToggled: (on) => window.editor.regexMode = on
                     }
                 }
+
+                SettingRow {
+                    title: qsTr("模糊匹配（FZF）")
+                    keywords: qsTr("模糊;跳字;fzf;fuzzy;subsequence;缩写;匹配;关闭").split(";")
+                    description: qsTr("按字符顺序跳字查找（如 nsrch 找 NameSearch.cpp、vcode 找 Visual Studio Code）；与现有搜索语法独立，可随时关闭")
+                    tip: qsTr("无结果时：常规搜索完全不变，仅在无匹配时自动兜底（≥3 字符），零额外开销；始终开启：常规结果优先，模糊结果排后，搜索框旁显示 fz。关闭后仍可用 fz: 前缀按需触发（如 fz:rpt）")
+
+                    ScopeTabs {
+                        objectName: "fuzzyModeTabs"
+                        readonly property var modes: ["off", "fallback", "on"]
+                        labels: [qsTr("关闭"), qsTr("无结果时"), qsTr("始终开启")]
+                        current: Math.max(0, modes.indexOf(window.editor.fuzzyMode))
+                        onActivated: (index) => window.editor.fuzzyMode = modes[index]
+                    }
+                }
             }
 
             SettingsSection {
@@ -5076,7 +5220,7 @@ Window {
                 SettingRow {
                     title: qsTr("显示删除按钮")
                     keywords: qsTr("删除;垃圾桶;回收站;误删;按钮;delete;trash;recycle").split(";")
-                    description: qsTr("文件和文件夹的结果行末尾显示删除按钮（点两次，移到回收站）；关闭后可在右键菜单的“更多选项”里删除")
+                    description: qsTr("文件和文件夹的结果行末尾显示删除按钮（点两次，移到回收站）；关闭后仍可在右键菜单中移到回收站")
 
                     ToggleSwitch {
                         objectName: "rowDeleteButtonToggle"
@@ -5413,23 +5557,9 @@ Window {
                 }
 
                 SettingRow {
-                    id: resultNumberHintsRow
-                    sub: true
-                    shown: window.editor.numberKeys !== "off"
-                    title: qsTr("序号提示")
-                    description: qsTr("启动器、剪贴板和对话框搜索栏共用；隐藏提示不影响数字快捷键")
-                    keywords: qsTr("快捷键;数字键;图标;按住;显示;隐藏").split(";")
-
-                    ScopeTabs {
-                        labels: [qsTr("按住时显示"), qsTr("一直显示"), qsTr("不显示", "number hints")]
-                        current: Math.max(0, ["held", "always", "off"].indexOf(window.editor.numberHints))
-                        onActivated: (index) => window.editor.numberHints = ["held", "always", "off"][index]
-                    }
-                }
-
-                SettingRow {
                     id: letterJumpRow
                     title: qsTr("字母直达")
+                    unlocks: [letterJumpKeyRow, letterJumpKeysRow, resultNumberHintsRow]
                     description: qsTr("轻按一下下面选的键再松开，每一行前面出现一个字母，按字母直接打开这一行（剪贴板里是粘贴），第九行以后也有。搜索框里按 Shift+字母是选中这一行，它的按钮（打开所在位置、在终端中打开、复制、复制路径、删除）上再出现字母，按字母就是点那个按钮，删除要按两次；剪贴板和对话框旁的搜索栏里 Shift+字母是选中那一条，剪贴板里可以选几条一起粘贴。再按一下那个键或按 Esc 退出。启动器和剪贴板共用")
                     keywords: qsTr("快捷键;字母;单手;vim;vi;提示;跳转;直达;hint").split(";")
 
@@ -5441,12 +5571,13 @@ Window {
                 }
 
                 SettingRow {
+                    id: letterJumpKeyRow
                     sub: true
                     shown: window.editor.letterJump
                     title: qsTr("字母直达用的键")
                     description: window.editor.letterJumpKey === "shift"
                                  ? qsTr("搜索框里用中文输入法时，轻按 Shift 也会切换中英文")
-                                 : qsTr("跟数字键一样：搜索框和剪贴板各用数字键设置里的那个键")
+                                 : qsTr("跟数字键一样：搜索框和剪贴板各用数字键设置里的那个键；关闭数字键时默认用 Ctrl")
                     keywords: qsTr("字母直达;修饰键;Ctrl;Alt;Shift").split(";")
 
                     ScopeTabs {
@@ -5457,6 +5588,7 @@ Window {
                 }
 
                 SettingRow {
+                    id: letterJumpKeysRow
                     sub: true
                     shown: window.editor.letterJump
                     title: qsTr("用哪些字母")
@@ -5498,6 +5630,23 @@ Window {
                                 letterJumpKeysBox.showStart()
                             }
                         }
+                    }
+                }
+
+                SettingRow {
+                    id: resultNumberHintsRow
+                    objectName: "resultNumberHintsRow"
+                    shown: window.editor.numberKeys !== "off" || window.editor.letterJump
+                    title: qsTr("序号提示")
+                    description: window.editor.numberKeys === "off"
+                                 ? qsTr("启动器、剪贴板和对话框搜索栏共用；关闭数字键时提前预览各行字母，轻按直达键后高亮触发")
+                                 : qsTr("启动器、剪贴板和对话框搜索栏共用；隐藏提示不影响数字快捷键，关闭数字键时也用于预览字母直达")
+                    keywords: qsTr("快捷键;数字键;字母;字母直达;图标;按住;显示;隐藏").split(";")
+
+                    ScopeTabs {
+                        labels: [qsTr("按住时显示"), qsTr("一直显示"), qsTr("不显示", "number hints")]
+                        current: Math.max(0, ["held", "always", "off"].indexOf(window.editor.numberHints))
+                        onActivated: (index) => window.editor.numberHints = ["held", "always", "off"][index]
                     }
                 }
             }
@@ -6080,6 +6229,21 @@ Window {
                     }
                 }
 
+                SettingRow {
+                    title: qsTr("资源管理器右键“贴到屏幕（Win顺）”")
+                    keywords: qsTr("贴到屏幕;贴图;图片;右键;右键菜单;上下文菜单;资源管理器;截图;pin;picture;context menu").split(";")
+                    description: window.editor.screenshotHistory
+                        ? qsTr("右键图片文件（PNG、JPG、WebP 等）直接贴到屏幕上置顶；Windows 11 在“显示更多选项”里")
+                        : qsTr("右键图片文件直接贴到屏幕上置顶；需先在“插件”里启用“截图”插件才会显示")
+
+                    ToggleSwitch {
+                        objectName: "explorerPinPictureSwitch"
+                        dpr: window.dpr
+                        checked: window.editor.explorerPinPicture
+                        onToggled: (on) => window.editor.explorerPinPicture = on
+                    }
+                }
+
                 SettingRow { // GitHub #358
                     title: qsTr("winshun:// 链接")
                     keywords: qsTr("链接;协议;网址;URL;网页;笔记;Obsidian;scheme;protocol;winshun").split(";")
@@ -6636,7 +6800,7 @@ Window {
                     id: dialogBarRow
                     title: qsTr("对话框旁的搜索框")
                     keywords: qsTr("对话框;另存为;打开文件;保存").split(";")
-                    unlocks: [dialogBarPlaceRow, dialogBarSuggestionsRow]
+                    unlocks: [dialogBarPlaceRow, dialogBarSuggestionsRow, dialogBarSuggestionSourcesRow]
                     description: qsTr("在“打开”“另存为”旁搜文件夹和文件，选中后直接转过去")
 
                     ToggleSwitch {
@@ -6655,6 +6819,7 @@ Window {
                     description: qsTr("“自动”时放在下方，放不下就换到旁边")
 
                     ScopeTabs {
+                        dpr: window.dpr
                         labels: [qsTr("自动"), qsTr("下方"), qsTr("左边"), qsTr("右边")]
                         current: Math.max(0, window.dialogBarPlaces.indexOf(window.editor.dialogBarPlace))
                         onActivated: (index) => window.editor.dialogBarPlace = window.dialogBarPlaces[index]
@@ -6665,14 +6830,53 @@ Window {
                     id: dialogBarSuggestionsRow
                     sub: true
                     shown: window.editor.dialogBar
+                    readonly property bool anySource: window.editor.dialogBarSuggestOpen
+                                                   || window.editor.dialogBarSuggestClipboard
+                                                   || window.editor.dialogBarSuggestFavorites
+                                                   || window.editor.dialogBarSuggestRecent
                     title: qsTr("点进来就列出常用位置")
                     keywords: qsTr("最近;常用;隐私;建议;列表;对话框").split(";")
-                    description: qsTr("文件管理器开着的、收藏的和最近用过的文件夹。关掉后打字才列出，按 ↓ 也能列出")
+                    description: anySource
+                                 ? qsTr("点进空白搜索框立即列出下方勾选的位置；关掉后打字才出结果，按 ↓ 仍可展开")
+                                 : qsTr("下方未勾选任何常用位置来源；勾选后生效")
 
                     ToggleSwitch {
+                        objectName: "dialogBarSuggestionsToggle"
                         dpr: window.dpr
                         checked: window.editor.dialogBarSuggestions
+                        Accessible.name: qsTr("点进来就列出常用位置")
                         onToggled: (on) => window.editor.dialogBarSuggestions = on
+                    }
+                }
+
+                SettingRow {
+                    id: dialogBarSuggestionSourcesRow
+                    sub: true
+                    shown: window.editor.dialogBar
+                    stackControl: true
+                    title: qsTr("常用位置里列出的内容")
+                    keywords: qsTr("常用位置;弹出;已打开;目录;文件夹;剪贴板;收藏夹;最近;隐私;对话框;open;clipboard;favorites;recent;privacy").split(";")
+                    description: qsTr("未勾选的不会列出，按 ↓ 也不会显示，不影响搜索；全部取消则只保留搜索")
+
+                    ScopeTabs {
+                        objectName: "dialogBarSuggestionSourcesTabs"
+                        multiSelect: true
+                        dpr: window.dpr
+                        labels: [qsTr("已打开文件夹"), qsTr("剪贴板"), qsTr("收藏夹"), qsTr("最近使用")]
+                        checkedIndices: {
+                            const list = []
+                            if (window.editor.dialogBarSuggestOpen) list.push(0)
+                            if (window.editor.dialogBarSuggestClipboard) list.push(1)
+                            if (window.editor.dialogBarSuggestFavorites) list.push(2)
+                            if (window.editor.dialogBarSuggestRecent) list.push(3)
+                            return list
+                        }
+                        onToggled: (index, on) => {
+                            if (index === 0) window.editor.dialogBarSuggestOpen = on
+                            else if (index === 1) window.editor.dialogBarSuggestClipboard = on
+                            else if (index === 2) window.editor.dialogBarSuggestFavorites = on
+                            else if (index === 3) window.editor.dialogBarSuggestRecent = on
+                        }
                     }
                 }
 
@@ -6968,6 +7172,19 @@ Window {
                 }
 
                 SettingRow {
+                    title: qsTr("默认粘贴为纯文本")
+                    keywords: qsTr("纯文本;格式;去格式;无格式;去掉格式;富文本;样式;字体;保留格式;Word;WPS").split(";")
+                    description: qsTr("粘贴文字时去掉字体、颜色、链接等格式，贴进 Word、WPS 也和打字一样。要保留格式时按 Shift+Enter，或在右键菜单里选“保留格式粘贴”")
+                    tip: qsTr("单击、双击、Enter、Alt+数字和快速粘贴快捷键都按纯文本粘贴；文件和图片照常粘贴")
+
+                    ToggleSwitch {
+                        dpr: window.dpr
+                        checked: window.editor.clipboardPlainByDefault
+                        onToggled: (on) => window.editor.clipboardPlainByDefault = on
+                    }
+                }
+
+                SettingRow {
                     title: qsTr("粘贴后保持位置")
                     keywords: qsTr("位置;顺序;排序;跳到最前;置顶;不动;固定顺序;粘贴后").split(";")
                     description: qsTr("从列表里粘贴一条后留在原来的位置，不跳到最前面")
@@ -7031,8 +7248,8 @@ Window {
                 SettingRow {
                     id: clipboardUiSizeRow
                     title: qsTr("剪贴板大小")
-                    keywords: qsTr("字体;字号;文字大小;行高;密集;紧凑;宽松;ditto;font size;dense").split(";")
-                    description: qsTr("剪贴板文字和行高，可以和搜索框不同；密集是每条一行的小字")
+                    keywords: qsTr("字体;字号;文字大小;行高;密集;紧凑;宽松;ditto;Ctrl++;Ctrl+-;Ctrl+0;zoom;font size;dense").split(";")
+                    description: qsTr("剪贴板文字和行高，可以和搜索框不同；在剪贴板里按 Ctrl++ / Ctrl+- 可快速调整，Ctrl+0 恢复跟随。密集是每条一行的小字")
 
                     ScopeTabs {
                         readonly property var sizes: ["follow", "dense", "compact", "standard", "roomy"]
@@ -7330,7 +7547,9 @@ Window {
                     title: qsTr("面板内数字键粘贴")
                     unlocks: [clipNumberHintsRow]
                     keywords: qsTr("快捷键;数字键;序号;Alt+1;Ctrl+1;冲突;hotkey").split(";")
-                    description: qsTr("打开剪贴板面板后，按 %1+1 粘贴当前可见的第 1 条，依此类推到第 9 条（随列表滚动更新）；加按 Shift 粘贴为纯文本")
+                    description: (window.editor.clipboardPlainByDefault
+                                  ? qsTr("打开剪贴板面板后，按 %1+1 粘贴当前可见的第 1 条，依此类推到第 9 条（随列表滚动更新）；加按 Shift 保留格式粘贴")
+                                  : qsTr("打开剪贴板面板后，按 %1+1 粘贴当前可见的第 1 条，依此类推到第 9 条（随列表滚动更新）；加按 Shift 粘贴为纯文本"))
                                  .arg(window.editor.clipboardNumberKeys === "ctrl" ? "Ctrl" : "Alt")
 
                     ScopeTabs {
@@ -7351,11 +7570,14 @@ Window {
 
                 SettingRow {
                     id: clipNumberHintsRow
-                    sub: true
-                    shown: window.editor.clipboardNumberKeys !== "off"
+                    objectName: "clipNumberHintsRow"
+                    sub: window.editor.clipboardNumberKeys !== "off"
+                    shown: window.editor.clipboardNumberKeys !== "off" || window.editor.letterJump
                     title: qsTr("序号提示")
-                    description: qsTr("启动器、剪贴板和对话框搜索栏共用；隐藏提示不影响数字快捷键")
-                    keywords: qsTr("快捷键;数字键;图标;按住;显示;隐藏").split(";")
+                    description: window.editor.clipboardNumberKeys === "off"
+                                 ? qsTr("启动器、剪贴板和对话框搜索栏共用；关闭数字键时提前预览各行字母，轻按直达键后高亮触发")
+                                 : qsTr("启动器、剪贴板和对话框搜索栏共用；隐藏提示不影响数字快捷键，关闭数字键时也用于预览字母直达")
+                    keywords: qsTr("快捷键;数字键;字母;字母直达;图标;按住;显示;隐藏").split(";")
 
                     ScopeTabs {
                         labels: [qsTr("按住时显示"), qsTr("一直显示"), qsTr("不显示", "number hints")]
@@ -7395,6 +7617,7 @@ Window {
                         const key = window.editor.letterJumpKey === "ctrl" ? "Ctrl"
                                   : window.editor.letterJumpKey === "alt" ? "Alt"
                                   : window.editor.letterJumpKey === "shift" ? "Shift"
+                                  : window.editor.clipboardNumberKeys === "off" ? "Ctrl"
                                   : qsTr("跟随数字键")
                         return qsTr("已开启（%1）· 启动器和剪贴板共用").arg(key)
                     }
@@ -7611,9 +7834,10 @@ Window {
                 index: window.pluginsPage
                 content: Component { SettingsPage {
                     host: settingsContext
-                    parts: ({ pluginsSection: pluginsSection, pluginDevSection: pluginDevSection })
+                    parts: ({ pluginsSection: pluginsSection, pluginGallerySection: pluginGallerySection, pluginDevSection: pluginDevSection })
                     onResetForReopen: {
                         pluginsSection.resetForReopen()
+                        pluginGallerySection.resetForReopen()
                         pluginDevSection.resetForReopen()
                     }
             // <page plugins>
@@ -7625,7 +7849,7 @@ Window {
                 plugins: window.editor.plugins
                 editor: window.editor
                 lockedElsewhere: pluginDevSection.lockedRows
-                onDetailToggled: (open) => window.pluginDetailToggled(open)
+                onDetailToggled: (open) => window.pluginDetailToggled(open, 0)
                 onSettingRequested: (which) => {
                     if (which === "dropPie")
                         window.showPart(window.favoritesPage, "dropPieRow")
@@ -7639,11 +7863,14 @@ Window {
             }
 
             PluginGallerySection {
+                id: pluginGallerySection
                 page: window.pluginsPage
                 tab: 1
                 width: parent.width
                 plugins: window.editor.plugins
-                onShowInstalled: (pluginId) => window.showPluginPage(pluginId)
+                editor: window.editor
+                onEditWebShortcut: (index, button) => window.editWebShortcut(index, button)
+                onDetailToggled: (open) => window.pluginDetailToggled(open, 1)
                 onShowProxySettings: window.goTo(window.part(window.generalPage, "proxyRow"))
                 onShowDeveloper: {
                     window.editor.plugins.developerMode = true
@@ -7740,8 +7967,10 @@ Window {
         EdgeScrollHint {
             id: edgeScrollHint
             objectName: "settingsEdgeScrollHint"
+            anchors.fill: parent
             direction: edgeGate.direction
             progress: edgeGate.progress
+            ready: edgeGate.readyToSwitch
             targetLabel: window.adjacentLabel(window.adjacentView(edgeGate.direction))
             warm: window.warm
             dpr: window.dpr
@@ -7838,6 +8067,15 @@ Window {
             easing.type: Easing.InOutQuad
             onFinished: snapshot.source = "" // the picture's memory
         }
+    }
+
+    UiSizeToast {
+        id: uiSizeToast
+        objectName: "settingsUiSizeToast"
+        x: Theme.snap(nav.width + (window.width - nav.width - width) / 2, window.dpr)
+        y: Theme.snap(window.height - height - 20, window.dpr)
+        z: 500
+        dpr: window.dpr
     }
 
     WindowEdge {

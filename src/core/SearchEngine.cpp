@@ -891,7 +891,7 @@ SearchResults::iterator exactFirst(SearchResults::iterator begin, SearchResults:
     const PreferredTypes& preferred)
 {
     const auto exactEnd = std::stable_partition(
-        begin, end, [&](const SearchResult& r) { return matcher.isExactName(r.name, r.isDir); });
+        begin, end, [&](const SearchResult& r) { return !r.fuzzy && matcher.isExactName(r.name, r.isDir); });
     if (!preferred.empty()) {
         std::stable_partition(begin, exactEnd, [&](const SearchResult& r) {
             return !r.isDir && !r.isApp() && preferred.hasName(wtf8::fromUtf16(wtf8::view(r.name)));
@@ -937,7 +937,15 @@ void arrangePart(SearchResults& results, const SearchEngine::Request& request, c
         markRecent(results, request.history);
     }
     const bool foldersFirst = request.kindOrder == KindOrder::FoldersFirst;
-    std::stable_partition(rest, results.end(), [&](const SearchResult& r) { return r.isDir == foldersFirst; });
+    if (rankBy == RankBy::Match && !ordered) {
+        // Keep all normal hits (both files and folders) ahead of fuzzy-only hits,
+        // applying kindOrder independently inside each tier.
+        const auto fuzzyBegin = std::stable_partition(rest, results.end(), [](const SearchResult& r) { return !r.fuzzy; });
+        std::stable_partition(rest, fuzzyBegin, [&](const SearchResult& r) { return r.isDir == foldersFirst; });
+        std::stable_partition(fuzzyBegin, results.end(), [&](const SearchResult& r) { return r.isDir == foldersFirst; });
+    } else {
+        std::stable_partition(rest, results.end(), [&](const SearchResult& r) { return r.isDir == foldersFirst; });
+    }
     if (results.size() > request.limit)
         results.resize(request.limit);
 }
@@ -1620,6 +1628,7 @@ void SearchEngine::runNameSearch(const Job& job)
         const pathtext::TypedPath typedPath = typedIn
             ? pathtext::TypedPath {pathtext::pathFromText(request.currentFolder), request.text}
             : request.regex ? pathtext::TypedPath() : pathtext::splitTyped(request.text);
+
         // Explicitly searching inside a hidden folder (everythingCompat): show
         // its contents instead of hiding what the user specifically asked for.
         Hidden searchHidden = hidden;
@@ -1633,11 +1642,14 @@ void SearchEngine::runNameSearch(const Job& job)
             if (typedHidden || filteredHidden)
                 searchHidden.folders.reset();
         }
+        const FuzzyMode effectiveFuzzy = request.regex ? FuzzyMode::Off : request.fuzzyMode;
+        const bool autoFuzzyNow = effectiveFuzzy == FuzzyMode::On;
         // A share may be indexed at a subfolder: its UNC prefix is a single
         // root entry, not a chain of ancestor names. Search the words alone
         // and constrain by the folder's identity, as for Explorer typing.
         const NameMatcher matcher(withTypes(
-            !typedIn && !typedPath.folder.isEmpty() ? parseQuery(typedPath.name) : query, types, searchHidden));
+            !typedIn && !typedPath.folder.isEmpty() ? parseQuery(typedPath.name) : query, types, searchHidden),
+            autoFuzzyNow);
         // A path typed from some folder along the way ("tools/out/"); none in regex mode.
         const auto relative = [&] { return request.regex ? pathtext::RelativePath() : pathtext::splitRelative(request.text); };
         EntryFilter filter = request.filter;
@@ -1647,6 +1659,7 @@ void SearchEngine::runNameSearch(const Job& job)
             ? NameSearchOptions::SkipMode::OnlyHiddenFolders
             : request.nameSet == NameSet::ExcludedFiles ? NameSearchOptions::SkipMode::OnlyExcludedFiles
                                                         : NameSearchOptions::SkipMode::Shown;
+        EntryId insideFolder = kNoEntry;
         {
             phase = "waiting for the index";
             const auto lock = index->readLock();
@@ -1659,6 +1672,7 @@ void SearchEngine::runNameSearch(const Job& job)
                 filter.folders.push_back(id == kNoEntry ? kNoEntry - 1 : id);
             }
             const EntryId folder = typedPath.folder.isEmpty() ? kNoEntry : index->findPath(typedPath.folder.toStdWString());
+            insideFolder = folder;
             // A typed path, or typing set to search only this folder: constrain
             // before choosing the top hits, including a share indexed at this
             // subfolder. A similarly named folder is a different place (#49).
@@ -1702,19 +1716,24 @@ void SearchEngine::runNameSearch(const Job& job)
             UnderFolder under(*index, folder);
             std::vector<EntryId> ids;
             std::vector<char> elsewhere; // insideFirst: each hit's !inside
+            std::vector<char> fuzzyFlags;
             ids.reserve(out.hits.size());
+            fuzzyFlags.reserve(out.hits.size());
             for (const NameHit& hit : out.hits) {
                 if (!typedIn && !typedPath.folder.isEmpty() && !under(hit.id)) {
                     --total;
                     continue;
                 }
                 ids.push_back(hit.id);
+                fuzzyFlags.push_back(hit.fuzzy ? 1 : 0);
                 if (insideFirst)
                     elsewhere.push_back(!hit.inside);
             }
             results = fromIndex(*index, ids, m_pool);
             for (std::size_t i = 0; i < elsewhere.size(); ++i)
                 results[static_cast<qsizetype>(i)].elsewhere = elsewhere[i] != 0;
+            for (std::size_t i = 0; i < fuzzyFlags.size(); ++i)
+                results[static_cast<qsizetype>(i)].fuzzy = fuzzyFlags[i] != 0;
         }
         phase = "putting recent items first";
         arrange(results, request, matcher, rankBy, *m_onDisk, typedPath.folder);
@@ -1825,7 +1844,7 @@ void SearchEngine::runNameSearch(const Job& job)
             struct Ranked {
                 int score;
                 SearchResult result;
-                bool guessedSwitch = false; // a switch found by a guess (PlaceHit::weak)
+                bool guessedAction = false; // a switch or power command found by a guess (PlaceHit::weak)
             };
             std::vector<Ranked> ranked;
             // Win顺's own places (GitHub #389, #390), whether or not places
@@ -1853,9 +1872,12 @@ void SearchEngine::runNameSearch(const Job& job)
                     }
                 }
             }
-            for (const AppHit& hit : request.apps ? searchApps(*apps, query, matcher, request.history, request.historyAffinity) : std::vector<AppHit> {}) {
+            for (const AppHit& hit : request.apps
+                    ? searchApps(*apps, query, matcher, request.history, request.historyAffinity, effectiveFuzzy)
+                    : std::vector<AppHit> {}) {
                 ranked.push_back({hit.score, fromApp((*apps)[hit.index], false, hit.otherName)});
                 ranked.back().result.exact = hit.exact; // by name, another name or an abbreviation ("ps")
+                ranked.back().result.fuzzy = hit.fuzzy;
             }
             const std::size_t appCount = ranked.size();
             std::size_t shown = 0; // places other than switches (those are few, and each one a concept)
@@ -1864,6 +1886,7 @@ void SearchEngine::runNameSearch(const Job& job)
                 if (isOwnPlace(place)) // above
                     continue;
                 const bool isSwitch = !place.switchId.isEmpty();
+                const bool isPower = isPowerCommand(place.command);
                 if (!isSwitch && shown >= kPlacesShown)
                     continue;
                 // An app of that name (控制面板) is the same thing.
@@ -1871,19 +1894,20 @@ void SearchEngine::runNameSearch(const Job& job)
                     [&](const Ranked& r) { return r.result.name.compare(place.name, Qt::CaseInsensitive) == 0; });
                 if (isApp)
                     continue;
-                ranked.push_back({hit.score, fromPlace(place, false), isSwitch && hit.weak});
+                ranked.push_back({hit.score, fromPlace(place, false), (isSwitch || isPower) && hit.weak});
                 shown += isSwitch ? 0 : 1;
             }
-            // A wrong Enter on an app opens it; on a switch it changes the
-            // system. So a switch found by a guess ("ly") goes behind every
-            // app and page found as well, and first only where there are none.
+            // A wrong Enter on an app opens it; on a switch or power command it
+            // changes system state. So one found only by a weak guess ("ly", "gj")
+            // goes behind every app and page found as well, and first only where
+            // there are none.
             int behind = std::numeric_limits<int>::max();
             for (const Ranked& r : ranked) {
-                if (r.result.switchId.isEmpty())
+                if (r.result.switchId.isEmpty() && !isPowerCommand(r.result.target))
                     behind = std::min(behind, r.score);
             }
             for (Ranked& r : ranked) {
-                if (r.guessedSwitch)
+                if (r.guessedAction)
                     r.score = std::min(r.score, behind - 1);
             }
             // "关蓝牙", "音量 30", "蓝牙设置": the switch with what was asked of
@@ -1926,11 +1950,11 @@ void SearchEngine::runNameSearch(const Job& job)
             if (commandRow)
                 top.push_back(std::move(*commandRow));
             const qsizetype explicitRows = top.size();
-            QSet<QString> guessedSwitches;
+            QSet<QString> guessedActions;
             total += static_cast<qint64>(ranked.size()) + top.size();
             for (Ranked& r : ranked) {
-                if (r.guessedSwitch)
-                    guessedSwitches.insert(r.result.path);
+                if (r.guessedAction)
+                    guessedActions.insert(r.result.path);
                 r.result.score = r.score;
                 top.push_back(std::move(r.result));
             }
@@ -1941,7 +1965,7 @@ void SearchEngine::runNameSearch(const Job& job)
                 top.append(std::move(results));
                 if (rankBy == RankBy::Match && request.order.key == SortKey::Rank && !filtered && !insideFirst) {
                     const auto learned = [&](const SearchResult& r) {
-                        return !guessedSwitches.contains(r.path) && History::affinity(request.historyAffinity, r.path).learned();
+                        return !guessedActions.contains(r.path) && History::affinity(request.historyAffinity, r.path).learned();
                     };
                     std::stable_sort(top.begin() + explicitRows, top.end(), [&](const SearchResult& a, const SearchResult& b) {
                         const bool aLearned = learned(a);
@@ -2114,6 +2138,57 @@ void SearchEngine::runNameSearch(const Job& job)
                     r.approximate = true; // the recent ones arrange() puts first too
             }
         }
+
+        // Nothing matched literally, by pinyin or by homophone: when fuzzyMode
+        // is Fallback and the query has an eligible unquoted plain term (>=3
+        // chars), run an independent FZF V2 pass and mark rows approximate +
+        // fuzzy so the UI displays a clear banner and discrete highlights.
+        if (results.isEmpty() && effectiveFuzzy == FuzzyMode::Fallback && (typedPath.folder.isEmpty() || typedIn)
+            && relative().names.isEmpty() && isFuzzyEligible(query) && !isStale(job.id)) {
+            phase = "fuzzy fallback";
+            const auto fuzzyBegan = Clock::now();
+            const auto fuzzyOnDisk = m_onDisk->waited();
+            const auto counted = qScopeGuard([&] { alike += Clock::now() - fuzzyBegan - (m_onDisk->waited() - fuzzyOnDisk); });
+            const NameMatcher fuzzyMatcher(withTypes(query, types, hidden), true);
+            NameSearchOutput out;
+            {
+                const auto lock = index->readLock();
+                const NameSearchOptions options {.limit = static_cast<std::size_t>(request.limit),
+                    .foldersOnly = foldersOnly,
+                    .rankBy = rankBy,
+                    .kindsApart = !request.browse || request.order.key == SortKey::Rank,
+                    .filter = filter,
+                    .typeFolders = typeFolders,
+                    .insideFirst = insideFirst ? insideFolder : kNoEntry,
+                    .order = request.order,
+                    .trustedUntil = trustedUntil(),
+                    .preferred = preferred};
+                out = searchNames(*index, fuzzyMatcher, options, m_pool, [&] { return isStale(job.id); });
+                if (out.cancelled || isStale(job.id))
+                    return;
+                std::vector<EntryId> ids;
+                std::vector<char> elsewhere;
+                ids.reserve(out.hits.size());
+                for (const NameHit& hit : out.hits) {
+                    ids.push_back(hit.id);
+                    if (insideFirst)
+                        elsewhere.push_back(!hit.inside);
+                }
+                results = fromIndex(*index, ids, m_pool);
+                for (std::size_t i = 0; i < elsewhere.size(); ++i)
+                    results[static_cast<qsizetype>(i)].elsewhere = elsewhere[i] != 0;
+            }
+            total = static_cast<qint64>(out.totalMatches);
+            arrange(results, request, fuzzyMatcher, rankBy, *m_onDisk, typedPath.folder);
+            promoteFavorites(results, total, request, fuzzyMatcher, promote, learnedFirst, *apps, *places, *m_onDisk,
+                m_index, types);
+            for (SearchResult& r : results) {
+                r.approximate = true;
+                r.fuzzy = true;
+                if (r.path.startsWith(u"\\\\"))
+                    r.offline = m_index->shares().offline(r.path.toStdWString());
+            }
+        }
     }
 
     // Nothing typed: every favorite first, in its user's order; the recent
@@ -2232,7 +2307,7 @@ void SearchEngine::runDriveWalk(const Job& job)
     const bool foldersOnly = request.scope == Scope::Folders;
     const std::vector<std::string> types = foldersOnly ? std::vector<std::string>() : foldedExtensions(request.extensions);
     const Hidden hidden = hiddenOf(request, query, types);
-    const NameMatcher matcher(withTypes(query, types, hidden));
+    const NameMatcher matcher(withTypes(query, types, hidden), !request.regex && request.fuzzyMode == FuzzyMode::On);
     const bool prefilter = matcher.filtersNames();
     const bool needFile = !types.empty();
     const EntryFilter& extraFilter = request.filter;
@@ -2599,6 +2674,7 @@ void SearchEngine::runContentSearch(const Job& job)
     const ContentFilter filter {ExtensionFilter(set == ContentSet::OtherTypes ? otherTypes.extensions() : listed),
         request.contentInLowPriority || set == ContentSet::LowPriority};
     const ExtensionFilter skipped(request.excludedTypes); // packed once, asked of each candidate
+    const ExtensionFilter onlyTypes(request.contentTypes); // the kinds 内容 is narrowed to; empty: any
     const std::vector<std::string> skippedNames = foldedExtensions(request.excludedFileNames);
     // The quick filters: a file to read is one they let through, by its name,
     // folders, size and time, as a name search would.
@@ -2694,7 +2770,11 @@ void SearchEngine::runContentSearch(const Job& job)
                 std::string_view name;
                 std::size_t extLength = 0;
                 bool remote = false;
-                switch (filter.classify(*index, e, name, extLength)) {
+                const ContentVerdict verdict = filter.classify(*index, e, name, extLength);
+                // Not of the kinds chosen: neither read nor counted as passed over.
+                if (verdict != ContentVerdict::Never && !onlyTypes.empty() && !onlyTypes.matches(name, extLength))
+                    continue;
+                switch (verdict) {
                 case ContentVerdict::Never:
                     continue;
                 case ContentVerdict::Remote:

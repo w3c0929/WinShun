@@ -60,6 +60,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -720,6 +721,54 @@ private slots:
         text.title = u"no file"_s;
         merge.results(3, provider.id, command, {text}, false, true);
         QVERIFY(!merge.answerHeld());
+    }
+
+    // GitHub #447: 内容 narrowed to kinds of file keeps a provider's rows to
+    // files of those kinds (any case), in the folders given when there are
+    // any; a row with no file (a mail) goes then. Cleared, all come back.
+    void contentProviderRowsNarrowedToKinds()
+    {
+        Fixture f;
+        Spec provider;
+        provider.id = u"test.kinds"_s;
+        provider.commandExtra = {{u"contentSearch"_s, true}};
+        QVERIFY(!f.install(provider).isEmpty());
+        const Catalog& catalog = f.host->catalog();
+        const QString command = catalog.find(provider.id)->manifest->commands.first().id;
+        Items items;
+        const auto file = [&](const QString& id, const QString& path) {
+            Item item;
+            item.id = id;
+            item.title = path.section(u'\\', -1);
+            item.open.kind = Open::Kind::Path;
+            item.open.target = path;
+            items.append(item);
+        };
+        file(u"1"_s, u"C:\\pics\\牛蛙.JPG"_s);
+        file(u"2"_s, u"C:\\docs\\牛蛙.docx"_s);
+        file(u"3"_s, u"D:\\elsewhere\\牛蛙.png"_s);
+        file(u"4"_s, u"C:\\pics\\no-extension"_s);
+        Item mail;
+        mail.id = u"5"_s;
+        mail.title = u"牛蛙 mail"_s;
+        mail.details = true;
+        items.append(mail);
+
+        ListSink sink;
+        Merge merge(sink, catalog);
+        const auto answer = [&](std::uint64_t id) {
+            sink.rows.clear();
+            merge.begin(id, u"牛蛙"_s, {}, {}, true);
+            merge.namesShown();
+            merge.results(id, provider.id, command, items, false, true);
+            return sink.names();
+        };
+        merge.setContentKinds({u".jpg"_s, u"png"_s}, {});
+        QCOMPARE(answer(1), (QStringList {u"牛蛙.JPG"_s, u"牛蛙.png"_s}));
+        merge.setContentKinds({u"jpg"_s, u"png"_s}, {u"C:/pics"_s});
+        QCOMPARE(answer(2), (QStringList {u"牛蛙.JPG"_s}));
+        merge.setContentKinds({}, {});
+        QCOMPARE(answer(3).size(), 5);
     }
 
     // GitHub #202: in 内容, a provider's row with no file stays when it says
@@ -2367,7 +2416,9 @@ private slots:
         unset.keywords = {u"us"_s};
         unset.extra = {{u"translate"_s, u"main"_s}};
         QVERIFY(!f.install(unset).isEmpty());
-        QCOMPARE(translate(*f.host, u"hi"_s).value(u"state"_s), u"service"_s);
+        const QJsonObject service = translate(*f.host, u"hi"_s);
+        QCOMPARE(service.value(u"state"_s), u"service"_s);
+        QCOMPARE(service.value(u"message"_s), u"set up a service"_s); // its words on what to set (a key refused: #444)
 
         Spec other;
         other.id = u"b.other"_s;
@@ -5120,10 +5171,45 @@ private slots:
         QCOMPARE(power::parseAction(u"restart"_s), std::optional(power::Action::Restart));
         QCOMPARE(power::parseAction(u"sleep"_s), std::optional(power::Action::Sleep));
         QCOMPARE(power::parseAction(u"hibernate"_s), std::optional(power::Action::Hibernate));
+        QCOMPARE(power::parseAction(u"lock"_s), std::optional(power::Action::Lock));
+        QCOMPARE(power::parseAction(u"signout"_s), std::optional(power::Action::SignOut));
         for (const QString& other : {QString(), u"Shutdown"_s, u"reboot"_s, u"suspend"_s, u"shutdown "_s, u"off"_s})
             QVERIFY2(!power::parseAction(other), qPrintable(other));
-        for (const power::Action a : {power::Action::Shutdown, power::Action::Restart, power::Action::Sleep, power::Action::Hibernate})
+        for (const power::Action a : {power::Action::Shutdown, power::Action::Restart, power::Action::Sleep,
+                 power::Action::Hibernate, power::Action::Lock, power::Action::SignOut})
             QCOMPARE(power::parseAction(power::actionName(a)), std::optional(a));
+    }
+
+    // Launcher-initiated power/session commands (GitHub #428): all six actions
+    // run through power::execute while plugin tool `power` stays on its four
+    // documented actions.
+    void powerExecuteLauncher()
+    {
+        std::vector<power::Action> seen;
+        power::setPerformerForTest([&](power::Action action) -> QString {
+            seen.push_back(action);
+            return action == power::Action::Hibernate ? u"休眠未开启"_s : QString();
+        });
+        const auto reset = qScopeGuard([] { power::setPerformerForTest({}); });
+
+        for (const power::Action a : {power::Action::Shutdown, power::Action::Restart, power::Action::Lock,
+                 power::Action::SignOut}) {
+            QString err = u"unset"_s;
+            power::execute(a, [&](QString error) { err = std::move(error); });
+            QCOMPARE(err, QString());
+        }
+        // Async failure on Hibernate surfaces immediately to the callback.
+        QString hibError = u"unset"_s;
+        power::execute(power::Action::Hibernate, [&](QString error) { hibError = std::move(error); });
+        QTRY_COMPARE_WITH_TIMEOUT(hibError, u"休眠未开启"_s, 2000);
+
+        // Plugin tool `power` still rejects lock/signout cleanly.
+        bool rejected = false;
+        power::run(u"test.plugin"_s, QJsonObject {{u"action"_s, u"lock"_s}},
+            [&](mcp::ToolResult result) { rejected = result.isError; });
+        QVERIFY(rejected);
+        QCOMPARE(seen, (std::vector<power::Action> {power::Action::Shutdown, power::Action::Restart,
+                            power::Action::Lock, power::Action::SignOut, power::Action::Hibernate}));
     }
 
     // The `selected_text` tool (0.41.0): held to selection:read. A window
@@ -5345,6 +5431,35 @@ private slots:
         QCOMPARE(shipped->permissions.listens, (QStringList {u"TCP 53317-53320"_s, u"UDP 53317"_s}));
         QCOMPARE(shipped->commands.first().keywords, (QStringList {u"传"_s, u"ls"_s}));
         QCOMPARE(shipped->commands.first().triggers.first().title.pick(u"zh"_s), u"用局域网发送…"_s);
+    }
+
+    // Win顺's own plugins never claim a keyword alike: two defaults alike stop
+    // each other and neither opens (局域网传输's `ls` and the browser
+    // history's did, found with GitHub #435).
+    void officialKeywordsDistinct()
+    {
+        const QDir sources(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath(u"../src"_s));
+        QHash<QString, QString> claimedBy; // lower-cased keyword -> "<id>/<command>"
+        int manifests = 0;
+        for (const QFileInfo& folder : sources.entryInfoList({u"*-plugin"_s}, QDir::Dirs)) {
+            QFile file(folder.filePath() + u"/package/plugin.json"_s);
+            if (!file.open(QIODevice::ReadOnly))
+                continue;
+            QString error;
+            const std::optional<Manifest> m = Manifest::parse(file.readAll(), &error);
+            QVERIFY2(m.has_value(), qPrintable(file.fileName() + u": "_s + error));
+            ++manifests;
+            for (const Command& command : m->commands) {
+                for (const QString& keyword : command.keywords) {
+                    const QString who = m->id + u'/' + command.id;
+                    const QString other = claimedBy.value(keyword.toLower());
+                    QVERIFY2(other.isEmpty(), qPrintable(u"`%1`: %2 and %3"_s.arg(keyword, other, who)));
+                    claimedBy.insert(keyword.toLower(), who);
+                }
+            }
+        }
+        QVERIFY2(manifests >= 10, qPrintable(sources.absolutePath()));
+        QCOMPARE(claimedBy.value(u"ls"_s), u"winshun.localsend/send"_s);
     }
 
     // A resident plugin's `rerun`: the same query sent again (no sooner
@@ -6879,6 +6994,142 @@ private slots:
         const QJsonObject runner = f.host->runnerFacts();
         QVERIFY(runner.value(u"extensionPointsDisabled"_s).toBool());
         QVERIFY(runner.value(u"inJob"_s).toBool());
+    }
+
+    // GitHub #435: on Windows 10 any UI restriction of a job keeps a process
+    // in it from every clipboard data another program put there, so a plugin
+    // allowed to read the clipboard gets none there (measured: 19045 refuses,
+    // 26200 only with UILIMIT_HANDLES); the rest stays.
+    void uiRestrictionsLeaveTheClipboardReadable()
+    {
+        constexpr DWORD everyUiLimit = JOB_OBJECT_UILIMIT_DESKTOP | JOB_OBJECT_UILIMIT_EXITWINDOWS | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS
+            | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS;
+        constexpr unsigned win10 = 19045, win11 = 26200, before = sandbox::kUiLimitsKeepClipboardBuild - 1;
+        constexpr DWORD all = everyUiLimit | JOB_OBJECT_UILIMIT_READCLIPBOARD | JOB_OBJECT_UILIMIT_WRITECLIPBOARD | JOB_OBJECT_UILIMIT_HANDLES;
+        QCOMPARE(sandbox::uiRestrictions({}, win11), all);
+        QCOMPARE(sandbox::uiRestrictions({}, win10), all); // no clipboard: as ever
+
+        sandbox::JobLimits reader;
+        reader.clipboardRead = true;
+        QCOMPARE(sandbox::uiRestrictions(reader, win11), everyUiLimit | JOB_OBJECT_UILIMIT_WRITECLIPBOARD);
+        QCOMPARE(sandbox::uiRestrictions(reader, sandbox::kUiLimitsKeepClipboardBuild), everyUiLimit | JOB_OBJECT_UILIMIT_WRITECLIPBOARD);
+        QCOMPARE(sandbox::uiRestrictions(reader, before), DWORD(0));
+        QCOMPARE(sandbox::uiRestrictions(reader, win10), DWORD(0));
+        QCOMPARE(sandbox::uiRestrictions(reader, 17763), DWORD(0)); // 1809, the oldest Win顺 runs on
+        QCOMPARE(sandbox::uiRestrictions(reader, 0), DWORD(0)); // build unknown: the clipboard works
+
+        sandbox::JobLimits writer; // writing is ours to put there: not affected
+        writer.clipboardWrite = true;
+        QCOMPARE(sandbox::uiRestrictions(writer, win10), everyUiLimit | JOB_OBJECT_UILIMIT_READCLIPBOARD);
+
+        sandbox::JobLimits ui = reader;
+        ui.ui = true;
+        QCOMPARE(sandbox::uiRestrictions(ui, win11), DWORD(JOB_OBJECT_UILIMIT_WRITECLIPBOARD));
+        QCOMPARE(sandbox::uiRestrictions(ui, win10), DWORD(0));
+        QVERIFY(sandbox::windowsBuild() >= 17763);
+    }
+
+    // GitHub #435 end to end: a plugin allowed to read the clipboard, run
+    // through the real host and runner, reads files another program copied
+    // and renders only when asked (as Explorer does). The files are this
+    // test's, marked so no clipboard history or monitor keeps them; the
+    // clipboard's text is put back after.
+    void clipboardReaderReadsAnotherProgramsFiles()
+    {
+        static int rendered = 0;
+        static std::wstring path;
+        rendered = 0;
+        path = QDir::toNativeSeparators(QCoreApplication::applicationFilePath()).toStdWString();
+        const WNDPROC proc = [](HWND window, UINT message, WPARAM wParam, LPARAM lParam) -> LRESULT {
+            if (message == WM_RENDERFORMAT && wParam == CF_HDROP) {
+                ++rendered;
+                const SIZE_T size = sizeof(DROPFILES) + (path.size() + 2) * sizeof(wchar_t);
+                if (const HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, size)) {
+                    auto* drop = static_cast<DROPFILES*>(::GlobalLock(memory));
+                    drop->pFiles = sizeof(DROPFILES);
+                    drop->fWide = TRUE;
+                    std::memcpy(drop + 1, path.c_str(), path.size() * sizeof(wchar_t));
+                    ::GlobalUnlock(memory);
+                    if (!::SetClipboardData(CF_HDROP, memory))
+                        ::GlobalFree(memory);
+                }
+                return 0;
+            }
+            if (message == WM_RENDERALLFORMATS)
+                return 0; // nothing kept once the test is done
+            return ::DefWindowProcW(window, message, wParam, lParam);
+        };
+        WNDCLASSW type {};
+        type.lpfnWndProc = proc;
+        type.hInstance = ::GetModuleHandleW(nullptr);
+        type.lpszClassName = L"tst_plugin.ClipboardOwner";
+        QVERIFY(::RegisterClassW(&type));
+        const HWND owner = ::CreateWindowExW(0, type.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, type.hInstance, nullptr);
+        QVERIFY(owner);
+        const auto open = [owner] {
+            for (int i = 0; i < 50; ++i) {
+                if (::OpenClipboard(owner))
+                    return true;
+                ::Sleep(20);
+            }
+            return false;
+        };
+        const auto putMarks = [] {
+            for (const wchar_t* name : {L"ExcludeClipboardContentFromMonitorProcessing", L"CanIncludeInClipboardHistory", L"CanUploadToCloudClipboard"}) {
+                if (const HGLOBAL zero = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(DWORD)); zero && !::SetClipboardData(::RegisterClipboardFormatW(name), zero))
+                    ::GlobalFree(zero);
+            }
+        };
+        std::optional<std::wstring> savedText;
+        QVERIFY(open());
+        if (const HANDLE h = ::GetClipboardData(CF_UNICODETEXT)) {
+            if (const auto* text = static_cast<const wchar_t*>(::GlobalLock(h))) {
+                savedText = std::wstring(text, ::wcsnlen(text, ::GlobalSize(h) / sizeof(wchar_t)));
+                ::GlobalUnlock(h);
+            }
+        }
+        ::EmptyClipboard();
+        ::SetClipboardData(CF_HDROP, nullptr); // first, so the probe reads it: rendered when asked
+        putMarks();
+        ::CloseClipboard();
+        const auto restore = qScopeGuard([&] {
+            if (open()) {
+                ::EmptyClipboard();
+                putMarks();
+                if (savedText) {
+                    const SIZE_T size = (savedText->size() + 1) * sizeof(wchar_t);
+                    if (const HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, size)) {
+                        std::memcpy(::GlobalLock(memory), savedText->c_str(), size);
+                        ::GlobalUnlock(memory);
+                        if (!::SetClipboardData(CF_UNICODETEXT, memory))
+                            ::GlobalFree(memory);
+                    }
+                }
+                ::CloseClipboard();
+            }
+            ::DestroyWindow(owner);
+            ::UnregisterClassW(type.lpszClassName, type.hInstance);
+        });
+
+        Fixture f;
+        Spec reader;
+        reader.mode = u"once"_s;
+        reader.role = u"--probe"_s;
+        reader.permissions = {u"clipboard:read"_s};
+        reader.runtimeExtra = {{u"debounceMs"_s, 0}};
+        QVERIFY(!f.install(reader).isEmpty());
+        QVERIFY(f.host->query(u"fk x"_s, Scope::All, 1));
+        QVERIFY2(f.waitFinal(1), qPrintable(f.logs.join(u'\n')));
+        const QJsonObject facts = f.finalFor(1)->items[0].data.toObject();
+        qInfo() << "plugin (clipboard:read) on build" << sandbox::windowsBuild() << ":"
+                << QJsonDocument(facts).toJson(QJsonDocument::Compact).constData();
+        sandbox::JobLimits limits;
+        limits.clipboardRead = true;
+        QCOMPARE(facts.value(u"jobUiRestrictions"_s).toInt(), static_cast<int>(sandbox::uiRestrictions(limits, sandbox::windowsBuild())));
+        QVERIFY2(facts.value(u"clipRead"_s).toBool(), qPrintable(u"error %1"_s.arg(facts.value(u"clipError"_s).toInt())));
+        QVERIFY2(facts.value(u"clipHash"_s).toString().startsWith(u"%1:"_s.arg(CF_HDROP)), qPrintable(facts.value(u"clipHash"_s).toString()));
+        QCOMPARE(rendered, 1);
+        f.host->shutdown();
     }
 
     // #164: run through the production host/runner, not preview-only QML.

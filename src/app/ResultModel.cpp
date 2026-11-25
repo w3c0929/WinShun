@@ -7,6 +7,7 @@
 #include "Elide.h"
 #include "FileIndex.h"
 #include "FileIconProvider.h"
+#include "FuzzyMatch.h"
 #include "ThumbnailProvider.h"
 #include "PathText.h"
 #include "Pinyin.h"
@@ -14,8 +15,10 @@
 #include "SwitchBackend.h"
 #include "Switches.h"
 #include "SystemCatalog.h"
+#include "TextUtil.h"
 #include "WebShortcut.h"
 #include "Wtf8.h"
+#include "Details.h"
 #include "platform/SiteIcons.h"
 #include "platform/Shell.h"
 #include "KeepAwakeText.h"
@@ -47,39 +50,103 @@ QString parentFolder(const QString& path)
     return folder;
 }
 
-// Where the terms are in a name: as they are, or read as pinyin ("bg" for
-// 报告: the characters it matched).
-QList<std::pair<qsizetype, qsizetype>> nameMatches(const QString& name, const QStringList& terms)
+void mergeRanges(QList<std::pair<qsizetype, qsizetype>>& ranges)
+{
+    if (ranges.size() <= 1)
+        return;
+    std::sort(ranges.begin(), ranges.end());
+    QList<std::pair<qsizetype, qsizetype>> merged;
+    merged.reserve(ranges.size());
+    for (const auto& [start, length] : std::as_const(ranges)) {
+        if (length <= 0)
+            continue;
+        if (!merged.isEmpty() && start <= merged.back().first + merged.back().second) {
+            const qsizetype end = std::max(merged.back().first + merged.back().second, start + length);
+            merged.back().second = end - merged.back().first;
+        } else {
+            merged.append({start, length});
+        }
+    }
+    ranges = std::move(merged);
+}
+
+bool isWordInitialsHighlight(const QString& name, const QString& term)
+{
+    if (term.size() < 2 || term.size() > 12)
+        return false;
+    const std::string folded = text::foldAscii(wtf8::fromUtf16(wtf8::view(term)));
+    return text::wordInitialsMatch(wtf8::fromUtf16(wtf8::view(name)), folded);
+}
+
+bool passesAutoFuzzyName(const QString& name, const QString& term)
+{
+    const std::string utf8Name = wtf8::fromUtf16(wtf8::view(name));
+    const std::string utf8Term = text::foldAscii(wtf8::fromUtf16(wtf8::view(term)));
+    const std::size_t patChars = fuzzy::codePointCount(utf8Term);
+    if (!fuzzy::isEligibleAutoTerm(utf8Term))
+        return false;
+    const auto matched = fuzzy::match(utf8Name, utf8Term);
+    return matched && fuzzy::passesAutoThreshold(matched->score, patChars);
+}
+
+// Where the terms are in a name: as they are, read as pinyin ("bg" for 报告),
+// or as discrete FZF character positions when the row/term matched fuzzily
+// (or via word initials such as "hsm" -> HiBit Startup Manager.exe).
+QList<std::pair<qsizetype, qsizetype>> nameMatches(const QString& name, const QStringList& terms,
+    bool rowFuzzy = false, const QStringList& fuzzyTerms = {}, bool allowInitials = false)
 {
     QList<std::pair<qsizetype, qsizetype>> ranges;
     for (const QString& term : terms) {
+        if (term.isEmpty())
+            continue;
+        const bool explicitFuzzy = fuzzyTerms.contains(term, Qt::CaseInsensitive);
         const qsizetype i = name.indexOf(term, 0, Qt::CaseInsensitive);
         if (i >= 0) {
             ranges.append({i, term.size()});
             continue;
         }
-        const pinyin::Matcher matcher(term.toLower().toStdString());
-        if (const auto span = matcher.findUtf16(wtf8::view(name)))
-            ranges.append({static_cast<qsizetype>(span->start), static_cast<qsizetype>(span->length)});
+        if (!explicitFuzzy) {
+            const pinyin::Matcher matcher(term.toLower().toStdString());
+            if (const auto span = matcher.findUtf16(wtf8::view(name))) {
+                ranges.append({static_cast<qsizetype>(span->start), static_cast<qsizetype>(span->length)});
+                continue;
+            }
+            if (allowInitials && isWordInitialsHighlight(name, term)) {
+                ranges.append(fuzzy::highlightRanges(name, term));
+                continue;
+            }
+            if (rowFuzzy && passesAutoFuzzyName(name, term))
+                ranges.append(fuzzy::highlightRanges(name, term));
+            continue;
+        }
+        ranges.append(fuzzy::highlightRanges(name, term));
     }
+    mergeRanges(ranges);
     return ranges;
 }
 
 // Whether a name has a term (see nameMatches).
-bool nameHas(const QString& name, const QString& term)
+bool nameHas(const QString& name, const QString& term, bool rowFuzzy = false, const QStringList& fuzzyTerms = {})
 {
-    return name.contains(term, Qt::CaseInsensitive)
-        || pinyin::Matcher(term.toLower().toStdString()).findUtf16(wtf8::view(name)).has_value();
+    if (name.contains(term, Qt::CaseInsensitive))
+        return true;
+    const bool explicitFuzzy = fuzzyTerms.contains(term, Qt::CaseInsensitive);
+    if (explicitFuzzy)
+        return !fuzzy::highlightRanges(name, term).isEmpty();
+    if (pinyin::Matcher(term.toLower().toStdString()).findUtf16(wtf8::view(name)).has_value())
+        return true;
+    return rowFuzzy && passesAutoFuzzyName(name, term);
 }
 
 // Where the terms a name lacks are in its folder, found there ("弯管机" in
 // F:\模型\3轴弯管机模型): as they are, or as pinyin in a folder's name.
 QList<std::pair<qsizetype, qsizetype>> folderMatches(
-    const QString& name, const QString& folder, const QStringList& terms)
+    const QString& name, const QString& folder, const QStringList& terms, bool rowFuzzy = false,
+    const QStringList& fuzzyTerms = {})
 {
     QList<std::pair<qsizetype, qsizetype>> ranges;
     for (const QString& term : terms) {
-        if (nameHas(name, term))
+        if (nameHas(name, term, rowFuzzy, fuzzyTerms))
             continue;
         bool found = false;
         for (qsizetype i = folder.indexOf(term, 0, Qt::CaseInsensitive); i >= 0;
@@ -150,6 +217,21 @@ QString appOrigin(const SearchResult& r)
     case AppKind::Tool:
         if (r.target == ws::kRestartElevatedCommand) // Win顺's own (GitHub #288): what Enter leads to, not the command
             return ResultModel::tr("Windows 会请你确认一次");
+        if (ws::isPowerCommand(r.target)) { // Win顺's own power/session actions (GitHub #428)
+            const QStringView action = ws::powerCommandAction(r.target);
+            if (action == u"shutdown")
+                return ResultModel::tr("关闭电脑 · 需二次确认");
+            if (action == u"restart")
+                return ResultModel::tr("重新启动电脑 · 需二次确认");
+            if (action == u"sleep")
+                return ResultModel::tr("进入睡眠状态 · 需二次确认");
+            if (action == u"hibernate")
+                return ResultModel::tr("进入休眠状态 · 需二次确认");
+            if (action == u"signout")
+                return ResultModel::tr("退出当前 Windows 账户 · 需二次确认");
+            if (action == u"lock")
+                return ResultModel::tr("锁定当前 Windows 会话");
+        }
         if (r.target.startsWith(u"https://")) // a page of Win顺's own (GitHub #254): where it leads
             return displayWebUrl(r.target);
         return describeCommand(r.target); // "diskmgmt.msc", the folder
@@ -372,7 +454,7 @@ QVariant ResultModel::data(const QModelIndex& index, int role) const
             const QString title = webSearchTitle(*r, &words);
             return highlighted(title, {words}, m_highlightColor, elide::boldWeight(m_highlightWeight));
         }
-        auto matches = nameMatches(r->name, m_highlights);
+        auto matches = nameMatches(r->name, m_highlights, r->fuzzy, m_fuzzyHighlights, true);
         // An app the one letter typed brought back (searchApps, GitHub
         // #292): the character that starts with it.
         if (matches.isEmpty() && r->isApp() && m_highlights.size() == 1 && m_highlights.front().size() == 1) {
@@ -386,7 +468,7 @@ QVariant ResultModel::data(const QModelIndex& index, int role) const
         QVariantList out;
         if (r->isApp()) // short names; a web search's title is its own
             return out;
-        for (const auto& [start, length] : nameMatches(r->name, m_highlights))
+        for (const auto& [start, length] : nameMatches(r->name, m_highlights, r->fuzzy, m_fuzzyHighlights, true))
             out << start << length;
         return out;
     }
@@ -431,7 +513,7 @@ QVariant ResultModel::data(const QModelIndex& index, int role) const
             if (r->isPlace() && r->icon.startsWith(u"app:")) // the logo of Settings, of Windows Security
                 return FileIconProvider::appIconUrl(r->icon.mid(4), true, dark);
             if (r->isPlace())
-                return FileIconProvider::placeIconUrl(r->icon);
+                return FileIconProvider::placeIconUrl(r->icon, dark);
             return FileIconProvider::appIconUrl(appIdOf(r->path), r->isPackagedApp(), dark);
         }
         return FileIconProvider::iconUrl(r->path, r->isDir);
@@ -442,6 +524,13 @@ QVariant ResultModel::data(const QModelIndex& index, int role) const
     case GalleryThumbnailRole:
         if (r->clipId > 0) // a screenshot (jt): its picture, whatever the option says
             return r->target.isEmpty() ? QString() : ThumbnailProvider::url(r->target, r->modified);
+        // A plugin's row that opens a file (图片文字搜索's): that file's
+        // picture, as its own row would show (GitHub #448). A mail asks
+        // its plugin for what it shows; it keeps the plugin's icon.
+        if (r->isPlugin() && !plugin::asksDetails(*r->plugin)) {
+            const QString file = plugin::rowFile(*r->plugin);
+            return file.isEmpty() || r->missing ? QString() : ThumbnailProvider::url(file, r->modified);
+        }
         if (r->isApp() || r->isDir || r->offline || r->missing)
             return QString();
         return ThumbnailProvider::url(r->path, r->modified);
@@ -475,7 +564,7 @@ QVariant ResultModel::data(const QModelIndex& index, int role) const
     case CopyableRole:
         return !r->isApp() || r->hasCopyableTarget();
     case SettingsActionRole:
-        return r->isSettings();
+        return r->isSettings() || (r->isPlace() && (r->target == ws::kRestartElevatedCommand || ws::isPowerCommand(r->target)));
     case SelectedRole:
         return m_selected.contains(r->path);
     case ModifiedRole:
@@ -515,7 +604,7 @@ QVariant ResultModel::data(const QModelIndex& index, int role) const
         QVariantList out;
         if (r->isApp() || r->line > 0) // a content match has every term in the file
             return out;
-        for (const auto& [start, length] : folderMatches(r->name, parentFolder(r->path), m_highlights))
+        for (const auto& [start, length] : folderMatches(r->name, parentFolder(r->path), m_highlights, r->fuzzy, m_fuzzyHighlights))
             out << start << length;
         return out;
     }
@@ -660,7 +749,7 @@ QString ResultModel::elidedHtml(
         diagnostics::watchHighlightFont(font); // GitHub #70: the highlights drawn as other characters
     return elide::shortenedHtml(text, ranges, width, font, color, elide::boldWeight(weight));
 }
-void ResultModel::assign(SearchResults items, QStringList highlights)
+void ResultModel::assign(SearchResults items, QStringList highlights, QStringList fuzzyHighlights)
 {
     if (m_folderSizes) m_folderSizes->reset();
     const int oldCount = count();
@@ -671,11 +760,12 @@ void ResultModel::assign(SearchResults items, QStringList highlights)
     // every row depends on the highlights.
     int first = -1;
     int last = -1;
-    if (highlights != m_highlights && common > 0) {
+    if ((highlights != m_highlights || fuzzyHighlights != m_fuzzyHighlights) && common > 0) {
         first = 0;
         last = common - 1;
     }
     m_highlights = std::move(highlights);
+    m_fuzzyHighlights = std::move(fuzzyHighlights);
     for (int i = 0; i < common; ++i) {
         if (m_items[i] == items[i])
             continue;

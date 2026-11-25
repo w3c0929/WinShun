@@ -145,6 +145,17 @@ void SystemTheme::setHoverTips(bool on)
         emit s_instance->changed();
 }
 
+void SystemTheme::setHoverTipKinds(bool interfaceTips, bool actionTips, bool pathTips)
+{
+    if (s_hoverTipsInterface == interfaceTips && s_hoverTipsActions == actionTips && s_hoverTipsPaths == pathTips)
+        return;
+    s_hoverTipsInterface = interfaceTips;
+    s_hoverTipsActions = actionTips;
+    s_hoverTipsPaths = pathTips;
+    if (s_instance)
+        emit s_instance->changed();
+}
+
 void SystemTheme::setBackdropOn(bool on)
 {
     if (s_backdropOn == on)
@@ -172,6 +183,11 @@ void SystemTheme::setGlassAppearance(int transparency, int clarity)
 QMetaObject::Connection SystemTheme::onAppearanceChanged(QObject* context, std::function<void()> slot)
 {
     return s_instance ? QObject::connect(s_instance, &SystemTheme::changed, context, std::move(slot)) : QMetaObject::Connection{};
+}
+
+QMetaObject::Connection SystemTheme::onUiSizeChanged(QObject* context, std::function<void()> slot)
+{
+    return s_instance ? QObject::connect(s_instance, &SystemTheme::uiSizeChanged, context, std::move(slot)) : QMetaObject::Connection{};
 }
 
 void SystemTheme::setUiStyle(const QString& style)

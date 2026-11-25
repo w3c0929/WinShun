@@ -44,6 +44,7 @@ QUrl qmlFolder()
         qmlRegisterType<PhosphorGlyph>("WinShun", 1, 0, "PhosphorGlyph");
         const QUrl url = QUrl::fromLocalFile(QStringLiteral(WINSHUN_QML_DIR) + u'/');
         qmlRegisterSingletonType(url.resolved(QUrl(u"Theme.qml"_s)), "WinShun", 1, 0, "Theme");
+        qmlRegisterSingletonType(url.resolved(QUrl(u"SearchKeys.qml"_s)), "WinShun", 1, 0, "SearchKeys");
         return url;
     }();
     return folder;
@@ -119,52 +120,105 @@ private slots:
         }
     }
 
-    // GitHub #368: with 悬停提示 off, the tips on icons and buttons do not come
-    // up; an essential one (InfoDot's "i") still does; one that is up goes
-    // as the switch is turned off.
+    // GitHub #368, #440: with 悬停提示 off, all non-essential tips stay down;
+    // while on, each category (interface, action, path) is gated independently
+    // across HoverTip and MenuPathTip, and essential tips (InfoDot's "i",
+    // cut-off menu names) always show.
     void hoverTipsSwitch()
     {
-        const auto restore = qScopeGuard([] { SystemTheme::setHoverTips(true); });
+        const auto restore = qScopeGuard([] {
+            SystemTheme::setHoverTips(true);
+            SystemTheme::setHoverTipKinds(true, true, true);
+        });
         SystemTheme::setHoverTips(true);
+        SystemTheme::setHoverTipKinds(true, true, true);
         QQmlEngine engine;
         QQmlComponent component(&engine);
-        component.setData(R"(
-import QtQuick
-import WinShun
-Window {
-    width: 320; height: 220; visible: true
-    property QtObject plain: plainTip
-    property QtObject essential: essentialTip
-    property Item first: a
-    property Item second: b
-    Rectangle { id: a; x: 20; y: 150; width: 40; height: 30 }
-    Rectangle { id: b; x: 200; y: 150; width: 40; height: 30 }
-    HoverTip { id: plainTip; delay: 20; linger: 20; text: "plain" }
-    HoverTip { id: essentialTip; delay: 20; linger: 20; essential: true; text: "essential" }
-}
-)", qmlFolder().resolved(QUrl(u"HoverTipsTest.qml"_s)));
+        component.setData(
+            "import QtQuick\n"
+            "import WinShun\n"
+            "Window {\n"
+            "    id: root\n"
+            "    width: 320; height: 220; visible: true\n"
+            "    property QtObject plain: plainTip\n"
+            "    property QtObject action: actionTip\n"
+            "    property QtObject dynamicTip: sharedTip\n"
+            "    property QtObject essential: essentialTip\n"
+            "    property QtObject pathTip: folderPathTip\n"
+            "    property Item first: a\n"
+            "    property Item second: b\n"
+            "    property Item third: c\n"
+            "    Rectangle { id: a; x: 20; y: 150; width: 40; height: 30 }\n"
+            "    Rectangle { id: b; x: 120; y: 150; width: 40; height: 30 }\n"
+            "    Rectangle { id: c; x: 220; y: 150; width: 40; height: 30 }\n"
+            "    HoverTip { id: plainTip; delay: 20; linger: 20; text: \"plain\" }\n"
+            "    HoverTip { id: actionTip; delay: 20; linger: 20; kind: \"action\"; text: \"action\" }\n"
+            "    HoverTip { id: sharedTip; delay: 20; linger: 20; kind: \"interface\"; text: \"shared\" }\n"
+            "    HoverTip { id: essentialTip; delay: 20; linger: 20; essential: true; text: \"essential\" }\n"
+            "    MenuPathTip { id: folderPathTip; host: root; availableArea: Qt.rect(0, 0, 320, 220); text: \"D:\\\\Work\" }\n"
+            "}\n",
+            qmlFolder().resolved(QUrl(u"HoverTipsTest.qml"_s)));
         std::unique_ptr<QObject> window(component.create());
         QVERIFY2(window, qPrintable(component.errorString()));
         QObject* plain = window->property("plain").value<QObject*>();
+        QObject* action = window->property("action").value<QObject*>();
+        QObject* shared = window->property("dynamicTip").value<QObject*>();
         QObject* essential = window->property("essential").value<QObject*>();
+        QObject* pathTip = window->property("pathTip").value<QObject*>();
         const QVariant first = window->property("first");
         const QVariant second = window->property("second");
-        QVERIFY(plain && essential);
+        const QVariant third = window->property("third");
+        QVERIFY(plain && action && shared && essential && pathTip);
         const auto shown = [](QObject* tip) { return tip->property("shown").toBool(); };
+        const QVariant none = QVariant::fromValue<QQuickItem*>(nullptr);
 
-        plain->setProperty("target", first); // on: as ever
+        plain->setProperty("target", first); // all on: as ever
         QTRY_VERIFY_WITH_TIMEOUT(shown(plain), 1000);
-        plain->setProperty("target", QVariant::fromValue<QQuickItem*>(nullptr));
+        plain->setProperty("target", none);
         QTRY_VERIFY_WITH_TIMEOUT(!shown(plain), 1000);
 
-        SystemTheme::setHoverTips(false); // off: the plain one stays down, the essential one comes
+        // #440 workflow: UI chrome off, row actions & folder menu paths on.
+        SystemTheme::setHoverTipKinds(false, true, true);
         plain->setProperty("target", first);
-        essential->setProperty("target", second);
-        QTRY_VERIFY_WITH_TIMEOUT(shown(essential), 1000);
-        QTest::qWait(200);
+        action->setProperty("target", second);
+        pathTip->setProperty("target", third);
+        QTRY_VERIFY_WITH_TIMEOUT(shown(action), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(shown(pathTip), 1500);
         QVERIFY(!shown(plain));
 
-        plain->setProperty("target", QVariant::fromValue<QQuickItem*>(nullptr));
+        // Shared row tip dynamically switching kind (onKeys "interface" -> hovered "action").
+        shared->setProperty("target", first);
+        QTest::qWait(80);
+        QVERIFY(!shown(shared));
+        shared->setProperty("kind", u"action"_s);
+        QTRY_VERIFY_WITH_TIMEOUT(shown(shared), 1000);
+        shared->setProperty("kind", u"interface"_s);
+        QVERIFY(!shown(shared)); // dismissed immediately on disallow
+
+        // Turning off folder menu paths hides MenuPathTip unless essential (cut-off name).
+        SystemTheme::setHoverTipKinds(false, true, false);
+        QTRY_VERIFY_WITH_TIMEOUT(!shown(pathTip), 1000);
+        pathTip->setProperty("essential", true);
+        QTRY_VERIFY_WITH_TIMEOUT(shown(pathTip), 1500);
+        pathTip->setProperty("essential", false);
+        QTRY_VERIFY_WITH_TIMEOUT(!shown(pathTip), 1000);
+        pathTip->setProperty("target", none);
+        action->setProperty("target", none);
+        shared->setProperty("target", none);
+
+        // Master switch off: every non-essential category stays down, essential stays up.
+        SystemTheme::setHoverTipKinds(true, true, true);
+        SystemTheme::setHoverTips(false);
+        plain->setProperty("target", first);
+        action->setProperty("target", second);
+        essential->setProperty("target", third);
+        QTRY_VERIFY_WITH_TIMEOUT(shown(essential), 1000);
+        QTest::qWait(120);
+        QVERIFY(!shown(plain));
+        QVERIFY(!shown(action));
+
+        plain->setProperty("target", none);
+        action->setProperty("target", none);
         SystemTheme::setHoverTips(true);
         plain->setProperty("target", first);
         QTRY_VERIFY_WITH_TIMEOUT(shown(plain), 1000);
@@ -600,6 +654,10 @@ Window {
                 readonly property int header: Theme.headerHeight
                 readonly property int row: Theme.rowHeight
                 readonly property int body: Theme.uiBody
+                readonly property int fontDisplay: Theme.fontDisplay
+                readonly property int fontTitle: Theme.fontTitle
+                readonly property int fontBody: Theme.fontBody
+                readonly property int fontCaption: Theme.fontCaption
             }
         )", folder);
         std::unique_ptr<QObject> values(probe.create());
@@ -617,11 +675,18 @@ Window {
         const int headers[] {44, 56, 64, 72, 64};
         const int rows[] {32, 52, 60, 68, 60};
         const int bodies[] {14, 14, 16, 18, 16};
+        const int displays[] {24, 24, 28, 32, 28};
+        const int titles[] {16, 16, 18, 20, 18};
+        const int captions[] {12, 12, 14, 16, 14};
         for (int i = 0; i < sizes.size(); ++i) {
             SystemTheme::setUiSize(sizes[i]);
             QCOMPARE(values->property("header").toInt(), headers[i]);
             QCOMPARE(values->property("row").toInt(), rows[i]);
             QCOMPARE(values->property("body").toInt(), bodies[i]);
+            QCOMPARE(values->property("fontDisplay").toInt(), displays[i]);
+            QCOMPARE(values->property("fontTitle").toInt(), titles[i]);
+            QCOMPARE(values->property("fontBody").toInt(), bodies[i]);
+            QCOMPARE(values->property("fontCaption").toInt(), captions[i]);
         }
         QCOMPARE(resized.count(), 5);
 
@@ -911,6 +976,157 @@ Window {
             QVERIFY2(unlike / ink < 0.05, qPrintable(what));
             QVERIFY2(std::abs(middleX - middleY) < 0.05, qPrintable(what));
             QVERIFY2(std::abs(middleX) <= 0.55, qPrintable(what));
+        }
+    }
+
+    // SearchKeys.uiZoomAction, UiSizeToast rendering, and Qt Quick Shortcut
+    // delivery for Ctrl++ / Ctrl+= / Ctrl+- / Ctrl+0 (main and numpad keys).
+    void uiZoomKeysAndToast()
+    {
+        QTest::failOnWarning();
+        const auto restore = qScopeGuard([] { SystemTheme::setUiSize(u"standard"_s); });
+        const QUrl folder = qmlFolder();
+        QQmlEngine engine;
+        QQmlComponent component(&engine);
+        component.setData(
+            "import QtQuick\n"
+            "import WinShun\n"
+            "Window {\n"
+            "    id: root\n"
+            "    width: 360; height: 180; visible: true\n"
+            "    property var deltas: []\n"
+            "    property Item toastItem: toast\n"
+            "    function checkZoom(key: int, mods: int): int { return SearchKeys.uiZoomAction(key, mods) }\n"
+            "    Shortcut { sequences: SearchKeys.zoomInSequences; autoRepeat: false; onActivated: root.deltas = root.deltas.concat([1]) }\n"
+            "    Shortcut { sequences: SearchKeys.zoomOutSequences; autoRepeat: false; onActivated: root.deltas = root.deltas.concat([-1]) }\n"
+            "    Shortcut { sequences: SearchKeys.zoomResetSequences; autoRepeat: false; onActivated: root.deltas = root.deltas.concat([0]) }\n"
+            "    UiSizeToast { id: toast; anchors.centerIn: parent; dpr: Screen.devicePixelRatio }\n"
+            "}\n",
+            folder.resolved(QUrl(u"UiZoomTest.qml"_s)));
+        std::unique_ptr<QObject> object(component.create());
+        QVERIFY2(object, qPrintable(component.errorString()));
+        auto* window = qobject_cast<QQuickWindow*>(object.get());
+        QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+
+        const auto action = [&](int key, Qt::KeyboardModifiers mods) {
+            int result = -99;
+            QMetaObject::invokeMethod(window, "checkZoom", Q_RETURN_ARG(int, result),
+                Q_ARG(int, key), Q_ARG(int, int(mods)));
+            return result;
+        };
+        // Zoom in: Ctrl+=, Ctrl++, Ctrl+Shift+=, Ctrl+Numpad+
+        QCOMPARE(action(Qt::Key_Equal, Qt::ControlModifier), 1);
+        QCOMPARE(action(Qt::Key_Plus, Qt::ControlModifier), 1);
+        QCOMPARE(action(Qt::Key_Plus, Qt::ControlModifier | Qt::ShiftModifier), 1);
+        QCOMPARE(action(Qt::Key_Equal, Qt::ControlModifier | Qt::ShiftModifier), 1);
+        QCOMPARE(action(Qt::Key_Plus, Qt::ControlModifier | Qt::KeypadModifier), 1);
+        // Zoom out: Ctrl+-, Ctrl+Numpad-
+        QCOMPARE(action(Qt::Key_Minus, Qt::ControlModifier), -1);
+        QCOMPARE(action(Qt::Key_Minus, Qt::ControlModifier | Qt::KeypadModifier), -1);
+        // Reset: Ctrl+0, Ctrl+Numpad0
+        QCOMPARE(action(Qt::Key_0, Qt::ControlModifier), 2);
+        QCOMPARE(action(Qt::Key_0, Qt::ControlModifier | Qt::KeypadModifier), 2);
+        // Rejected chords: plain, Alt, AltGr, Win, shifted minus/zero, digits 1..9
+        QCOMPARE(action(Qt::Key_Plus, Qt::NoModifier), 0);
+        QCOMPARE(action(Qt::Key_Equal, Qt::AltModifier), 0);
+        QCOMPARE(action(Qt::Key_Equal, Qt::ControlModifier | Qt::AltModifier), 0);
+        QCOMPARE(action(Qt::Key_Plus, Qt::ControlModifier | Qt::MetaModifier), 0);
+        QCOMPARE(action(Qt::Key_Minus, Qt::ControlModifier | Qt::ShiftModifier), 0);
+        QCOMPARE(action(Qt::Key_0, Qt::ControlModifier | Qt::ShiftModifier), 0);
+        QCOMPARE(action(Qt::Key_1, Qt::ControlModifier), 0);
+
+        // UiSizeToast presentation and dismissal.
+        auto* toast = window->property("toastItem").value<QQuickItem*>();
+        QVERIFY(toast);
+        QVERIFY(!toast->isVisible());
+        QMetaObject::invokeMethod(toast, "present", Q_ARG(QString, u"界面大小：宽松"_s), Q_ARG(int, 3), Q_ARG(int, 4));
+        QCOMPARE(toast->property("shown").toBool(), true);
+        QCOMPARE(toast->property("message").toString(), u"界面大小：宽松"_s);
+        QCOMPARE(toast->property("level").toInt(), 3);
+        QVERIFY(toast->implicitWidth() > 40);
+        QVERIFY(toast->implicitHeight() >= 32);
+        QMetaObject::invokeMethod(toast, "dismiss");
+        QCOMPARE(toast->property("shown").toBool(), false);
+
+        // Live Shortcut delivery via QTest::keyClick.
+        const auto click = [&](Qt::Key key, Qt::KeyboardModifiers mods, int expected) {
+            window->setProperty("deltas", QVariantList {});
+            QTest::keyClick(window, key, mods);
+            QCOMPARE(window->property("deltas").toList(), QVariantList {expected});
+        };
+        click(Qt::Key_Equal, Qt::ControlModifier, 1);
+        click(Qt::Key_Plus, Qt::ControlModifier, 1);
+        click(Qt::Key_Plus, Qt::ControlModifier | Qt::ShiftModifier, 1);
+        click(Qt::Key_Equal, Qt::ControlModifier | Qt::ShiftModifier, 1);
+        click(Qt::Key_Plus, Qt::ControlModifier | Qt::KeypadModifier, 1);
+        click(Qt::Key_Minus, Qt::ControlModifier, -1);
+        click(Qt::Key_Minus, Qt::ControlModifier | Qt::KeypadModifier, -1);
+        click(Qt::Key_0, Qt::ControlModifier, 0);
+        click(Qt::Key_0, Qt::ControlModifier | Qt::KeypadModifier, 0);
+    }
+
+    // WindowFrame + WS_EX_LAYERED (both panel-style setResizable and ownFrame
+    // WS_OVERLAPPEDWINDOW) must suppress GDI WM_NCPAINT so the legacy Aero
+    // Basic frame never bleeds through transparent Mica/Acrylic surfaces.
+    void windowFrameSuppressesLayeredNcPaint()
+    {
+        for (const bool ownFrame : {false, true}) {
+            QWindow window;
+            window.setFlags(ownFrame ? (Qt::Window | Qt::FramelessWindowHint)
+                                     : (Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint));
+            window.setGeometry(140, 140, 480, 320);
+            window.create();
+            const HWND hwnd = reinterpret_cast<HWND>(window.winId());
+            ::SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ::GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED);
+            ::SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+            WindowFrame frame(ownFrame);
+            frame.setWindow(&window);
+            win::styleFramelessWindow(&window, true);
+            if (!ownFrame)
+                win::setWindowShadow(&window, win::WindowShadow::Light);
+            window.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+            if (!ownFrame) {
+                win::setWindowShadow(&window, win::WindowShadow::Standard);
+                frame.setResizable(true);
+                window.resize(640, 400);
+            }
+            ::SendMessageW(hwnd, WM_NCPAINT, 1, 0);
+            ::SendMessageW(hwnd, WM_NCACTIVATE, TRUE, 0);
+            ::SendMessageW(hwnd, WM_NCACTIVATE, FALSE, 0);
+            ::SendMessageW(hwnd, WM_NCACTIVATE, TRUE, 0);
+            QTest::qWait(30);
+            ::DwmFlush();
+
+            RECT rc {};
+            QVERIFY(::GetWindowRect(hwnd, &rc));
+            const int w = rc.right - rc.left;
+            const int h = rc.bottom - rc.top;
+            const HDC screen = ::GetDC(nullptr);
+            const HDC mem = ::CreateCompatibleDC(screen);
+            BITMAPINFO bi {};
+            bi.bmiHeader = {sizeof(BITMAPINFOHEADER), w, -h, 1, 32, BI_RGB};
+            void* bits = nullptr;
+            const HBITMAP bmp = ::CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+            const HGDIOBJ old = ::SelectObject(mem, bmp);
+            const BOOL ok = ::PrintWindow(hwnd, mem, PW_RENDERFULLCONTENT);
+            QImage shot;
+            if (ok && bits)
+                shot = QImage(static_cast<const uchar*>(bits), w, h, w * 4, QImage::Format_ARGB32).copy();
+            ::SelectObject(mem, old);
+            ::DeleteObject(bmp);
+            ::DeleteDC(mem);
+            ::ReleaseDC(nullptr, screen);
+            QVERIFY(!shot.isNull());
+            const auto diff = [](QRgb a, QRgb b) {
+                return std::max({std::abs(qRed(a) - qRed(b)), std::abs(qGreen(a) - qGreen(b)), std::abs(qBlue(a) - qBlue(b))});
+            };
+            QVERIFY2(diff(shot.pixel(w / 2, 10), shot.pixel(w / 2, 60)) <= 20, ownFrame ? "ownFrame top NC bleed" : "panel top NC bleed");
+            QVERIFY2(diff(shot.pixel(4, h / 2), shot.pixel(28, h / 2)) <= 20, ownFrame ? "ownFrame left NC bleed" : "panel left NC bleed");
+            QVERIFY2(diff(shot.pixel(w - 5, h / 2), shot.pixel(w - 29, h / 2)) <= 20, ownFrame ? "ownFrame right NC bleed" : "panel right NC bleed");
+            window.hide();
         }
     }
 };

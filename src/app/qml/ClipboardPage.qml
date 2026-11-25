@@ -8,7 +8,8 @@ import WinShun
 // full on the right when asked for (a click on the row, Alt+P, → at the end
 // of the search). A brief hover opens a separate, temporary preview. A row's paste
 // button or a double click pastes it into the program that was in front,
-// as Enter does; Shift+Enter as plain text, Alt+1…9 the first nine rows, Ctrl/Shift pick
+// as Enter does; Shift+Enter the other way (as plain text, or kept formatted
+// when plain is the usual: Clipboard.pastePlain), Alt+1…9 the first nine rows, Ctrl/Shift pick
 // several, Tab switches categories. Opened from a field of Win顺's own (a
 // search box, which it drops down under), it pastes into that field, and Esc
 // goes back to it (Clipboard). Over another program that keeps the focus,
@@ -179,6 +180,7 @@ Item {
                                    : clipboard.numberKeys === "ctrl" ? Qt.Key_Control : -1
     NumberHints {
         id: numberHints
+        objectName: "clipboardNumberHints"
         mode: page.clipboard.numberHints
         key: page.numberKey
         // Over another app the existing KeyRouter delivers modifier keys too.
@@ -192,7 +194,7 @@ Item {
         id: shownRows
         view: list
         tracking: numberHints.hintOpacity > 0 || numberHints.jumping // not per frame of a scroll while nothing shows
-        span: numberHints.jumping ? numberHints.letters.length : 9 // a letter each, past the ninth row too
+        span: numberHints.lettersShown ? numberHints.letters.length : 9 // a letter each, past the ninth row too
     }
     // A key while the letters show: a letter pastes its row (a picked one:
     // all the picked ones, as Enter or a click does), and is taken.
@@ -401,6 +403,16 @@ Item {
             }
         }
     }
+    // Text selected in the preview that shows, the one beside the list or
+    // the one the pointer brought up (that window never has the keys, so
+    // Ctrl+C and Enter in the page ask it; GitHub #439).
+    readonly property string previewSelection: previewOpen ? preview.selectedText : (hoverLoader.item?.selectedText ?? "")
+    // Ctrl+C: what is selected there, copied as a new entry; false: nothing is.
+    function copyPreviewSelection(): bool {
+        if (previewOpen)
+            return (fileView.item?.copySelection() ?? false) || preview.copySelection()
+        return hoverLoader.item?.copySelection() ?? false
+    }
     Timer {
         id: hoverLeaveTimer
         interval: 120 // let the pointer cross the gap to scroll/read the preview
@@ -417,6 +429,7 @@ Item {
                 availableArea: page.frame.availableArea(page)
                 metrics: page.metrics
                 info: page.previewRevision >= 0 ? page.clipboard.preview(page.previewIndex) : ({})
+                plainByDefault: page.clipboard.pastePlain
                 onCopyRequested: (text, remember) => page.clipboard.copyText(text, remember)
                 onHoveredChanged: if (!hovered) hoverLeaveTimer.restart()
                 wordsShown: page.clipboard.pictureWords
@@ -566,6 +579,21 @@ Item {
         const ctrl = (event.modifiers & Qt.ControlModifier) !== 0
         const shift = (event.modifiers & Qt.ShiftModifier) !== 0
         const alt = (event.modifiers & Qt.AltModifier) !== 0
+        const zoom = SearchKeys.uiZoomAction(event.key, event.modifiers)
+        if (zoom !== SearchKeys.zoomNone) {
+            if (pictureViewOpen && pictureViewLoader.item) {
+                if (zoom === SearchKeys.zoomIn)
+                    pictureViewLoader.item.zoomIn()
+                else if (zoom === SearchKeys.zoomOut)
+                    pictureViewLoader.item.zoomOut()
+                else
+                    pictureViewLoader.item.resetZoom()
+            } else if (!event.isAutoRepeat) {
+                page.clipboard.adjustUiSize(zoom === SearchKeys.zoomReset ? 0 : zoom)
+            }
+            event.accepted = true
+            return
+        }
         if (ctrl && !alt && !shift && event.key === Qt.Key_G) {
             findingGroup ? cancelGroupSearch() : beginGroupSearch()
             event.accepted = true
@@ -634,8 +662,8 @@ Item {
         case Qt.Key_Enter:
             if (!clipboard.recording)
                 clipboard.turnOn()
-            else if (previewOpen && selectedCount === 0 && preview.selectedText.length > 0)
-                clipboard.pasteText(preview.selectedText) // part of the entry, selected in the preview (GitHub #375)
+            else if (selectedCount === 0 && previewSelection.length > 0)
+                clipboard.pasteText(previewSelection) // part of the entry, selected in a preview (GitHub #375, #439)
             else if (list.count > 0)
                 clipboard.paste(targetRow(), shift)
             break
@@ -657,11 +685,12 @@ Item {
         case Qt.Key_Backtab: clipboard.cycleCategory(-1); break
         case Qt.Key_C:
             // Ctrl+C copies text selected in the field, or what is selected
-            // in the preview (a picture's words, a file's lines); otherwise
-            // the entry.
+            // in a preview (a picture's words, a file's lines; the one beside
+            // the list or the one the pointer brought up, GitHub #439);
+            // otherwise the entry.
             if (!ctrl || (input.selectedText.length > 0 && selectedCount === 0))
                 return
-            if (!previewOpen || selectedCount > 0 || !(fileView.item?.copySelection() || preview.copySelection()))
+            if (selectedCount > 0 || !copyPreviewSelection())
                 clipboard.copy(targetRow())
             break
         case Qt.Key_P:
@@ -1206,6 +1235,8 @@ Item {
                         height: clipRow.picture ? page.pictureRowHeight : page.rowHeight
                         hint: page.numberKey >= 0 && !numberHints.jumping ? shownRows.numberOf(index) : 0
                         hintLetter: numberHints.letterOf(shownRows.numberOf(index) - 1)
+                        hintArmed: numberHints.jumping
+                        hintJumpKey: numberHints.jumpKeyName
                         reserveHintSpace: (page.numberKey >= 0 && page.clipboard.numberHints !== "off") || page.clipboard.letterJump
                         hintOpacity: numberHints.hintOpacity
                         hintModifier: page.numberKey === Qt.Key_Control ? "Ctrl" : "Alt"
@@ -1347,6 +1378,7 @@ Item {
             ClipPreview {
                 id: preview
                 metrics: page.metrics
+                plainByDefault: page.clipboard.pastePlain
                 visible: page.previewOpen && !page.findingGroup
                 onCopyRequested: (text, remember) => page.clipboard.copyText(text, remember)
                 pictureZoomable: true
@@ -1408,6 +1440,7 @@ Item {
                 onCancelled: page.endEdit(false)
                 // The list or the search clicked, another window: put by, not lost.
                 onFocusLost: page.endEdit(true)
+                onUiSizeRequested: (delta) => page.clipboard.adjustUiSize(delta)
             }
 
             // The edge between the list and the preview: drag to size the
@@ -1687,6 +1720,7 @@ Item {
                 context: ({
                     numberModifier: page.numberKey < 0 ? "" : modifier, // the numbers in the rows' left column
                     intoField: page.intoField,
+                    plainByDefault: page.clipboard.pastePlain,
                     holdKey: page.clipboard.holdToStep ? page.clipboard.shortcut : ""
                 })
             }

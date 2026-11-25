@@ -13,7 +13,8 @@
 # UI Automation probe (UiaProbe), the delayed capture's countdown
 # (CountdownWindow) and a pin's key card (GitHub #343: PinKeyCard), and the keys a recording shows (GitHub #98: Keycaps, which
 # keys and rows; KeycapRender, their picture; KeyStream, the hooks while
-# recording). What the
+# recording), and the recording's pointer trail (CursorTrail, its line;
+# CursorArt, the pointer drawn over it as Windows shows it). What the
 # overlays bind to (CaptureSession, CaptureImage) and the controller
 # (Capture) are in this folder too, but built into WinShun's QML module
 # (src/app/CMakeLists.txt), which registers their types.
@@ -44,6 +45,8 @@ add_library(wscapture STATIC
     RecordingWorker.cpp RecordingWorker.h
     GifExport.cpp GifExport.h
     RecordingPointer.cpp RecordingPointer.h
+    CursorTrail.cpp CursorTrail.h
+    CursorArt.cpp CursorArt.h
     Keycaps.cpp Keycaps.h
     KeycapRender.cpp KeycapRender.h
     KeyStream.cpp KeyStream.h
@@ -60,15 +63,20 @@ add_library(wscapture STATIC
     TranslateOverlay.cpp TranslateOverlay.h
     ScrollStitcher.cpp ScrollStitcher.h
     ScrollInput.cpp ScrollInput.h
+    ScrollAutoEngine.cpp ScrollAutoEngine.h
     ScrollGrabber.cpp ScrollGrabber.h
     ScrollDiagnostics.cpp ScrollDiagnostics.h
     QrCode.cpp QrCode.h
     PinTools.cpp PinTools.h
+    PinGroups.cpp PinGroups.h
+    PinHistory.cpp PinHistory.h
+    PictureWrite.cpp PictureWrite.h
     CaptureTools.cpp CaptureTools.h
     CaptureHistory.cpp CaptureHistory.h
     UiaProbe.cpp UiaProbe.h
     CountdownWindow.cpp CountdownWindow.h
     PinKeyCard.cpp PinKeyCard.h
+    PinPill.cpp PinPill.h
     CaptureDiagnostics.cpp CaptureDiagnostics.h
     LaserTrail.cpp LaserTrail.h
     LiveStroke.cpp LiveStroke.h
@@ -77,7 +85,7 @@ add_library(wscapture STATIC
 target_include_directories(wscapture PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # miniz: the projects' zip (AnnotationFormat). ole32: UI Automation (ScrollInput).
 target_link_libraries(wscapture PUBLIC winshun_options Qt6::Gui
-    PRIVATE miniz ZXing::ZXing windowsapp windowscodecs d3d11 d2d1 dxgi mfplat mfreadwrite mfuuid oleaut32 dwmapi user32 gdi32 advapi32 ole32)
+    PRIVATE miniz ZXing::ZXing windowsapp windowscodecs d3d11 d2d1 dxgi mfplat mfreadwrite mfuuid oleaut32 dwmapi user32 gdi32 advapi32 ole32 winmm)
 
 # Optional media components: Windows N still starts and takes screenshots.
 target_link_options(wscapture INTERFACE /DELAYLOAD:mfplat.dll /DELAYLOAD:mfreadwrite.dll)

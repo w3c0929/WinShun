@@ -984,6 +984,50 @@ private slots:
             }
         }
     }
+
+    void settingsEdgeScrollRoundTrip()
+    {
+        const State state = defaultState();
+        for (const QString& mode : {u"off"_s, u"light"_s, u"steady"_s}) {
+            const Plan plan = makePlan(state, one(u"Appearance/SettingsEdgeScroll"_s, mode), {});
+            QVERIFY2(plan.problems.isEmpty(), qPrintable(problemText(plan)));
+            QCOMPARE(plan.result.settings.settingsEdgeScroll, mode);
+        }
+        const Plan bad = makePlan(state, one(u"Appearance/SettingsEdgeScroll"_s, u"turbo"_s), {});
+        QVERIFY(!bad.problems.isEmpty());
+    }
+
+    void dialogBarSuggestionSources()
+    {
+        const State state = defaultState();
+        // #438: all four dialog suggestion sources can be turned off together.
+        QJsonArray allDialogOff;
+        for (const QString& key : {u"Launcher/DialogBarSuggestOpen"_s, u"Launcher/DialogBarSuggestClipboard"_s,
+                 u"Launcher/DialogBarSuggestFavorites"_s, u"Launcher/DialogBarSuggestRecent"_s}) {
+            allDialogOff.append(QJsonObject {{u"key"_s, key}, {u"value"_s, false}});
+        }
+        const Plan dialogPlan = makePlan(state, allDialogOff, {});
+        QVERIFY2(dialogPlan.problems.isEmpty(), qPrintable(problemText(dialogPlan)));
+        QVERIFY(!dialogPlan.result.settings.dialogBarSuggestOpen && !dialogPlan.result.settings.dialogBarSuggestClipboard
+            && !dialogPlan.result.settings.dialogBarSuggestFavorites && !dialogPlan.result.settings.dialogBarSuggestRecent);
+    }
+
+    void hoverTipKinds()
+    {
+        const State state = defaultState();
+        // #440: disabling UI tips while keeping actions & paths succeeds; disabling all three is refused.
+        const Plan uiOff = makePlan(state, one(u"Appearance/HoverTipsInterface"_s, false), {});
+        QVERIFY2(uiOff.problems.isEmpty(), qPrintable(problemText(uiOff)));
+        QVERIFY(!uiOff.result.settings.hoverTipsInterface);
+        QVERIFY(uiOff.result.settings.hoverTipsActions && uiOff.result.settings.hoverTipsPaths);
+
+        QJsonArray allTipsOff;
+        for (const QString& key : {u"Appearance/HoverTipsInterface"_s, u"Appearance/HoverTipsActions"_s,
+                 u"Appearance/HoverTipsPaths"_s}) {
+            allTipsOff.append(QJsonObject {{u"key"_s, key}, {u"value"_s, false}});
+        }
+        QVERIFY(!makePlan(state, allTipsOff, {}).problems.isEmpty());
+    }
 };
 
 QTEST_GUILESS_MAIN(AiSettingsTest)

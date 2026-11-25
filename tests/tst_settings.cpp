@@ -10,6 +10,7 @@
 #include "Win32Util.h"
 
 #include "ServiceVolumeAccess.h"
+#include "PictureFile.h"
 #include "platform/InputMode.h"
 
 #include <QCoreApplication>
@@ -56,6 +57,26 @@ private slots:
         QVERIFY(restored.saveChecked());
         settings.load();
         QVERIFY(!settings.pureSearch);
+    }
+    void fuzzyModePreference()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        ws::Settings settings;
+        settings.load();
+        QCOMPARE(settings.fuzzyMode, u"fallback"_s);
+        for (const QString& mode : {u"off"_s, u"on"_s, u"fallback"_s}) {
+            settings.fuzzyMode = mode;
+            QVERIFY(settings.saveChecked());
+            ws::Settings restored;
+            restored.load();
+            QCOMPARE(restored.fuzzyMode, mode);
+        }
+        settings.fuzzyMode = u"invalid"_s;
+        QVERIFY(settings.saveChecked());
+        settings.load();
+        QCOMPARE(settings.fuzzyMode, u"fallback"_s);
     }
     void doubleTapActionPreference()
     {
@@ -675,6 +696,132 @@ private slots:
         QVERIFY(secondChanged);
         QCOMPARE(second, (InputMode {.open = false, .conversion = 0}));
         QVERIFY(!opening({.open = false, .conversion = 0}).second); // English already: nothing to put back
+
+        // Cold first-boot TSF desync and post-open settle guard merge semantics.
+        QVERIFY(!ws::win::needsLettersSwitch({.open = false, .conversion = IME_CMODE_SYMBOL}));
+        QVERIFY(ws::win::needsLettersSwitch({.open = true, .conversion = 0}));
+        QVERIFY(ws::win::needsLettersSwitch({.open = false, .conversion = IME_CMODE_NATIVE}));
+        QVERIFY(ws::win::needsLettersSwitch({.open = false, .conversion = IME_CMODE_FULLSHAPE}));
+
+        // IMM32 reads English at t=0 while TSF compartment already reports Chinese: combined view catches it.
+        const InputMode desynced = ws::win::combineInputMode(
+            {.open = false, .conversion = IME_CMODE_SYMBOL, .sentence = 4},
+            true,
+            DWORD {IME_CMODE_NATIVE | IME_CMODE_SYMBOL});
+        QVERIFY(desynced.open);
+        QCOMPARE(desynced.conversion, DWORD {IME_CMODE_NATIVE | IME_CMODE_SYMBOL});
+        QCOMPARE(desynced.sentence, DWORD {4});
+        QVERIFY(ws::win::needsLettersSwitch(desynced));
+
+        // Initial t=0 switch saw cold uninitialized context (changed=false);
+        // 40 ms later cold TSF pushed Chinese and settle guard re-switched (changed=true).
+        // Merging records the true Chinese before-state so hiding restores it.
+        const HIMC fakeContext = reinterpret_cast<HIMC>(static_cast<std::uintptr_t>(0x1234));
+        const ws::win::LettersSwitch coldInitial {
+            .context = fakeContext,
+            .changed = false,
+            .before = {.open = false, .conversion = 0},
+            .after = {.open = false, .conversion = 0},
+        };
+        const ws::win::LettersSwitch asyncChinese {
+            .context = fakeContext,
+            .changed = true,
+            .before = {.open = true, .conversion = IME_CMODE_NATIVE},
+            .after = {.open = false, .conversion = 0},
+            .tsfBeforeConversion = DWORD {IME_CMODE_NATIVE},
+        };
+        const ws::win::LettersSwitch mergedCold = ws::win::mergeLettersSwitch(coldInitial, asyncChinese);
+        QVERIFY(mergedCold.changed);
+        QCOMPARE(mergedCold.before, asyncChinese.before);
+        QCOMPARE(mergedCold.tsfBeforeConversion, std::optional<DWORD> {IME_CMODE_NATIVE});
+
+        // If t=0 already recorded a real before-state, a later settle retry keeps that original before-state.
+        const ws::win::LettersSwitch warmInitial {
+            .context = fakeContext,
+            .changed = true,
+            .before = {.open = true, .conversion = IME_CMODE_NATIVE | IME_CMODE_SYMBOL, .sentence = 8},
+            .after = {.open = false, .conversion = IME_CMODE_SYMBOL, .sentence = 8},
+            .tsfBeforeConversion = DWORD {IME_CMODE_NATIVE | IME_CMODE_SYMBOL},
+        };
+        const ws::win::LettersSwitch mergedWarm = ws::win::mergeLettersSwitch(warmInitial, asyncChinese);
+        QVERIFY(mergedWarm.changed);
+        QCOMPARE(mergedWarm.before, warmInitial.before);
+        QCOMPARE(mergedWarm.tsfBeforeConversion, warmInitial.tsfBeforeConversion);
+
+        // First activation after boot uses a wider bounded settle schedule than warm openings.
+        const auto firstSched = ws::win::lettersSettleSchedule(true);
+        const auto warmSched = ws::win::lettersSettleSchedule(false);
+        QVERIFY(!firstSched.empty() && !warmSched.empty());
+        int firstTotal = 0;
+        for (int ms : firstSched)
+            firstTotal += ms;
+        int warmTotal = 0;
+        for (int ms : warmSched)
+            warmTotal += ms;
+        QVERIFY(firstTotal > warmTotal);
+        QVERIFY(firstTotal <= 650);
+        QVERIFY(warmTotal <= 200);
+    }
+
+    void explorerPinPicture()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        ws::Settings settings;
+        settings.load();
+        QVERIFY(settings.explorerPinPicture);
+        settings.explorerPinPicture = false;
+        settings.save();
+        QSettings ini(ws::Settings::filePath(), QSettings::IniFormat);
+        QCOMPARE(ini.value(u"Launcher/ExplorerPinPicture"_s).toBool(), false);
+        ws::Settings restored;
+        restored.load();
+        QVERIFY(!restored.explorerPinPicture);
+        settings.explorerPinPicture = true;
+        settings.save();
+        restored.load();
+        QVERIFY(restored.explorerPinPicture);
+
+        // The pictures 贴到屏幕 is on: in the launcher, the clipboard history and Explorer alike.
+        for (const QString& ok : {
+                 u"C:\\img\\a.png"_s,
+                 u"C:\\img\\photo.JPG"_s,
+                 u"C:\\Users\\ZHAO\\临时文件\\123\\图 (三方).webp"_s,
+                 u"D:/shots/sample.WEBP"_s,
+                 u"D:\\phone\\IMG_001.heic"_s,
+                 u"D:\\phone\\IMG_002.heif"_s,
+                 u"D:\\web\\banner.avif"_s,
+                 u"D:\\scan\\page.tiff"_s,
+                 u"D:\\app\\app.ico"_s,
+                 u"D:\\photo\\old.jfif"_s,
+             }) {
+            QVERIFY2(ws::isPinnablePicture(ok), qPrintable(ok));
+        }
+        for (const QString& bad : {
+                 u"C:\\img\\vector.svg"_s,
+                 u"C:\\img\\design.psd"_s,
+                 u"C:\\img\\note.txt"_s,
+                 u"C:\\img\\fake.png.txt"_s,
+                 u"C:\\dir.png\\readme"_s,
+                 u"C:\\img\\noext"_s,
+                 u"C:\\img\\trailingdot."_s,
+             }) {
+            QVERIFY2(!ws::isPinnablePicture(bad), qPrintable(bad));
+        }
+        // Explorer's entry is one verb per extension (ShellMenu.cpp), which the
+        // uninstaller takes away by a list of its own: the same extensions.
+        QFile script(QStringLiteral(WINSHUN_INSTALLER_SCRIPT));
+        QVERIFY2(script.open(QIODevice::ReadOnly), qPrintable(script.fileName()));
+        const QString text = QString::fromUtf8(script.readAll());
+        const qsizetype from = text.indexOf(u"Pictures := StringSplit('");
+        QVERIFY2(from >= 0, "the uninstaller's picture extensions are not where they were");
+        const qsizetype start = from + QStringView(u"Pictures := StringSplit('").size();
+        const QStringList uninstalled = text.sliced(start, text.indexOf(u'\'', start) - start).split(u',');
+        QStringList pinned;
+        for (const QStringView extension : ws::kPinnablePictureExtensions)
+            pinned.append(extension.toString());
+        QCOMPARE(uninstalled, pinned);
     }
 
     void startListOptions()
@@ -852,6 +999,54 @@ private slots:
         QCOMPARE(ws::uisize::metrics(u"dense").barHeight, ws::uisize::metrics(u"compact").barHeight);
         QCOMPARE(ws::uisize::metrics(u"dense").barRow, ws::uisize::metrics(u"compact").barRow);
         QCOMPARE(ws::uisize::metrics(u"dense").askHeight, ws::uisize::metrics(u"compact").askHeight);
+
+        // Validation, stepping (Ctrl++ / Ctrl+- / Ctrl+0) and feedback messages.
+        QVERIFY(ws::uisize::isValid(u"dense"));
+        QVERIFY(ws::uisize::isValid(u"compact"));
+        QVERIFY(ws::uisize::isValid(u"standard"));
+        QVERIFY(ws::uisize::isValid(u"roomy"));
+        QVERIFY(!ws::uisize::isValid(u"huge"));
+        QVERIFY(!ws::uisize::isValid(u"follow"));
+        QCOMPARE(ws::uisize::fontStep(Size::Dense), 0);
+        QCOMPARE(ws::uisize::fontStep(Size::Compact), 0);
+        QCOMPARE(ws::uisize::fontStep(Size::Standard), 1);
+        QCOMPARE(ws::uisize::fontStep(Size::Roomy), 2);
+
+        const auto upFromStandard = ws::uisize::step(Size::Standard, +1);
+        QCOMPARE(upFromStandard.size, Size::Roomy);
+        QVERIFY(upFromStandard.changed && !upFromStandard.atLimit);
+        QVERIFY(ws::uisize::feedback(upFromStandard, +1).contains(u"宽松"_s));
+
+        const auto upAtMax = ws::uisize::step(Size::Roomy, +1);
+        QCOMPARE(upAtMax.size, Size::Roomy);
+        QVERIFY(!upAtMax.changed && upAtMax.atLimit);
+        QVERIFY(ws::uisize::feedback(upAtMax, +1).contains(u"已是最大"_s));
+
+        const auto downFromStandard = ws::uisize::step(Size::Standard, -1);
+        QCOMPARE(downFromStandard.size, Size::Compact);
+        QVERIFY(downFromStandard.changed && !downFromStandard.atLimit);
+        const auto downToDense = ws::uisize::step(Size::Compact, -1);
+        QCOMPARE(downToDense.size, Size::Dense);
+        QVERIFY(downToDense.changed && !downToDense.atLimit);
+        const auto downAtMin = ws::uisize::step(Size::Dense, -1);
+        QCOMPARE(downAtMin.size, Size::Dense);
+        QVERIFY(!downAtMin.changed && downAtMin.atLimit);
+        QVERIFY(ws::uisize::feedback(downAtMin, -1).contains(u"已是最小"_s));
+
+        const auto resetFromRoomy = ws::uisize::step(Size::Roomy, 0);
+        QCOMPARE(resetFromRoomy.size, Size::Standard);
+        QVERIFY(resetFromRoomy.changed && !resetFromRoomy.atLimit);
+        QVERIFY(ws::uisize::feedback(resetFromRoomy, 0).contains(u"已恢复默认"_s));
+
+        const auto resetAtStandard = ws::uisize::step(Size::Standard, 0);
+        QCOMPARE(resetAtStandard.size, Size::Standard);
+        QVERIFY(!resetAtStandard.changed && !resetAtStandard.atLimit);
+        QVERIFY(ws::uisize::feedback(resetAtStandard, 0).contains(u"已是默认"_s));
+
+        // Clipboard feedback copy.
+        QVERIFY(ws::uisize::feedback({Size::Compact, true, false}, -1, true, false).contains(u"剪贴板大小"_s));
+        QVERIFY(ws::uisize::feedback({Size::Roomy, true, false}, 0, true, true).contains(u"跟随界面大小"_s));
+        QVERIFY(ws::uisize::feedback({Size::Standard, false, false}, 0, true, true).contains(u"已跟随界面大小"_s));
     }
 
     // 剪贴板大小: its own step, kept as written; unknown names fall back to following 界面大小.
@@ -2144,6 +2339,133 @@ private slots:
         QVERIFY(!s.shouldRecordClipboardImage(true, false));
         QVERIFY(s.shouldRecordClipboardImage(true, true));
         QVERIFY(!s.shouldRecordClipboardImage(false, true));
+    }
+
+    void settingsEdgeScrollPreference()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+
+        // Default is standard.
+        ws::Settings fresh;
+        fresh.load();
+        QCOMPARE(fresh.settingsEdgeScroll, u"standard"_s);
+
+        // All valid modes round-trip cleanly.
+        for (const QString& mode : {u"off"_s, u"light"_s, u"standard"_s, u"steady"_s}) {
+            fresh.settingsEdgeScroll = mode;
+            QVERIFY(fresh.saveChecked());
+            ws::Settings restored;
+            restored.load();
+            QCOMPARE(restored.settingsEdgeScroll, mode);
+        }
+
+        // Case/whitespace is normalized and invalid values fall back to standard.
+        {
+            QSettings raw(ws::Settings::filePath(), QSettings::IniFormat);
+            raw.setValue(u"Appearance/SettingsEdgeScroll"_s, u"  STEADY "_s);
+            raw.sync();
+        }
+        ws::Settings normalized;
+        normalized.load();
+        QCOMPARE(normalized.settingsEdgeScroll, u"steady"_s);
+
+        {
+            QSettings raw(ws::Settings::filePath(), QSettings::IniFormat);
+            raw.setValue(u"Appearance/SettingsEdgeScroll"_s, u"bogus"_s);
+            raw.sync();
+        }
+        ws::Settings fallback;
+        fallback.load();
+        QCOMPARE(fallback.settingsEdgeScroll, u"standard"_s);
+    }
+
+    // GitHub #438: dialog bar empty-query sources default all on, persist
+    // selectively (including all off), and default on when upgrading old INIs.
+    void dialogBarSuggestionSourcesPreference()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+
+        ws::Settings fresh;
+        fresh.load();
+        QVERIFY(fresh.dialogBarSuggestOpen);
+        QVERIFY(fresh.dialogBarSuggestClipboard);
+        QVERIFY(fresh.dialogBarSuggestFavorites);
+        QVERIFY(fresh.dialogBarSuggestRecent);
+
+        fresh.dialogBarSuggestClipboard = false;
+        fresh.dialogBarSuggestRecent = false;
+        QVERIFY(fresh.saveChecked());
+        ws::Settings partial;
+        partial.load();
+        QVERIFY(partial.dialogBarSuggestOpen);
+        QVERIFY(!partial.dialogBarSuggestClipboard);
+        QVERIFY(partial.dialogBarSuggestFavorites);
+        QVERIFY(!partial.dialogBarSuggestRecent);
+
+        // All four off is valid (search-only dialog bar).
+        partial.dialogBarSuggestOpen = false;
+        partial.dialogBarSuggestFavorites = false;
+        QVERIFY(partial.saveChecked());
+        ws::Settings none;
+        none.load();
+        QVERIFY(!none.dialogBarSuggestOpen);
+        QVERIFY(!none.dialogBarSuggestClipboard);
+        QVERIFY(!none.dialogBarSuggestFavorites);
+        QVERIFY(!none.dialogBarSuggestRecent);
+
+        QTemporaryDir older;
+        QVERIFY(older.isValid());
+        ws::Settings::useProfile(older.path());
+        {
+            QSettings ini(ws::Settings::filePath(), QSettings::IniFormat);
+            ini.setValue(u"Launcher/DialogBarSuggestions"_s, true);
+            ini.sync();
+        }
+        ws::Settings upgraded;
+        upgraded.load();
+        QVERIFY(upgraded.dialogBarSuggestOpen && upgraded.dialogBarSuggestClipboard
+            && upgraded.dialogBarSuggestFavorites && upgraded.dialogBarSuggestRecent);
+    }
+
+    // GitHub #440: hover tip categories default all on, persist selectively,
+    // upgrade cleanly, and recover if a hand-edited INI turns all three off.
+    void hoverTipKindsPreference()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+
+        ws::Settings fresh;
+        fresh.load();
+        QVERIFY(fresh.hoverTips);
+        QVERIFY(fresh.hoverTipsInterface);
+        QVERIFY(fresh.hoverTipsActions);
+        QVERIFY(fresh.hoverTipsPaths);
+
+        fresh.hoverTipsInterface = false;
+        QVERIFY(fresh.saveChecked());
+        ws::Settings restored;
+        restored.load();
+        QVERIFY(restored.hoverTips);
+        QVERIFY(!restored.hoverTipsInterface);
+        QVERIFY(restored.hoverTipsActions);
+        QVERIFY(restored.hoverTipsPaths);
+
+        // Hand-edited all-false recovers to all-true (use Appearance/HoverTips=false for off).
+        {
+            QSettings raw(ws::Settings::filePath(), QSettings::IniFormat);
+            raw.setValue(u"Appearance/HoverTipsInterface"_s, false);
+            raw.setValue(u"Appearance/HoverTipsActions"_s, false);
+            raw.setValue(u"Appearance/HoverTipsPaths"_s, false);
+            raw.sync();
+        }
+        ws::Settings recovered;
+        recovered.load();
+        QVERIFY(recovered.hoverTipsInterface && recovered.hoverTipsActions && recovered.hoverTipsPaths);
     }
 };
 

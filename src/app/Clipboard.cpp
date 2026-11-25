@@ -7,6 +7,7 @@
 #include "FileIconProvider.h"
 #include "FileText.h"
 #include "HotkeySteps.h"
+#include "PictureFile.h"
 #include "TextField.h"
 #include "platform/ComWorker.h"
 #include "DragPicture.h"
@@ -54,6 +55,10 @@ constexpr qint64 kFocusWaitMs = 800;
 // In front is not ready yet: the program still has to put its focus back
 // (on its text field), or the paste keys go to its window and are lost.
 constexpr qint64 kSettleMs = 60;
+// Back in front after paste::reactivate: it reads the clipboard as it comes
+// (Photoshop: its Ctrl+V went in with the old picture sent at once, the new
+// one 150 ms after; GitHub #432).
+constexpr qint64 kReactivatedSettleMs = 150;
 constexpr qint64 kClipboardWaitMs = 300; // held open longer than that, the paste goes ahead anyway
 // The search box by a file dialog shows again only once the dialog is back
 // in front.
@@ -184,6 +189,8 @@ Clipboard::Clipboard(ClipStore* store, ClipboardWatcher* watcher, QObject* paren
         const bool front = paste::isForeground(m_pasteWindow);
         if (m_into == Into::CurrentProgram) {
             if (!front) {
+                if (m_reactivated && m_pasteClock.elapsed() < kFocusWaitMs)
+                    return; // given the front back a moment ago: on its way
                 failPaste(tr("内容已复制；窗口已切换，未自动粘贴"));
                 return;
             }
@@ -198,7 +205,7 @@ Clipboard::Clipboard(ClipStore* store, ClipboardWatcher* watcher, QObject* paren
         // In front: a moment more, and while some program has the clipboard
         // open (clipboard history, other managers read each new copy): the
         // target's Ctrl+V finds it held and pastes nothing (pitfalls.md).
-        if (front ? m_frontClock.elapsed() < kSettleMs
+        if (front ? m_frontClock.elapsed() < (m_reactivated ? kReactivatedSettleMs : kSettleMs)
                         || (::GetOpenClipboardWindow() && m_frontClock.elapsed() < kClipboardWaitMs)
                   : m_pasteClock.elapsed() < kFocusWaitMs)
             return;
@@ -245,7 +252,7 @@ Clipboard::Clipboard(ClipStore* store, ClipboardWatcher* watcher, QObject* paren
             const auto result = paste::sendPasteKeys(m_pasteWindow, guard.get());
             diagnostics::record(u"clipboard-paste"_s,
                 {{u"sent"_s, int(result.sent)}, {u"requested"_s, int(result.requested)},
-                 {u"error"_s, qint64(result.error)},
+                 {u"error"_s, qint64(result.error)}, {u"reactivated"_s, m_reactivated},
                  {u"method"_s, result.method == paste::Result::Method::EditMessage ? u"edit-message"_s
                      : result.method == paste::Result::Method::Keys ? u"keys"_s : u"failed"_s}});
             if (!result)
@@ -403,6 +410,15 @@ void Clipboard::setRowOptions(bool clickToPaste, const QString& pictureSize, con
     m_uiSize = uiSize;
     emit rowOptionsChanged();
     refreshStatus(); // pinned, it says how to paste
+}
+
+void Clipboard::setPastePlain(bool plain)
+{
+    if (plain == m_pastePlain)
+        return;
+    m_pastePlain = plain;
+    emit rowOptionsChanged();
+    refreshStatus();
 }
 
 void Clipboard::setLayoutOptions(bool flipAbove, bool searchFar, bool searchBox)
@@ -790,7 +806,8 @@ void Clipboard::refreshStatus()
         status = !m_query.trimmed().isEmpty() || m_category != 0 ? tr("%Ln 条", nullptr, m_model.count()) : tr("共 %Ln 条", nullptr, total());
         // Pinned and the keys not coming here: a click is how an entry gets pasted.
         if (m_pinned && !m_keysRouted)
-            status = (m_clickToPaste ? tr("%1 · 单击粘贴") : tr("%1 · 双击粘贴")).arg(status);
+            status = (m_pastePlain ? (m_clickToPaste ? tr("%1 · 单击粘贴纯文本") : tr("%1 · 双击粘贴纯文本"))
+                                   : (m_clickToPaste ? tr("%1 · 单击粘贴") : tr("%1 · 双击粘贴"))).arg(status);
     }
     if (status != m_status) {
         m_status = status;
@@ -960,6 +977,65 @@ std::vector<const Clip*> Clipboard::targets(int row) const
     return {};
 }
 
+std::vector<Clipboard::Picture> Clipboard::pictures(const std::vector<const Clip*>& clips)
+{
+    std::vector<Picture> found;
+    for (const Clip* c : clips) {
+        if (c->kind == ClipKind::Image) {
+            found.push_back({.id = c->id, .animated = c->animated});
+            continue;
+        }
+        const QStringList files = c->kind == ClipKind::Files ? c->files() : QStringList();
+        if (files.isEmpty() || !std::ranges::all_of(files, [](const QString& file) { return isPinnablePicture(file); }))
+            return {};
+        for (const QString& file : files)
+            found.push_back({.file = file});
+    }
+    return found;
+}
+
+void Clipboard::pinPictures(std::vector<Picture> pictures)
+{
+    if (std::ssize(pictures) > kPinAtOnce)
+        pictures.resize(kPinAtOnce);
+    int saving = 0;
+    int gone = 0;
+    std::erase_if(pictures, [&](const Picture& picture) {
+        if (picture.id > 0) { // just copied, its file not written yet
+            const bool pending = m_store->imagePending(picture.id);
+            saving += pending;
+            return pending;
+        }
+        // Copied in 微信 or QQ: a file of its own cache, which it may have cleared since.
+        // A network path is not asked (it can hang): the plugin says if it cannot read it.
+        const bool missing = isLocal(picture.file) && !QFileInfo::exists(picture.file);
+        gone += missing;
+        return missing;
+    });
+    int slot = 0;
+    for (const Picture& picture : pictures)
+        emit pinRequested(picture.id, picture.file, slot++);
+    if (saving > 0)
+        flash(tr("图片还在保存，请稍后再试"));
+    else if (gone > 0)
+        flash(pictures.empty() ? tr("这些文件已经不存在了") : tr("有 %Ln 个文件已经不存在了", nullptr, gone));
+}
+
+void Clipboard::editPicture(const Picture& picture)
+{
+    if (picture.id > 0 && m_store->imagePending(picture.id)) {
+        flash(tr("图片还在保存，请稍后再试"));
+        return;
+    }
+    if (picture.id == 0 && isLocal(picture.file) && !QFileInfo::exists(picture.file)) {
+        flash(tr("这些文件已经不存在了"));
+        return;
+    }
+    // The window goes first (its keys are given back), then the editing window takes the front.
+    emit dismissRequested();
+    emit editRequested(picture.id, picture.file);
+}
+
 QString Clipboard::separator() const
 {
     if (m_separator == u"space")
@@ -1085,6 +1161,7 @@ ClipWrite Clipboard::writeFor(
 void Clipboard::startPaste(ClipWrite write, Into into, std::vector<qint64> touched, QString done)
 {
     m_pasting = true;
+    m_reactivated = false;
     m_write = std::move(write);
     m_into = into;
     m_pasteGuard = into == Into::Program ? std::move(m_nextGuard) : nullptr;
@@ -1147,6 +1224,7 @@ void Clipboard::onWritten(bool ok)
         }
         m_pasteClock.restart();
         m_frontClock.start();
+        reactivateTarget();
         m_focusTimer.start();
         return;
     }
@@ -1162,12 +1240,28 @@ void Clipboard::onWritten(bool ok)
     if ((m_keysRouted || m_pinned) && paste::isForeground(m_pasteWindow)) {
         emit dismissRequested();
         m_frontClock.start();
+        reactivateTarget(); // the keys are its own again (App, as the window went)
         m_focusTimer.start();
         return;
     }
     paste::activate(m_pasteWindow); // the clipboard window loses the focus and goes (App)
     m_frontClock.invalidate();
     m_focusTimer.start();
+}
+
+void Clipboard::reactivateTarget()
+{
+    // Never left the front, it would paste what it read as it came there,
+    // not what was just put on the clipboard (Photoshop, GitHub #432).
+    if (!paste::readsClipboardOnActivation(m_pasteWindow))
+        return;
+    m_reactivated = paste::reactivate(m_pasteWindow);
+    if (m_reactivated) {
+        m_frontClock.invalidate(); // started again once it is back
+        qInfo("Clipboard: the target reads the clipboard as it comes to the front: given the front again");
+    } else {
+        qInfo("Clipboard: could not make the target read the clipboard again (the front was refused)");
+    }
 }
 
 void Clipboard::returnToField(QString text)
@@ -1229,7 +1323,15 @@ void Clipboard::aimAtFrontProgram()
         m_target = foreground;
 }
 
-void Clipboard::paste(int row, bool plainText)
+bool Clipboard::pastesPlain(const std::vector<const Clip*>& clips, bool usuallyPlain, bool other)
+{
+    const bool words = !clips.empty() && std::ranges::none_of(clips, [](const Clip* c) {
+        return c->kind == ClipKind::Files || c->kind == ClipKind::Image;
+    });
+    return words ? usuallyPlain != other : other;
+}
+
+void Clipboard::paste(int row, bool other)
 {
     if (m_pasting)
         return;
@@ -1237,6 +1339,7 @@ void Clipboard::paste(int row, bool plainText)
     const std::vector<const Clip*> clips = targets(row);
     if (clips.empty())
         return;
+    const bool plainText = pastesPlain(clips, m_pastePlain, other);
     std::vector<qint64> touched;
     if (clips.size() > 1) {
         for (const Clip* c : clips)
@@ -1284,12 +1387,12 @@ void Clipboard::pasteText(const QString& text)
     startPaste(std::move(write), Into::Program, {}, {});
 }
 
-void Clipboard::quickPaste(int row, bool plainText)
+void Clipboard::quickPaste(int row, bool other)
 {
     if (row < 0 || row >= m_model.count())
         return;
     m_model.clearSelection();
-    paste(row, plainText);
+    paste(row, other);
 }
 
 void Clipboard::copy(int row)
@@ -1573,7 +1676,7 @@ void Clipboard::pasteDirect(qint64 id, HWND target)
     if (!window || !paste::isForeground(window))
         return;
     QString problem;
-    ClipWrite write = writeFor({clip}, false, &problem, window);
+    ClipWrite write = writeFor({clip}, pastesPlain({clip}, m_pastePlain, false), &problem, window);
     if (write.empty()) {
         emit quickPasteFailed(problem);
         return;
@@ -1608,13 +1711,16 @@ bool Clipboard::pasteEntry(qint64 id, HWND target)
         return false;
     if (m_pasting)
         return true; // one under way: this key is late, not wrong
+    // A paste goes as the clipboard window's own would (pastePlain); a copy
+    // keeps every format the entry has.
+    const HWND window = paste::usableTarget(target);
     QString problem;
-    ClipWrite write = writeFor({clip}, false, &problem, paste::usableTarget(target));
+    ClipWrite write = writeFor({clip}, window && pastesPlain({clip}, m_pastePlain, false), &problem, window);
     if (write.empty()) {
         flash(problem);
         return true;
     }
-    if (!paste::usableTarget(target)) { // nothing to paste into: on the clipboard, as 复制
+    if (!window) { // nothing to paste into: on the clipboard, as 复制
         startPaste(std::move(write), Into::Clipboard, {}, tr("已复制"));
         return true;
     }
@@ -1979,13 +2085,17 @@ QVariantList Clipboard::menuItems(int row) const
     const std::vector<const Clip*> clips = targets(row);
     if (clips.empty())
         return {};
-    const auto entry = [](int action, const QString& text, const QString& shortcut, const QString& glyph) {
-        return QVariantMap {
+    const auto entry = [](int action, const QString& text, const QString& shortcut, const QString& glyph,
+                           bool danger = false) {
+        QVariantMap map {
             {u"action"_s, action},
             {u"text"_s, text},
             {u"shortcut"_s, shortcut},
             {u"glyph"_s, glyph},
         };
+        if (danger)
+            map.insert(u"danger"_s, true);
+        return map;
     };
     // A key shown here also does what its entry does with the menu closed
     // (ClipboardPage.menuShortcut, GitHub #379): F3 as the screenshot plugin
@@ -2000,25 +2110,42 @@ QVariantList Clipboard::menuItems(int row) const
     const QString field = fieldName();
     items.append(entry(Paste, many ? tr("粘贴 %Ln 条", nullptr, n) : field.isEmpty() ? tr("粘贴") : tr("粘贴到%1").arg(field),
         u"Enter"_s, u""_s));
-    if (!onlyImages && field.isEmpty())
-        items.append(entry(PastePlain, tr("粘贴为纯文本"), u"Shift+Enter"_s, u""_s));
+    // Shift+Enter, the other paste: words pasted as plain text the usual way
+    // (pastePlain) with their formatting, when they have one (several go
+    // as their joined words either way); anything else as plain text.
+    if (field.isEmpty() && pastesPlain(clips, m_pastePlain, false)) {
+        if (const Clip* c = clips.front(); !many && (c->html || c->rtf || c->formats))
+            items.append(entry(PasteOther, tr("保留格式粘贴"), u"Shift+Enter"_s, u"\uE771"_s));
+    } else if (!onlyImages && field.isEmpty()) {
+        items.append(entry(PasteOther, tr("粘贴为纯文本"), u"Shift+Enter"_s, u""_s));
+    }
     items.append(entry(Copy, many ? tr("复制 %Ln 条", nullptr, n) : tr("复制"), u"Ctrl+C"_s, u""_s));
+    // Pictures, its own or picture files a 文件 entry names (copied in 微信, QQ or
+    // Explorer: listed under 图片 too, GitHub #369), on the screen (several at once, each a
+    // little off the one before) or in the editing window, by the screenshot plugin.
+    const std::vector<Picture> shown = pictures(clips);
     if (!many) {
         const Clip& c = *clips.front();
         if (c.kind == ClipKind::Link)
             items.append(entry(OpenLink, tr("在浏览器中打开"), QString(), u""_s));
         else if (c.kind == ClipKind::Files || c.kind == ClipKind::Path)
             items.append(entry(Reveal, tr("打开所在位置"), QString(), u""_s));
-        else if (c.kind == ClipKind::Image && m_pictureVerbs.pin) // the screenshot plugin's
-            items.append(entry(PinImage, c.animated ? tr("贴首帧到屏幕") : tr("贴到屏幕"), u"F3"_s, u"\uE718"_s));
-        // Words as a card on the screen (GitHub #388), by the same plugin; not what is kept from view.
-        if (c.kind != ClipKind::Image && c.kind != ClipKind::Files && m_pictureVerbs.pin && !c.masked)
-            items.append(entry(PinImage, tr("贴到屏幕"), u"F3"_s, u"\uE718"_s));
-        if (c.kind == ClipKind::Image && m_pictureVerbs.edit)
-            items.append(entry(EditImage, c.animated ? tr("编辑首帧") : tr("编辑"), u"Ctrl+E"_s, u"\uE70F"_s));
-        if (c.kind == ClipKind::Image)
-            items.append(entry(OpenImage, tr("打开图片"), QString(), u""_s));
     }
+    if (!shown.empty() && m_pictureVerbs.pin) {
+        const auto count = static_cast<int>(shown.size());
+        const QString title = count == 1 ? (shown.front().animated ? tr("贴首帧到屏幕") : tr("贴到屏幕"))
+            : count <= kPinAtOnce ? tr("贴 %Ln 张到屏幕", nullptr, count)
+                                  : tr("贴前 %Ln 张到屏幕", nullptr, kPinAtOnce);
+        items.append(entry(PinImage, title, u"F3"_s, u"\uE718"_s));
+    } else if (!many && m_pictureVerbs.pin && clips.front()->kind != ClipKind::Image
+               && clips.front()->kind != ClipKind::Files && !clips.front()->masked) {
+        // Words as a card on the screen (GitHub #388), by the same plugin; not what is kept from view.
+        items.append(entry(PinImage, tr("贴到屏幕"), u"F3"_s, u"\uE718"_s));
+    }
+    if (shown.size() == 1 && m_pictureVerbs.edit)
+        items.append(entry(EditImage, shown.front().animated ? tr("编辑首帧") : tr("编辑"), u"Ctrl+E"_s, u"\uE70F"_s));
+    if (!many && clips.front()->kind == ClipKind::Image)
+        items.append(entry(OpenImage, tr("打开图片"), QString(), u""_s));
     {
         // Kept from view: a password copied, a screen being shared or recorded (GitHub #260).
         const bool masked = std::all_of(clips.begin(), clips.end(), [](const Clip* c) { return c->masked; });
@@ -2056,7 +2183,7 @@ QVariantList Clipboard::menuItems(int row) const
     if (std::any_of(clips.begin(), clips.end(), [](const Clip* c) { return c->group > ClipStore::kPinned; }))
         items.append(entry(LeaveGroup, tr("移出分组"), QString(), u""_s));
     items.append(separator);
-    items.append(entry(Remove, many ? tr("删除 %Ln 条", nullptr, n) : tr("删除"), u"Delete"_s, u""_s));
+    items.append(entry(Remove, many ? tr("删除 %Ln 条", nullptr, n) : tr("删除"), u"Delete"_s, u""_s, true));
     // The whole list: in a group's tab that group, else what is in no group.
     const bool inGroup = m_categoryGroup != 0;
     const auto all = static_cast<int>(m_model.listedIds(inGroup).size());
@@ -2066,7 +2193,7 @@ QVariantList Clipboard::menuItems(int row) const
                                            : tr("删除全部 %Ln 条", nullptr, all);
         if (all < m_model.count())
             text += tr("（固定和分组的保留）");
-        items.append(entry(RemoveAll, text, QString(), u""_s));
+        items.append(entry(RemoveAll, text, QString(), u""_s, true));
     }
     return items;
 }
@@ -2110,8 +2237,8 @@ void Clipboard::trigger(int row, int action)
     case Paste:
         paste(row, false);
         break;
-    case PastePlain:
-        paste(row, true);
+    case PasteOther:
+        paste(row, true); // `other`
         break;
     case Copy:
         copy(row);
@@ -2162,35 +2289,22 @@ void Clipboard::trigger(int row, int action)
         sendLan(row);
         break;
     case PinImage: {
-        const Clip* c = one();
+        const std::vector<const Clip*> clips = targets(row);
+        if (std::vector<Picture> shown = pictures(clips); !shown.empty()) {
+            pinPictures(std::move(shown));
+            break;
+        }
+        const Clip* c = clips.size() == 1 ? clips.front() : nullptr;
         if (c && c->kind != ClipKind::Image && c->kind != ClipKind::Files && !c->masked) { // words (GitHub #388)
             // All of it (a long text is kept whole on disk only); the plugin takes up to kPinTextChars.
             emit pinTextRequested(c->textLength > c->text.size() ? m_store->payload(c->id).text : c->text);
-            break;
         }
-        if (!c || c->kind != ClipKind::Image)
-            break;
-        if (m_store->imagePending(c->id)) { // just copied, its file not written yet
-            flash(tr("图片还在保存，请稍后再试"));
-            break;
-        }
-        emit pinRequested(c->id);
         break;
     }
-    case EditImage: {
-        const Clip* c = one();
-        if (!c || c->kind != ClipKind::Image)
-            break;
-        if (m_store->imagePending(c->id)) { // just copied, its file not written yet
-            flash(tr("图片还在保存，请稍后再试"));
-            break;
-        }
-        // The window goes first (its keys are given back), then the editing window takes the front.
-        const qint64 id = c->id;
-        emit dismissRequested();
-        emit editRequested(id);
+    case EditImage:
+        if (const std::vector<Picture> shown = pictures(targets(row)); shown.size() == 1)
+            editPicture(shown.front());
         break;
-    }
     case OpenLink:
     case Reveal:
     case OpenImage: {

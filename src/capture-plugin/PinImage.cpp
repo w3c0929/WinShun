@@ -139,6 +139,20 @@ std::optional<Placement> cursorPlacement()
         static_cast<int>(dpiX)};
 }
 
+Placement cascaded(Placement placement, int slot)
+{
+    const QRect& work = placement.work;
+    if (slot <= 0 || work.isEmpty())
+        return placement;
+    const int step = ::MulDiv(kCascadeStep, std::max(placement.dpi, 96), 96);
+    QPoint& at = placement.cursor;
+    const int dx = work.right() - at.x() >= at.x() - work.left() ? step : -step;
+    const int dy = work.bottom() - at.y() >= at.y() - work.top() ? step : -step;
+    at += QPoint(dx, dy) * slot;
+    at = {std::clamp(at.x(), work.left(), work.right()), std::clamp(at.y(), work.top(), work.bottom())};
+    return placement;
+}
+
 QImage renderText(const QString& text, int dpi, const TextLook& look)
 {
     return renderTextWithLines(text, dpi, look).image;
@@ -285,8 +299,10 @@ Prepared prepare(QImage image, const Placement& placement)
     return {std::move(image), origin, placement.cursor};
 }
 
-QImage readFile(const QString& path)
+QImage readFile(const QString& path, bool* downscaled)
 {
+    if (downscaled)
+        *downscaled = false;
     const HRESULT com = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
     const auto uninit = qScopeGuard([com] {
         if (SUCCEEDED(com))
@@ -300,6 +316,8 @@ QImage readFile(const QString& path)
         !stored.isEmpty() && qint64(stored.width()) * stored.height() > kPinSourcePixels) {
         const double scale = std::sqrt(static_cast<double>(kPinSourcePixels) / (qint64(stored.width()) * stored.height()));
         largest = static_cast<int>(std::lround((std::max)(stored.width(), stored.height()) * scale));
+        if (downscaled)
+            *downscaled = true;
     }
     return decodePictureFile(path, largest);
 }
@@ -321,7 +339,7 @@ ClipboardPicture readClipboard(const LastCapture& last)
         origin.truncate(end);
     if (!last.id.isEmpty()
         && ((sequence != 0 && sequence == last.clipboardSequence) || origin == last.id.toUtf8()))
-        return {ClipboardStatus::LastCapture, {}};
+        return {ClipboardStatus::LastCapture, {}, {}, {}, false, sequence};
 
     // Keep the supported representations so a damaged rich offer can still
     // fall back to its bitmap. No decoding or disk access while holding the lock.
@@ -358,23 +376,24 @@ ClipboardPicture readClipboard(const LastCapture& last)
 
     for (QByteArray& bytes : encoded) {
         if (QImage image = decodeClipImage(std::move(bytes)).firstFrame; !image.isNull())
-            return {ClipboardStatus::Image, std::move(image)};
+            return {ClipboardStatus::Image, std::move(image), {}, {}, false, sequence};
     }
     if (QImage image = imageFromDib(dibV5); !image.isNull())
-        return {ClipboardStatus::Image, std::move(image)};
+        return {ClipboardStatus::Image, std::move(image), {}, {}, false, sequence};
     if (QImage image = imageFromDib(dib); !image.isNull())
-        return {ClipboardStatus::Image, std::move(image)};
+        return {ClipboardStatus::Image, std::move(image), {}, {}, false, sequence};
     for (const QString& file : files) {
         // Decoding, rather than a different codec's canRead(), chooses the
         // first readable file. The caller fits it to the saved work area.
-        if (QImage image = readFile(file); !image.isNull())
-            return {ClipboardStatus::Image, std::move(image)};
+        bool downscaled = false;
+        if (QImage image = readFile(file, &downscaled); !image.isNull())
+            return {ClipboardStatus::Image, std::move(image), {}, file, downscaled, sequence};
     }
     if (offeredImage)
-        return {ClipboardStatus::Unreadable, {}};
+        return {ClipboardStatus::Unreadable, {}, {}, {}, false, sequence};
     if (files.isEmpty() && !text.trimmed().isEmpty())
-        return {ClipboardStatus::Text, {}, text};
-    return {ClipboardStatus::Empty, {}};
+        return {ClipboardStatus::Text, {}, text, {}, false, sequence};
+    return {ClipboardStatus::Empty, {}, {}, {}, false, sequence};
 }
 
 } // namespace ws::captureplugin::pinimage

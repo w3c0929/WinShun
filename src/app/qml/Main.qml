@@ -661,6 +661,7 @@ Window {
     }
     NumberHints {
         id: numberHints
+        objectName: "launcherNumberHints"
         mode: window.launcher.numberHints
         key: window.numberKey
         // Refused the front over the folder typed in, its keys come through
@@ -675,7 +676,7 @@ Window {
     readonly property int lastLetterRow: Math.min(view.count - 1, firstShownRow + numberHints.letters.length - 1,
                                                   rowAtY(view.contentY + view.height - view.bottomMargin - viewRowHeight / 2, false))
     function letterOf(index) {
-        return numberHints.jumping && index >= firstShownRow && index <= lastLetterRow
+        return numberHints.lettersShown && index >= firstShownRow && index <= lastLetterRow
             ? numberHints.letterOf(index - firstShownRow) : ""
     }
     // A key while the letters show: a letter opens its row; Shift+letter
@@ -879,6 +880,7 @@ Window {
             footer.sortMenuOpen = false // not still open when the launcher comes back
             menuLoader.active = false
             nameTip.dismiss()
+            uiSizeToast.dismiss()
         }
     }
     onActiveChanged: {
@@ -996,6 +998,13 @@ Window {
                 && searchBar.composition.length === 0) {
             if (!event.isAutoRepeat)
                 window.launcher.openSettings()
+            event.accepted = true
+            return
+        }
+        const zoom = searchBar.composition.length === 0 ? SearchKeys.uiZoomAction(event.key, event.modifiers) : SearchKeys.zoomNone
+        if (zoom !== SearchKeys.zoomNone) {
+            if (!event.isAutoRepeat)
+                window.launcher.adjustUiSize(zoom === SearchKeys.zoomReset ? 0 : zoom)
             event.accepted = true
             return
         }
@@ -1335,10 +1344,15 @@ Window {
             window.closeContextMenu()
             footer.sortMenuOpen = false
             nameTip.dismiss()
+            uiSizeToast.dismiss()
             for (const child of window.contentItem.children) {
                 if (child.shownText !== undefined && typeof child.dismiss === "function")
                     child.dismiss()
             }
+        }
+        function onUiSizeNotified(message, level) {
+            if (window.pureEmpty)
+                uiSizeToast.present(message, level, 4)
         }
     }
 
@@ -1434,6 +1448,25 @@ Window {
         enabled: window.panel
         autoRepeat: false
         onActivated: window.placement.togglePanelFill()
+    }
+    // Ctrl++ / Ctrl+- / Ctrl+0 when focus is outside SearchBar (e.g. panel sidebar or ContentPaneView).
+    Shortcut {
+        sequences: SearchKeys.zoomInSequences
+        enabled: window.visible && !window.searchBar.field.activeFocus && !renameBox.visible && !window.clipboardBelow
+        autoRepeat: false
+        onActivated: window.launcher.adjustUiSize(1)
+    }
+    Shortcut {
+        sequences: SearchKeys.zoomOutSequences
+        enabled: window.visible && !window.searchBar.field.activeFocus && !renameBox.visible && !window.clipboardBelow
+        autoRepeat: false
+        onActivated: window.launcher.adjustUiSize(-1)
+    }
+    Shortcut {
+        sequences: SearchKeys.zoomResetSequences
+        enabled: window.visible && !window.searchBar.field.activeFocus && !renameBox.visible && !window.clipboardBelow
+        autoRepeat: false
+        onActivated: window.launcher.adjustUiSize(0)
     }
     function rowClicked(index, modifiers) {
         spaceTogglesPreview = true
@@ -1968,13 +2001,17 @@ Window {
                     showSize: window.launcher.showFileSize || window.launcher.sort === Launcher.LargestFirst || window.launcher.sort === Launcher.SmallestFirst
                     hint: window.numberOf(index)
                     hintLetter: window.letterOf(index)
+                    hintArmed: numberHints.jumping
+                    hintJumpKey: numberHints.jumpKeyName
                     actionLetters: numberHints.picking && index === view.currentIndex ? numberHints.letters : ""
                     reserveHintSpace: (window.numberKey >= 0 && window.launcher.numberHints !== "off") || window.launcher.letterJump
                     hintOpacity: numberHints.hintOpacity
                     hintOffsetY: window.hintOffsetY
                     hintModifier: window.numberModifier
                     hintTaken: resultRow.hint > 0 && !window.numberUsable(resultRow.hint)
-                    z: window.hintOffsetY !== 0 && (resultRow.hint > 0 || resultRow.hintLetter.length > 0) ? 1 : 0
+                    // ListView's default delegate z is 1 (above highlightItem at z 0);
+                    // raise active-hint rows to 2 during smooth gliding so hints stay on top.
+                    z: window.hintOffsetY !== 0 && (resultRow.hint > 0 || resultRow.hintLetter.length > 0) ? 2 : 1
                     nameTip: nameTip
                     dpr: window.dpr
                     actionsPool: resultActions
@@ -2265,6 +2302,19 @@ Window {
             window.launcher.cancelRename()
         renameBox.visible = false
         searchBar.field.forceActiveFocus()
+    }
+
+    onPureEmptyChanged: if (!pureEmpty) uiSizeToast.dismiss()
+
+    UiSizeToast {
+        id: uiSizeToast
+        objectName: "launcherUiSizeToast"
+        parent: window.contentItem
+        anchors.right: parent.right
+        anchors.rightMargin: 12
+        anchors.verticalCenter: parent.verticalCenter
+        z: 800
+        dpr: window.dpr
     }
 
     WindowEdge {

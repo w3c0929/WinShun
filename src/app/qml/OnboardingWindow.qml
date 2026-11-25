@@ -125,12 +125,12 @@ Window {
                 Glyph {
                     y: Theme.snap((title.height - height) / 2, window.dpr)
                     glyph: card.glyph
-                    size: 20
+                    size: 16
                     color: card.checked || !card.switchShown ? Theme.accent : Theme.subtext
                 }
                 Text {
                     id: title
-                    x: 32
+                    x: 26
                     width: parent.width - x - (card.switchShown ? toggle.width + 20 : 0)
                     text: card.heading
                     color: Theme.text
@@ -150,8 +150,8 @@ Window {
                     Accessible.name: card.heading
                 }
             }
-            Explanation { x: 32; width: parent.width - 32; text: card.description; visible: text.length > 0 }
-            Column { id: extras; x: 32; width: parent.width - 32; topPadding: 4; spacing: 10; visible: children.length > 0 }
+            Explanation { x: 26; width: parent.width - 26; text: card.description; visible: text.length > 0 }
+            Column { id: extras; x: 26; width: parent.width - 26; topPadding: 4; spacing: 10; visible: children.length > 0 }
         }
     }
 
@@ -385,7 +385,10 @@ Window {
                         switchShown: true
                         checked: window.setup.capture
                         onToggled: (on) => window.setup.capture = on
-                        description: qsTr("框选截图、标注和贴图。首次开启会下载组件；打开即允许它读写剪贴板、保存图片。")
+                        // Its component comes with Win顺 (Onboarding::copyOfCapture): nothing to download then.
+                        description: window.setup.captureIncluded
+                            ? qsTr("框选截图、标注和贴图。打开即允许它读写剪贴板、保存图片。")
+                            : qsTr("框选截图、标注和贴图。首次开启会下载组件；打开即允许它读写剪贴板、保存图片。")
 
                         Flow {
                             width: parent.width

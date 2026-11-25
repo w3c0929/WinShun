@@ -80,6 +80,7 @@ private slots:
         QVERIFY(fresh.recordingFolder.isEmpty());
         QVERIFY(!fresh.recordingSystemAudio && !fresh.recordingMicrophone);
         QCOMPARE(fresh.recordingQuality, 1);
+        QCOMPARE(fresh.recordingFrameRate, 30);
         QVERIFY(fresh.recordingCursor && fresh.recordingCountdown);
         QVERIFY(!fresh.recordingClicks);
         QCOMPARE(fresh.recordingFormat, 0);
@@ -90,7 +91,8 @@ private slots:
         o.recordingFolder = dir.filePath(u"录屏"_s);
         o.recordingSystemAudio = true;
         o.recordingMicrophone = true;
-        o.recordingQuality = 0;
+        o.recordingQuality = 3;
+        o.recordingFrameRate = 60;
         o.recordingCursor = false;
         o.recordingCountdown = false;
         o.recordingClicks = true;
@@ -101,7 +103,8 @@ private slots:
         QCOMPARE(back.saveFolder, o.saveFolder);
         QCOMPARE(back.recordingFolder, o.recordingFolder);
         QVERIFY(back.recordingSystemAudio && back.recordingMicrophone);
-        QCOMPARE(back.recordingQuality, 0);
+        QCOMPARE(back.recordingQuality, 3);
+        QCOMPARE(back.recordingFrameRate, 60);
         QVERIFY(!back.recordingCursor && !back.recordingCountdown);
         QVERIFY(back.recordingClicks);
         QCOMPARE(back.recordingFormat, 1);
@@ -113,12 +116,27 @@ private slots:
         }
         QCOMPARE(CaptureOptions::load(file).recordingQuality, 2);
         {
+            // Saved before the rate was a choice: 小体积 was 15 frames a second, the others 30.
+            QSettings ini(file, QSettings::IniFormat);
+            ini.setValue(u"Capture/RecordingQuality"_s, 0);
+            ini.remove(u"Capture/RecordingFrameRate"_s);
+        }
+        QCOMPARE(CaptureOptions::load(file).recordingFrameRate, 15);
+        {
+            QSettings ini(file, QSettings::IniFormat);
+            ini.setValue(u"Capture/RecordingQuality"_s, 2);
+            ini.remove(u"Capture/RecordingFrameRate"_s);
+        }
+        QCOMPARE(CaptureOptions::load(file).recordingFrameRate, 30);
+        {
             QSettings ini(file, QSettings::IniFormat);
             ini.setValue(u"Capture/RecordingQuality"_s, 99);
+            ini.setValue(u"Capture/RecordingFrameRate"_s, 24);
             ini.setValue(u"Capture/RecordingFormat"_s, 99);
         }
         const CaptureOptions odd = CaptureOptions::load(file);
         QCOMPARE(odd.recordingQuality, 1);
+        QCOMPARE(odd.recordingFrameRate, 30);
         QCOMPARE(odd.recordingFormat, 0);
     }
 
@@ -423,6 +441,84 @@ private slots:
         QVERIFY(CaptureOptions::load(file).translateHotkey.isEmpty());
     }
 
+    // 截图并直接贴图's hotkey (#450), Capture/PinCaptureHotkey: empty by default,
+    // trimmed on save, clashes against earlier hotkeys, and blocks capture/pin keys.
+    void pinCaptureHotkey()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString file = dir.filePath(u"capture.ini"_s);
+        QVERIFY(CaptureOptions::load(file).pinCaptureHotkey.isEmpty());
+        QVERIFY(QSettings(file, QSettings::IniFormat).contains(u"Capture/PinCaptureHotkey"_s));
+
+        ws::captureplugin::CaptureSettings settings(file);
+        QSignalSpy changed(&settings, &ws::captureplugin::CaptureSettings::changed);
+        QVERIFY(settings.pinCaptureHotkeyClash().isEmpty());
+        settings.setCapturePinCaptureHotkey(u" Ctrl+Alt+P "_s);
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(settings.capturePinCaptureHotkey(), u"Ctrl+Alt+P"_s);
+        QCOMPARE(CaptureOptions::load(file).pinCaptureHotkey, u"Ctrl+Alt+P"_s);
+        settings.setCapturePinCaptureHotkey(u"Ctrl+Alt+P"_s);
+        QCOMPARE(changed.count(), 1);
+        QVERIFY(settings.pinCaptureHotkeyClash().isEmpty());
+
+        settings.setCaptureHotkey(u"Alt+Ctrl+P"_s);
+        QVERIFY(settings.pinCaptureHotkeyClash().contains(u"开始截图"_s));
+        settings.setCaptureHotkey(u"F1"_s);
+        QVERIFY(settings.pinCaptureHotkeyClash().isEmpty());
+        settings.setCaptureTranslateHotkey(u"Ctrl+Alt+P"_s);
+        QVERIFY(settings.pinCaptureHotkeyClash().contains(u"截图翻译"_s));
+        QVERIFY(settings.translateHotkeyClash().isEmpty());
+        settings.setCaptureTranslateHotkey({});
+        settings.setCapturePinCaptureHotkey(u"F8"_s);
+
+        QVERIFY(settings.setCaptureKey(u"Pin"_s, Qt::Key_F8, 0).contains(u"截图并直接贴图"_s));
+        QVERIFY(settings.setCaptureKey(u"Pin"_s, Qt::Key_F9, 0).isEmpty());
+        const auto conflict = [&] { return settings.captureKeys().value(u"Pin"_s).toMap().value(u"conflict"_s).toString(); };
+        QVERIFY(conflict().isEmpty());
+        settings.setCapturePinCaptureHotkey(u"F9"_s);
+        QVERIFY(conflict().contains(u"截图并直接贴图"_s));
+        settings.setCapturePinCaptureHotkey({});
+        QVERIFY(conflict().isEmpty());
+        QVERIFY(CaptureOptions::load(file).pinCaptureHotkey.isEmpty());
+    }
+
+    // 贴图历史记录保留张数与恢复顺序 (#446): defaults (20, "closed"), clamping, validation.
+    void pinHistorySettings()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString file = dir.filePath(u"capture.ini"_s);
+        const CaptureOptions fresh = CaptureOptions::load(file);
+        QCOMPARE(fresh.pinHistoryCount, 20);
+        QCOMPARE(fresh.pinHistoryOrder, u"closed"_s);
+
+        ws::captureplugin::CaptureSettings settings(file);
+        QCOMPARE(settings.capturePinHistoryCount(), 20);
+        QCOMPARE(settings.capturePinHistoryOrder(), u"closed"_s);
+        settings.setCapturePinHistoryCount(50);
+        settings.setCapturePinHistoryOrder(u"created"_s);
+        QCOMPARE(CaptureOptions::load(file).pinHistoryCount, 50);
+        QCOMPARE(CaptureOptions::load(file).pinHistoryOrder, u"created"_s);
+
+        // Out-of-range counts clamp; unknown order names fall back to "closed".
+        settings.setCapturePinHistoryCount(999);
+        QCOMPARE(settings.capturePinHistoryCount(), 100);
+        settings.setCapturePinHistoryCount(-5);
+        QCOMPARE(settings.capturePinHistoryCount(), 0);
+        settings.setCapturePinHistoryOrder(u"invalid"_s);
+        QCOMPARE(settings.capturePinHistoryOrder(), u"created"_s); // unchanged
+
+        {
+            QSettings ini(file, QSettings::IniFormat);
+            ini.setValue(u"Capture/PinHistoryCount"_s, 250);
+            ini.setValue(u"Capture/PinHistoryOrder"_s, u"bogus"_s);
+        }
+        const CaptureOptions loaded = CaptureOptions::load(file);
+        QCOMPARE(loaded.pinHistoryCount, 100);
+        QCOMPARE(loaded.pinHistoryOrder, u"closed"_s);
+    }
+
     // The mouse buttons (#46): the old behaviour by default, kept across a
     // save, and a name not known (or "back" on a button that cannot step
     // back) falls to the default.
@@ -549,6 +645,57 @@ private slots:
         writeByHand(file, "SmartWords", "Atlas, Beta;Atlas");
         QCOMPARE(CaptureOptions::load(file).smartWords, u"Atlas,Beta"_s);
         QCOMPARE(CaptureOptions::normalizedSmartWords(u"a，b、c；d\n e ,a"_s), (QStringList {u"a"_s, u"b"_s, u"c"_s, u"d"_s, u"e"_s}));
+    }
+
+    // Pin groups and group cycle hotkey (#451): INI round-trip (with commas in JSON),
+    // add/rename/remove/select Q_INVOKABLEs, and hotkey clash detection.
+    void pinGroupSettings()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString file = dir.filePath(u"capture.ini"_s);
+        ws::captureplugin::CaptureSettings settings(file);
+
+        QCOMPARE(settings.capturePinGroups().size(), 1);
+        QVERIFY(!settings.capturePinGroupsShowAll());
+        QVERIFY(settings.capturePinGroupHotkey().isEmpty());
+
+        QVERIFY(settings.addPinGroup(u"工作"_s).isEmpty());
+        QVERIFY(settings.addPinGroup(u"设计参考"_s).isEmpty());
+        QVERIFY(!settings.addPinGroup(u"工作"_s).isEmpty()); // duplicate refused
+        QCOMPARE(settings.capturePinGroups().size(), 3);
+
+        const QString workId = settings.capturePinGroups().at(1).toMap().value(u"id"_s).toString();
+        QVERIFY(!workId.isEmpty());
+        QVERIFY(settings.renamePinGroup(workId, u"日常工作"_s).isEmpty());
+        settings.selectPinGroup(workId);
+        settings.setCapturePinGroupHotkey(u"Ctrl+Alt+G"_s);
+
+        // Reload from capture.ini: JSON with commas survives QSettings::IniFormat cleanly.
+        const CaptureOptions reloaded = CaptureOptions::load(file);
+        QCOMPARE(reloaded.pinGroupHotkey, u"Ctrl+Alt+G"_s);
+        QCOMPARE(reloaded.activePinGroup, workId);
+        ws::capture::PinGroupStore store;
+        store.loadGroups(reloaded.pinGroups);
+        QCOMPARE(store.customGroups().size(), std::size_t {2});
+        QCOMPARE(store.nameOf(workId), u"日常工作"_s);
+
+        // Show-all token persists cleanly.
+        settings.selectPinGroup(u"*"_s);
+        QVERIFY(settings.capturePinGroupsShowAll());
+        QCOMPARE(CaptureOptions::load(file).activePinGroup, u"*"_s);
+
+        // Removing a group persists and resets if active.
+        settings.selectPinGroup(workId);
+        settings.removePinGroup(workId);
+        QCOMPARE(settings.capturePinGroups().size(), 2);
+        QCOMPARE(CaptureOptions::load(file).activePinGroup, QString());
+
+        // Hotkey clash detection with existing hotkeys.
+        settings.setCaptureLastPinHotkey(u"Ctrl+Alt+G"_s);
+        QVERIFY(!settings.pinGroupHotkeyClash().isEmpty());
+        settings.setCapturePinGroupHotkey(u"Ctrl+Alt+Shift+G"_s);
+        QVERIFY(settings.pinGroupHotkeyClash().isEmpty());
     }
 };
 

@@ -1,6 +1,7 @@
 #include "Settings.h"
 #include "DoubleTapAction.h"
 #include "TrayAction.h"
+#include "UiSize.h"
 #include "WebSearchConfig.h"
 #include "PreviewShortcut.h"
 #include "platform/HotkeyText.h"
@@ -889,6 +890,7 @@ void Settings::load()
     settingsHotkey = readOrDefault(s, u"Launcher/SettingsHotkey"_s, d.settingsHotkey).trimmed();
     adminTapHinted = readOrDefault(s, u"Launcher/AdminTapHinted"_s, d.adminTapHinted);
     adminDialogHinted = readOrDefault(s, u"Launcher/AdminDialogHinted"_s, d.adminDialogHinted);
+    tessoaPickerHinted = readOrDefault(s, u"Launcher/TessoaPickerHinted"_s, d.tessoaPickerHinted);
     serviceUpdateHinted = readOrDefault(s, u"Launcher/ServiceUpdateHinted"_s, d.serviceUpdateHinted).trimmed();
     shortcutAgain = readOrDefault(s, u"Launcher/ShortcutAgain"_s, d.shortcutAgain).trimmed().toLower();
     if (shortcutAgain != u"panel")
@@ -915,6 +917,10 @@ void Settings::load()
         dialogBarPlace = d.dialogBarPlace;
     dialogBarFolderOnly = readOrDefault(s, u"Launcher/DialogBarFolderOnly"_s, d.dialogBarFolderOnly);
     dialogBarSuggestions = readOrDefault(s, u"Launcher/DialogBarSuggestions"_s, d.dialogBarSuggestions);
+    dialogBarSuggestOpen = readOrDefault(s, u"Launcher/DialogBarSuggestOpen"_s, d.dialogBarSuggestOpen);
+    dialogBarSuggestClipboard = readOrDefault(s, u"Launcher/DialogBarSuggestClipboard"_s, d.dialogBarSuggestClipboard);
+    dialogBarSuggestFavorites = readOrDefault(s, u"Launcher/DialogBarSuggestFavorites"_s, d.dialogBarSuggestFavorites);
+    dialogBarSuggestRecent = readOrDefault(s, u"Launcher/DialogBarSuggestRecent"_s, d.dialogBarSuggestRecent);
     dialogAutoJump = readOrDefault(s, u"Launcher/DialogAutoJump"_s, d.dialogAutoJump);
     dialogAutoJumpWhen = readOrDefault(s, u"Launcher/DialogAutoJumpWhen"_s, d.dialogAutoJumpWhen).trimmed().toLower();
     if (dialogAutoJumpWhen != u"back")
@@ -929,6 +935,7 @@ void Settings::load()
     fileManagerOpenCommand = readOrDefault(s, u"Launcher/FileManagerOpenCommand"_s, d.fileManagerOpenCommand).trimmed();
     fileManagerRevealCommand = readOrDefault(s, u"Launcher/FileManagerRevealCommand"_s, d.fileManagerRevealCommand).trimmed();
     explorerMenu = readOrDefault(s, u"Launcher/ExplorerMenu"_s, d.explorerMenu);
+    explorerPinPicture = readOrDefault(s, u"Launcher/ExplorerPinPicture"_s, d.explorerPinPicture);
     uriProtocol = readOrDefault(s, u"Launcher/UriProtocol"_s, d.uriProtocol);
     // On for new installs; an ini from before without the key had it off.
     explorerTyping = readOrDefault(s, u"Launcher/ExplorerTyping"_s, firstRun ? d.explorerTyping : false);
@@ -1015,6 +1022,9 @@ void Settings::load()
     searchSystem = readOrDefault(s, u"Results/SearchSystem"_s, d.searchSystem);
     runningTray = readOrDefault(s, u"Results/RunningTray"_s, d.runningTray);
     regexMode = readOrDefault(s, u"Results/RegexMode"_s, d.regexMode);
+    fuzzyMode = readOrDefault(s, u"Results/FuzzyMode"_s, d.fuzzyMode).trimmed().toLower();
+    if (fuzzyMode != u"off" && fuzzyMode != u"fallback" && fuzzyMode != u"on")
+        fuzzyMode = d.fuzzyMode;
     if (!s.contains(u"Results/Sort"_s) && s.value(u"Results/SortByModified"_s).toBool())
         s.setValue(u"Results/Sort"_s, u"newest"_s); // 0.6.0's switch: newest first, or best match
     s.remove(u"Results/SortByModified"_s);
@@ -1053,8 +1063,16 @@ void Settings::load()
     if (searchShadow != u"standard" && searchShadow != u"light" && searchShadow != u"none")
         searchShadow = d.searchShadow;
     rememberWindowSize = readOrDefault(s, u"Appearance/RememberWindowSize"_s, d.rememberWindowSize);
+    settingsEdgeScroll = readOrDefault(s, u"Appearance/SettingsEdgeScroll"_s, d.settingsEdgeScroll).trimmed().toLower();
+    if (!isSettingsEdgeScrollMode(settingsEdgeScroll))
+        settingsEdgeScroll = d.settingsEdgeScroll;
     donateOnGleaningPage = readOrDefault(s, u"Appearance/DonateOnGleaningPage"_s, d.donateOnGleaningPage);
     hoverTips = readOrDefault(s, u"Appearance/HoverTips"_s, d.hoverTips);
+    hoverTipsInterface = readOrDefault(s, u"Appearance/HoverTipsInterface"_s, d.hoverTipsInterface);
+    hoverTipsActions = readOrDefault(s, u"Appearance/HoverTipsActions"_s, d.hoverTipsActions);
+    hoverTipsPaths = readOrDefault(s, u"Appearance/HoverTipsPaths"_s, d.hoverTipsPaths);
+    if (!hoverTipsInterface && !hoverTipsActions && !hoverTipsPaths)
+        hoverTipsInterface = hoverTipsActions = hoverTipsPaths = true;
     previewWith = readOrDefault(s, u"Results/PreviewWith"_s, d.previewWith).trimmed().toLower();
     if (previewWith != u"builtin")
         previewWith = d.previewWith;
@@ -1095,7 +1113,7 @@ void Settings::load()
         taskbarIcon = d.taskbarIcon;
     uiSize = readOrDefault(s, u"Appearance/UiSize"_s, d.uiSize).trimmed().toLower();
     uiFont = readOrDefault(s, u"Appearance/UiFont"_s, d.uiFont).trimmed();
-    if (uiSize != u"dense" && uiSize != u"compact" && uiSize != u"roomy")
+    if (!uisize::isValid(uiSize))
         uiSize = d.uiSize;
     maxRows = std::clamp(readOrDefault(s, u"Appearance/MaxRows"_s, d.maxRows), 4, 20);
     corners = readOrDefault(s, u"Appearance/Corners"_s, d.corners).trimmed().toLower();
@@ -1219,8 +1237,9 @@ void Settings::load()
     if (clipboardScreenshots != u"all" && clipboardScreenshots != u"copied" && clipboardScreenshots != u"off")
         clipboardScreenshots = screenshotDefault;
     clipboardClickToPaste = readOrDefault(s, u"Clipboard/ClickToPaste"_s, d.clipboardClickToPaste);
+    clipboardPlainByDefault = readOrDefault(s, u"Clipboard/PlainByDefault"_s, d.clipboardPlainByDefault);
     clipboardUiSize = readOrDefault(s, u"Clipboard/UiSize"_s, d.clipboardUiSize).trimmed().toLower();
-    if (clipboardUiSize != u"dense" && clipboardUiSize != u"compact" && clipboardUiSize != u"standard" && clipboardUiSize != u"roomy")
+    if (!uisize::isValid(clipboardUiSize))
         clipboardUiSize = d.clipboardUiSize;
     // Clipboard/LargePictures was a switch until 0.28: on is "large".
     clipboardPictureSize = readOrDefault(s, u"Clipboard/PictureSize"_s,
@@ -1398,6 +1417,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/SettingsHotkey"_s, settingsHotkey);
     s.setValue(u"Launcher/AdminTapHinted"_s, adminTapHinted);
     s.setValue(u"Launcher/AdminDialogHinted"_s, adminDialogHinted);
+    s.setValue(u"Launcher/TessoaPickerHinted"_s, tessoaPickerHinted);
     s.setValue(u"Launcher/ServiceUpdateHinted"_s, serviceUpdateHinted);
     s.setValue(u"Launcher/ShortcutAgain"_s, shortcutAgain);
     s.setValue(u"Launcher/Renderer"_s, renderer);
@@ -1410,6 +1430,10 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/DialogBarPlace"_s, dialogBarPlace);
     s.setValue(u"Launcher/DialogBarFolderOnly"_s, dialogBarFolderOnly);
     s.setValue(u"Launcher/DialogBarSuggestions"_s, dialogBarSuggestions);
+    s.setValue(u"Launcher/DialogBarSuggestOpen"_s, dialogBarSuggestOpen);
+    s.setValue(u"Launcher/DialogBarSuggestClipboard"_s, dialogBarSuggestClipboard);
+    s.setValue(u"Launcher/DialogBarSuggestFavorites"_s, dialogBarSuggestFavorites);
+    s.setValue(u"Launcher/DialogBarSuggestRecent"_s, dialogBarSuggestRecent);
     s.setValue(u"Launcher/DialogAutoJump"_s, dialogAutoJump);
     s.setValue(u"Launcher/DialogAutoJumpWhen"_s, dialogAutoJumpWhen);
     s.setValue(u"Launcher/DialogAutoJumpAsked"_s, dialogAutoJumpAsked);
@@ -1418,6 +1442,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/FileManagerOpenCommand"_s, fileManagerOpenCommand);
     s.setValue(u"Launcher/FileManagerRevealCommand"_s, fileManagerRevealCommand);
     s.setValue(u"Launcher/ExplorerMenu"_s, explorerMenu);
+    s.setValue(u"Launcher/ExplorerPinPicture"_s, explorerPinPicture);
     s.setValue(u"Launcher/UriProtocol"_s, uriProtocol);
     s.setValue(u"Launcher/ExplorerTyping"_s, explorerTyping);
     s.setValue(u"Launcher/DesktopTyping"_s, desktopTyping);
@@ -1475,6 +1500,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Results/SearchSystem"_s, searchSystem);
     s.setValue(u"Results/RunningTray"_s, runningTray);
     s.setValue(u"Results/RegexMode"_s, regexMode);
+    s.setValue(u"Results/FuzzyMode"_s, fuzzyMode);
     s.setValue(u"Results/Sort"_s, sort);
     s.setValue(u"Results/StartList"_s, startList);
     s.setValue(u"Results/RecentItems"_s, recentItems);
@@ -1502,8 +1528,12 @@ bool Settings::saveChecked() const
     s.setValue(u"Appearance/OpenAnimation"_s, openAnimation);
     s.setValue(u"Appearance/SearchShadow"_s, searchShadow);
     s.setValue(u"Appearance/RememberWindowSize"_s, rememberWindowSize);
+    s.setValue(u"Appearance/SettingsEdgeScroll"_s, settingsEdgeScroll);
     s.setValue(u"Appearance/DonateOnGleaningPage"_s, donateOnGleaningPage);
     s.setValue(u"Appearance/HoverTips"_s, hoverTips);
+    s.setValue(u"Appearance/HoverTipsInterface"_s, hoverTipsInterface);
+    s.setValue(u"Appearance/HoverTipsActions"_s, hoverTipsActions);
+    s.setValue(u"Appearance/HoverTipsPaths"_s, hoverTipsPaths);
     s.setValue(u"Results/PreviewWith"_s, previewWith);
     s.setValue(u"Results/PreviewHotkey"_s, previewHotkey);
     s.setValue(u"Results/OpenHotkey"_s, openHotkey);
@@ -1563,6 +1593,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Clipboard/Images"_s, clipboardImages);
     s.setValue(u"Clipboard/Screenshots"_s, clipboardScreenshots);
     s.setValue(u"Clipboard/ClickToPaste"_s, clipboardClickToPaste);
+    s.setValue(u"Clipboard/PlainByDefault"_s, clipboardPlainByDefault);
     s.setValue(u"Clipboard/UiSize"_s, clipboardUiSize);
     s.setValue(u"Clipboard/PictureSize"_s, clipboardPictureSize);
     s.remove(u"Clipboard/LargePictures"_s); // said by PictureSize now

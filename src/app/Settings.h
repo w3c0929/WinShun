@@ -99,6 +99,9 @@ struct Settings {
     QStringList adminTapHinted;
     // ... and that their file dialogs cannot be taken anywhere (AdminDialogHint, GitHub #216).
     QStringList adminDialogHinted;
+    // Told once that Tessoa's own Open and Save windows cannot be taken
+    // anywhere (App::tessoaPickerFront), the bar being off to say so.
+    bool tessoaPickerHinted = false;
     // The Win顺 version that last said its index service is older and can be
     // updated in one click (a portable copy, ServiceUpdate.h): once a version.
     QString serviceUpdateHinted;
@@ -126,6 +129,12 @@ struct Settings {
     // abrupt, and seen by whoever looks on), the list waits for typing; ↓
     // brings it. Also turned on and off in the bar's own menu.
     bool dialogBarSuggestions = true;
+    // Which sources populate the dialog bar's empty-query list (GitHub #438).
+    // Unchecked sources never appear, even on ↓, without affecting search.
+    bool dialogBarSuggestOpen = true;
+    bool dialogBarSuggestClipboard = true;
+    bool dialogBarSuggestFavorites = true;
+    bool dialogBarSuggestRecent = true;
     bool dialogAutoJump = false; // file dialogs go to the folder open in a file manager by themselves
     // open | back: as a dialog comes up, or only when the user comes back to
     // it from the file manager (GitHub #14: it opens where Windows left it).
@@ -144,6 +153,7 @@ struct Settings {
     QString fileManagerOpenCommand;
     QString fileManagerRevealCommand;
     bool explorerMenu = true; // "用 Win顺 搜索此处" in Explorer's right-click menu (shellmenu::)
+    bool explorerPinPicture = true; // "贴到屏幕（Win顺）" on pictures in Explorer's right-click menu (shellmenu::applyPinPicture)
     // winshun:// links (GitHub #358) open Win顺 with a search typed, or its settings (shellmenu::applyUriProtocol).
     bool uriProtocol = true;
     // Typing in a File Explorer folder window searches there with Win顺
@@ -271,6 +281,10 @@ struct Settings {
     // for, and 全部 finds them; off, the tray is not read at all.
     bool runningTray = true;
     bool regexMode = false; // the search box's (Launcher::regexMode, Ctrl+R)
+    // Independent FZF subsequence matching policy: off | fallback | on.
+    // fallback (default): normal search untouched; falls back to FZF (>=3 chars)
+    // when nothing matches, plus word-boundary FZF for installed apps.
+    QString fuzzyMode = QStringLiteral("fallback");
     // match | newest | oldest | name | folder | type | largest | smallest
     // (kSortNames): how 文件 and 文件夹 order what they find, by best match,
     // by when last written, or (#44) by name, folder, type or size (the
@@ -350,6 +364,14 @@ struct Settings {
     // so, the next run too (SavedWindowSize, state.ini; GitHub #401). Off:
     // each run at their default size, and what was saved is forgotten.
     bool rememberWindowSize = true;
+    // Wheel overscroll at the top/bottom of a settings page to flip to the
+    // previous or next tab/page (GitHub #445): off | light | standard | steady.
+    static constexpr QStringView kSettingsEdgeScrollModes[] {u"off", u"light", u"standard", u"steady"};
+    static bool isSettingsEdgeScrollMode(QStringView mode) noexcept
+    {
+        return std::ranges::find(kSettingsEdgeScrollModes, mode) != std::end(kSettingsEdgeScrollModes);
+    }
+    QString settingsEdgeScroll = QStringLiteral("standard");
     // The settings window's 捐赠 button stands on the 拾穗计划 page instead of
     // in its title bar: moved there by the × beside it, after a word from the
     // author (DonateMoveDialog), put back by the arrow beside it there (GitHub #402).
@@ -359,6 +381,12 @@ struct Settings {
     // full path on a folder menu's row (MenuPathTip, GitHub #413); off, only
     // an "i" and a cut-off name still say their words (GitHub #368).
     bool hoverTips = true;
+    // Which categories of hover tips show while `hoverTips` is on (GitHub #440):
+    // interface controls / type strip, result & clipboard row actions + full
+    // dates, and folder menu full path tips. At least one stays on.
+    bool hoverTipsInterface = true;
+    bool hoverTipsActions = true;
+    bool hoverTipsPaths = true;
     // auto | builtin: what Alt+P on a row shows the file with. auto: QuickLook
     // or Seer when one is running in the background (FilePreview), else
     // Win顺's own preview window; builtin: always that.
@@ -538,6 +566,9 @@ struct Settings {
     QString clipboardNumberKeys = QStringLiteral("alt"); // alt | ctrl | off: Alt+1…9 pastes the nth row
     QString clipboardQuickPaste = QStringLiteral("off"); // off | ctrl | alt: the first nine of All, without opening the window
     bool clipboardClickToPaste = false; // a click pastes the row (Windows' way); off: picks it, a double click pastes
+    // The usual paste of words (a click, Enter, Alt+1…9, the quick paste keys) drops their formatting;
+    // Shift+Enter and 保留格式粘贴 keep it. Off: the other way round. Files and pictures go as they are.
+    bool clipboardPlainByDefault = false;
     QString clipboardUiSize = QStringLiteral("follow"); // follow (界面大小) | dense | compact | standard | roomy: its own type and row heights
     // A picture's thumbnail in the list: "small" on a row as high as any other (GitHub #328),
     // "standard" on a taller one, "large" enough to make out its details (forum #137).

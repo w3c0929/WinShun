@@ -113,8 +113,8 @@
         <translation>Cell %1</translation>
     </message>
     <message>
-        <source>起始</source>
-        <translation>Start</translation>
+        <source>当前组起始值（滚轮或点两侧增减）</source>
+        <translation>Starting number for this group (scroll or click +/-)</translation>
     </message>
     <message>
         <source>起始值减 1</source>
@@ -125,12 +125,12 @@
         <translation>Start one higher</translation>
     </message>
     <message>
-        <source>另起一组</source>
-        <translation>New group</translation>
+        <source>新组</source>
+        <translation>New</translation>
     </message>
     <message>
-        <source>之后的序号从 1 重新数</source>
-        <translation>The next numbers count from 1 again</translation>
+        <source>另起一组：之后的序号从 1 重新数</source>
+        <translation>New group: the next numbers count from 1 again</translation>
     </message>
     <message>
         <source>上移一层</source>
@@ -197,6 +197,26 @@
         <translation>Redact where the mouse goes</translation>
     </message>
     <message>
+        <source>矩形聚光灯，可多次框选实现不连续高亮</source>
+        <translation>Rectangle spotlight; draw several cutouts to highlight multiple areas</translation>
+    </message>
+    <message>
+        <source>圆形</source>
+        <translation>Circle</translation>
+    </message>
+    <message>
+        <source>圆形/椭圆聚光灯，按住 Shift 画正圆</source>
+        <translation>Circle/ellipse spotlight; hold Shift for a circle</translation>
+    </message>
+    <message>
+        <source>遮罩不透明度 100%（全遮盖，只显示框选区域，支持多选区不连续截图）</source>
+        <translation>Mask opacity 100% (solid mask showing only selected cutouts; supports discontinuous areas)</translation>
+    </message>
+    <message>
+        <source>遮罩不透明度 %1%</source>
+        <translation>Mask opacity %1%</translation>
+    </message>
+    <message>
         <source>笔宽 %1</source>
         <translation>Brush width %1</translation>
     </message>
@@ -260,8 +280,8 @@
         <translation>Save as: choose where to save</translation>
     </message>
     <message>
-        <source>1 E 3 L P M T N B 或 1–9</source>
-        <translation>1 E 3 L P M T N B or 1–9</translation>
+        <source>1 E 3 L P M T N B G 或 1–9</source>
+        <translation>1 E 3 L P M T N B G or 1–9</translation>
     </message>
     <message>
         <source>微调鼠标光标，每次 1 个物理像素；按住左键拖选区、拖手柄或画标注时也有效</source>
@@ -376,12 +396,12 @@
         <translation>Keys</translation>
     </message>
     <message>
-        <source>R E A L P M T N B 或 1–9</source>
-        <translation>R E A L P M T N B or 1–9</translation>
+        <source>R E A L P M T N B G 或 1–9</source>
+        <translation>R E A L P M T N B G or 1–9</translation>
     </message>
     <message>
-        <source>选工具：矩形、椭圆、箭头、直线、画笔、荧光笔、文字、序号、打码</source>
-        <translation>Pick a tool: rectangle, ellipse, arrow, line, pen, highlighter, text, number, redact</translation>
+        <source>选工具：矩形、椭圆、箭头、直线、画笔、荧光笔、文字、序号、打码、聚光灯</source>
+        <translation>Pick a tool: rectangle, ellipse, arrow, line, pen, highlighter, text, number, redact, spotlight</translation>
     </message>
     <message>
         <source>工具键再按一次</source>
@@ -434,6 +454,10 @@
     <message>
         <source>写完文字（Enter 换行；序号旁的字 Enter 就写完）</source>
         <translation>Finish the text (Enter breaks the line; for the words by a number, Enter finishes them)</translation>
+    </message>
+    <message>
+        <source>保存到原文件</source>
+        <translation>Save to original file</translation>
     </message>
     <message>
         <source>保存到设置的保存位置</source>
@@ -651,6 +675,10 @@
         <translation>Redact</translation>
     </message>
     <message>
+        <source>聚光灯</source>
+        <translation>Spotlight</translation>
+    </message>
+    <message>
         <source>放弃修改</source>
         <translation>Give up changes</translation>
     </message>
@@ -760,6 +788,10 @@
     <message>
         <source>格子小一档 / 大一档</source>
         <translation>Smaller / larger cells</translation>
+    </message>
+    <message>
+        <source>遮罩浅一档 / 深一档</source>
+        <translation>Lighter / darker mask</translation>
     </message>
     <message>
         <source>撤销 / 重做</source>
@@ -1192,6 +1224,14 @@
         <translation>Find controls in WinUI and similar programs</translation>
     </message>
     <message>
+        <source>截图并直接贴图</source>
+        <translation>Capture and pin</translation>
+    </message>
+    <message>
+        <source>按下后直接拖选区域或单击窗口，松开鼠标就贴到原位置，没有截图工具条。Esc 或右键取消；普通截图选好区域后按它也能直接贴图</source>
+        <translation>Drag an area or click a window and release to pin it in place right away, without the toolbar. Esc or right-click cancels; pressing it after selecting in a regular capture also pins directly</translation>
+    </message>
+    <message>
         <source>截图时的其他按键</source>
         <translation>Other keys while capturing</translation>
     </message>
@@ -1289,8 +1329,69 @@
         <translation>Nothing</translation>
     </message>
     <message>
+        <source>连按贴图键贴出历史记录</source>
+        <translation>Cycle pin history on repeated presses</translation>
+    </message>
+    <message>
+        <source>剪贴板没变化时，继续按贴图快捷键按顺序把之前截过或关掉的图贴回来，并保留标注；选“关闭”则只贴当前剪贴板或最近一张</source>
+        <translation>When the clipboard has not changed, pressing the pin shortcut again restores earlier captures and closed pins in order, keeping annotations; Off pins only the current clipboard or last capture</translation>
+    </message>
+    <message>
+        <source>关闭</source>
+        <comment>pin history</comment>
+        <translation>Off</translation>
+    </message>
+    <message>
+        <source>%1 张</source>
+        <translation>%1</translation>
+    </message>
+    <message>
+        <source>历史贴图恢复顺序</source>
+        <translation>Pin history restore order</translation>
+    </message>
+    <message>
+        <source>最近关闭优先：优先找回刚关掉的贴图和最新截图；按截图时间：严格按截图先后依次贴出</source>
+        <translation>Recently closed first: brings back the most recently closed pin or newest capture first; By capture time: restores strictly from newest to oldest capture</translation>
+    </message>
+    <message>
+        <source>最近关闭优先</source>
+        <translation>Recently closed first</translation>
+    </message>
+    <message>
+        <source>按截图时间</source>
+        <translation>By capture time</translation>
+    </message>
+    <message>
+        <source>贴图分组</source>
+        <translation>Pin groups</translation>
+    </message>
+    <message>
+        <source>分组管理</source>
+        <translation>Manage groups</translation>
+    </message>
+    <message>
+        <source>为不同工作场景建立贴图分组，切换分组时只显示当前组的贴图；删除分组后，里面的贴图会安全回到“默认”分组。也可从贴图右键菜单、托盘菜单或 cap 搜索里操作</source>
+        <translation>Organize pins by workflow. Switching groups shows only the active group; deleting a group safely moves its pins back to Default. Also available from a pin’s right-click menu, the tray menu, and cap search</translation>
+    </message>
+    <message>
+        <source>新分组名称</source>
+        <translation>New group name</translation>
+    </message>
+    <message>
+        <source>新建</source>
+        <translation>Add</translation>
+    </message>
+    <message>
+        <source>显示全部</source>
+        <translation>Show all</translation>
+    </message>
+    <message>
         <source>贴图的快捷键</source>
         <translation>Pin image shortcut</translation>
+    </message>
+    <message>
+        <source>优先贴剪贴板里的图片或文字；连续按下会按顺序贴出之前的历史截图与贴图（并保留标注）。不设时仍可从托盘菜单操作</source>
+        <translation>Pins the picture or text on the clipboard first; pressing again cycles through earlier captures and closed pins (keeping annotations). Still available from the tray menu if left unset</translation>
     </message>
     <message>
         <source>隐藏 / 显示全部贴图的快捷键</source>
@@ -1299,6 +1400,14 @@
     <message>
         <source>按一下藏起所有贴图，再按一下放回来；新贴一张图时也会放回来。不设就只能从托盘菜单或贴图的右键菜单操作</source>
         <translation>Press once to hide every pin and again to bring them back; pinning a new picture brings them back too. Without one, use the tray menu or a pin’s right-click menu</translation>
+    </message>
+    <message>
+        <source>切换贴图分组的快捷键</source>
+        <translation>Switch pin group shortcut</translation>
+    </message>
+    <message>
+        <source>按一下依次切换贴图分组，只显示当前分组的贴图；不设时仍可从贴图右键菜单、托盘菜单或 cap 搜索切换</source>
+        <translation>Cycles through pin groups to show only the active group. You can still switch from a pin’s right-click menu, the tray menu, or cap search without a shortcut</translation>
     </message>
     <message>
         <source>找回穿透贴图的快捷键</source>
@@ -1361,10 +1470,6 @@
         <translation>While another app is full screen, the screenshot hotkey and PrtScn do not start a capture. You can still start one from the menu.</translation>
     </message>
     <message>
-        <source>优先贴剪贴板里的图片；没有新图片时，把最近截图贴回原位置并保留标注。不设时仍可从托盘菜单操作</source>
-        <translation>Pin a clipboard image first; otherwise restore the last screenshot at its original position with annotations. Also available from the tray menu.</translation>
-    </message>
-    <message>
         <source>开始截图</source>
         <translation>Start a screenshot</translation>
     </message>
@@ -1423,6 +1528,14 @@
 <context>
     <name>CaptureSaveButton</name>
     <message>
+        <source>保存到原文件 %1（%2）</source>
+        <translation>Save to %1 (%2)</translation>
+    </message>
+    <message>
+        <source>保存到原文件 %1</source>
+        <translation>Save to %1</translation>
+    </message>
+    <message>
         <source>保存（%1）</source>
         <translation>Save (%1)</translation>
     </message>
@@ -1445,6 +1558,10 @@
     <message>
         <source>保存到旧路径</source>
         <translation>Save to previous folder</translation>
+    </message>
+    <message>
+        <source>保存到截图文件夹</source>
+        <translation>Save to Screenshots folder</translation>
     </message>
 </context>
 <context>
@@ -1614,6 +1731,22 @@
         <translation>Auto-scroll</translation>
     </message>
     <message>
+        <source>慢速</source>
+        <translation>Slow</translation>
+    </message>
+    <message>
+        <source>标准</source>
+        <translation>Normal</translation>
+    </message>
+    <message>
+        <source>快速</source>
+        <translation>Fast</translation>
+    </message>
+    <message>
+        <source>自动滚动速度：%1，点一下切换</source>
+        <translation>Auto-scroll speed: %1, click to cycle</translation>
+    </message>
+    <message>
         <source>复制诊断信息</source>
         <translation>Copy diagnostics</translation>
     </message>
@@ -1750,6 +1883,45 @@
     <message>
         <source>安装增强文字识别…</source>
         <translation>Install enhanced text recognition…</translation>
+    </message>
+    <message>
+        <source>已复制</source>
+        <translation>Copied</translation>
+    </message>
+    <message>
+        <source>合并换行</source>
+        <translation>Merge lines</translation>
+    </message>
+    <message>
+        <source>还原原始换行</source>
+        <translation>Restore original line breaks</translation>
+    </message>
+    <message>
+        <source>合并段落内的换行</source>
+        <translation>Merge line breaks within paragraphs</translation>
+    </message>
+</context>
+<context>
+    <name>PinGroupPrompt</name>
+    <message>
+        <source>新建贴图分组</source>
+        <translation>New pin group</translation>
+    </message>
+    <message>
+        <source>输入分组名称，用于按工作场景分组显示贴图</source>
+        <translation>Enter a group name to organize pins by workflow</translation>
+    </message>
+    <message>
+        <source>确定</source>
+        <translation>OK</translation>
+    </message>
+    <message>
+        <source>例如：工作、参考、设计</source>
+        <translation>e.g. Work, Reference, Design</translation>
+    </message>
+    <message>
+        <source>取消</source>
+        <translation>Cancel</translation>
     </message>
 </context>
 <context>
@@ -1902,14 +2074,6 @@ The unfinished recording is kept at: %1</translation>
         <translation>Smaller file</translation>
     </message>
     <message>
-        <source>标准画质</source>
-        <translation>Standard</translation>
-    </message>
-    <message>
-        <source>更清晰</source>
-        <translation>Clearer</translation>
-    </message>
-    <message>
         <source>10 帧/秒，最长边 960 像素，适合简单操作。</source>
         <translation>10 fps, up to 960 px on the longest edge. For simple actions.</translation>
     </message>
@@ -1920,18 +2084,6 @@ The unfinished recording is kept at: %1</translation>
     <message>
         <source>15 帧/秒，最长边 1280 像素，兼顾清晰度和体积。</source>
         <translation>15 fps, up to 1280 px on the longest edge. Balances clarity and size.</translation>
-    </message>
-    <message>
-        <source>15 帧/秒，保留原始尺寸，适合文字和简单操作。</source>
-        <translation>15 fps at the original size, for text and simple actions.</translation>
-    </message>
-    <message>
-        <source>30 帧/秒，优先保留细节，文件可能更大。</source>
-        <translation>30 fps with more detail. Files may be larger.</translation>
-    </message>
-    <message>
-        <source>30 帧/秒，兼顾清晰度和文件大小。</source>
-        <translation>30 fps, balancing clarity and file size.</translation>
     </message>
     <message>
         <source>鼠标指针</source>
@@ -1946,12 +2098,88 @@ The unfinished recording is kept at: %1</translation>
         <translation>Click highlight</translation>
     </message>
     <message>
+        <source>鼠标拖尾</source>
+        <translation>Cursor trail</translation>
+    </message>
+    <message>
+        <source>文件最小，细节略有损失，适合简单操作。</source>
+        <translation>Smallest file with slightly less detail. For simple actions.</translation>
+    </message>
+    <message>
+        <source>标准</source>
+        <translation>Standard</translation>
+    </message>
+    <message>
+        <source>兼顾清晰度和文件大小。</source>
+        <translation>Balances clarity and file size.</translation>
+    </message>
+    <message>
+        <source>高清</source>
+        <translation>High</translation>
+    </message>
+    <message>
+        <source>细节更锐利，文件更大。</source>
+        <translation>Sharper detail, larger files.</translation>
+    </message>
+    <message>
+        <source>超清</source>
+        <translation>Ultra</translation>
+    </message>
+    <message>
+        <source>20 帧/秒，保持原始尺寸，文件最大。</source>
+        <translation>20 fps at the original size. Largest files.</translation>
+    </message>
+    <message>
+        <source>最清晰，文件也最大。选区不超过 1920 × 1080 时按 2 倍尺寸保存，彩色小字和屏幕上一样清楚。</source>
+        <translation>The sharpest, and the largest files. A selection up to 1920 × 1080 is saved at twice its size, so small coloured text stays as clear as on screen.</translation>
+    </message>
+    <message>
+        <source>帧率</source>
+        <translation>FPS</translation>
+    </message>
+    <message>
+        <source>15 帧</source>
+        <translation>15</translation>
+    </message>
+    <message>
+        <source>每秒 15 帧，文件最小，适合文字和简单操作。</source>
+        <translation>15 frames a second: the smallest files, for text and simple actions.</translation>
+    </message>
+    <message>
+        <source>30 帧</source>
+        <translation>30</translation>
+    </message>
+    <message>
+        <source>每秒 30 帧，流畅，适合大多数情况。</source>
+        <translation>30 frames a second: smooth, right for most recordings.</translation>
+    </message>
+    <message>
+        <source>60 帧</source>
+        <translation>60</translation>
+    </message>
+    <message>
+        <source>每秒 60 帧，最顺滑，适合游戏、动画和滚动；文件更大，也更吃电脑性能。</source>
+        <translation>60 frames a second: the smoothest, for games, animation and scrolling. Larger files, and more work for the computer.</translation>
+    </message>
+    <message>
+        <source>%1 帧/秒，随画质</source>
+        <translation>%1 fps, set by the quality</translation>
+    </message>
+    <message>
+        <source>鼠标</source>
+        <translation>Mouse</translation>
+    </message>
+    <message>
         <source>鼠标按键</source>
         <translation>Mouse buttons</translation>
     </message>
     <message>
         <source>显示按键</source>
         <translation>Show keys</translation>
+    </message>
+    <message>
+        <source>按键</source>
+        <translation>Keys</translation>
     </message>
     <message>
         <source>不显示</source>
@@ -2055,6 +2283,10 @@ The unfinished recording is kept at: %1</translation>
     <message>
         <source>暂停</source>
         <translation>Pause</translation>
+    </message>
+    <message>
+        <source>放弃本次录制（不保存）</source>
+        <translation>Discard this recording without saving</translation>
     </message>
     <message>
         <source>开始录制</source>
@@ -2227,6 +2459,14 @@ The unfinished recording is kept at: %1</translation>
         <translation>Translate: drag over an area, or click a window · Esc cancels</translation>
     </message>
     <message>
+        <source>全屏的应用挡住了截图，请先退出全屏再截图</source>
+        <translation>A full-screen app is in front of the screenshot. Leave full screen first, then take it.</translation>
+    </message>
+    <message>
+        <source>截图并贴图：拖选区域，或单击窗口 · Esc 取消</source>
+        <translation>Capture &amp; pin: drag over an area, or click a window · Esc cancels</translation>
+    </message>
+    <message>
         <source>没有保存之前的画面，可在设置 › 截图里打开</source>
         <translation>Earlier pictures are not being kept; turn this on in Settings › Screenshot</translation>
     </message>
@@ -2384,6 +2624,10 @@ The unfinished recording is kept at: %1</translation>
         <translation>No translation service is set up yet. Set one up, then choose Translate again.</translation>
     </message>
     <message>
+        <source>%1。设置好后再点“翻译”。</source>
+        <translation>%1. Set it up, then choose Translate again.</translation>
+    </message>
+    <message>
         <source>需要插件库里的“翻译”插件，装好后再点“翻译”。</source>
         <translation>This needs the Translate plugin from the plugin library. Install it, then choose Translate again.</translation>
     </message>
@@ -2483,8 +2727,8 @@ click here to cancel</translation>
 <context>
     <name>ws::capture::LongCapture</name>
     <message>
-        <source>正在自动滚动。Enter 完成，Esc 取消</source>
-        <translation>Scrolling by itself. Enter finishes, Esc cancels</translation>
+        <source>正在自动滚动，移动鼠标可暂停。Enter 完成，Esc 取消</source>
+        <translation>Auto-scrolling (move mouse to pause). Enter finishes, Esc cancels</translation>
     </message>
     <message>
         <source>在区域内向左或向右滚动（Shift+滚轮），滚完按 Enter 或点“完成”</source>
@@ -2495,8 +2739,8 @@ click here to cancel</translation>
         <translation>Scroll up or down in the region. Enter or “Done” finishes</translation>
     </message>
     <message>
-        <source>把鼠标放到要滚动的区域上</source>
-        <translation>Put the mouse over the region to scroll</translation>
+        <source>已暂停：把鼠标移回要滚动的区域继续，或点“完成”</source>
+        <translation>Paused: move the mouse back over the region to resume, or click “Done”</translation>
     </message>
     <message>
         <source>这个程序以管理员身份运行，请手动滚动，滚完点“完成”</source>
@@ -2515,12 +2759,82 @@ click here to cancel</translation>
         <translation>No new frame for 5 seconds</translation>
     </message>
     <message>
-        <source>到上限了（3 万像素高）</source>
-        <translation>At the limit (30,000 px high)</translation>
+        <source>到上限了（3 万像素）</source>
+        <translation>At the limit (30,000 px)</translation>
     </message>
     <message>
         <source>诊断信息已复制</source>
         <translation>Diagnostics copied</translation>
+    </message>
+</context>
+<context>
+    <name>ws::capture::PictureWrite</name>
+    <message>
+        <source>无法保存到 %1（文件只读或没有写入权限）</source>
+        <translation>Could not save to %1 (file is read-only or permission denied)</translation>
+    </message>
+    <message>
+        <source>无法保存到 %1（文件正被其他程序占用）</source>
+        <translation>Could not save to %1 (file is in use by another program)</translation>
+    </message>
+    <message>
+        <source>无法保存到 %1（磁盘空间不足）</source>
+        <translation>Could not save to %1 (not enough disk space)</translation>
+    </message>
+    <message>
+        <source>无法保存到 %1</source>
+        <translation>Could not save to %1</translation>
+    </message>
+    <message>
+        <source>无法保存到 %1（目录不存在）</source>
+        <translation>Could not save to %1 (folder does not exist)</translation>
+    </message>
+</context>
+<context>
+    <name>ws::capture::PinGroups</name>
+    <message>
+        <source>默认</source>
+        <translation>Default</translation>
+    </message>
+    <message>
+        <source>全部分组</source>
+        <translation>All groups</translation>
+    </message>
+    <message>
+        <source>请输入分组名称</source>
+        <translation>Please enter a group name</translation>
+    </message>
+    <message>
+        <source>分组名称最多 %1 个字</source>
+        <translation>Group name can be at most %1 characters</translation>
+    </message>
+    <message>
+        <source>不能使用内置分组名称</source>
+        <translation>Cannot use a built-in group name</translation>
+    </message>
+    <message>
+        <source>已有同名分组</source>
+        <translation>A group with this name already exists</translation>
+    </message>
+    <message>
+        <source>最多可创建 %1 个自定义分组</source>
+        <translation>Up to %1 custom groups can be created</translation>
+    </message>
+    <message>
+        <source>默认分组不能重命名</source>
+        <translation>The default group cannot be renamed</translation>
+    </message>
+    <message>
+        <source>未找到该分组</source>
+        <translation>Group not found</translation>
+    </message>
+    <message>
+        <source>分组 %1</source>
+        <translation>Group %1</translation>
+    </message>
+    <message>
+        <source>新分组</source>
+        <translation>New group</translation>
     </message>
 </context>
 <context>
@@ -2617,8 +2931,44 @@ click here to cancel</translation>
         <translation>Rotate and flip</translation>
     </message>
     <message>
+        <source>已新建分组「%1」并移入贴图</source>
+        <translation>Created group “%1” and moved pin into it</translation>
+    </message>
+    <message>
+        <source>已移至「%1」</source>
+        <translation>Moved to “%1”</translation>
+    </message>
+    <message>
+        <source>已移至分组「%1」</source>
+        <translation>Moved to group “%1”</translation>
+    </message>
+    <message>
         <source>识别文字</source>
         <translation>Read text</translation>
+    </message>
+    <message>
+        <source>分组</source>
+        <translation>Group</translation>
+    </message>
+    <message>
+        <source>新建分组并移入…</source>
+        <translation>New group &amp; move here…</translation>
+    </message>
+    <message>
+        <source>切换当前分组</source>
+        <translation>Switch active group</translation>
+    </message>
+    <message>
+        <source>%1（%2）</source>
+        <translation>%1 (%2)</translation>
+    </message>
+    <message>
+        <source>显示全部分组（%1）</source>
+        <translation>Show all groups (%1)</translation>
+    </message>
+    <message>
+        <source>关闭当前分组（%1）</source>
+        <translation>Close current group (%1)</translation>
     </message>
     <message>
         <source>复制</source>
@@ -2639,6 +2989,10 @@ click here to cancel</translation>
     <message>
         <source>复制图片</source>
         <translation>Copy picture</translation>
+    </message>
+    <message>
+        <source>保存到原文件（%1）</source>
+        <translation>Save to original (%1)</translation>
     </message>
     <message>
         <source>保存到“屏幕截图”</source>
@@ -2663,6 +3017,18 @@ click here to cancel</translation>
     <message>
         <source>关闭全部贴图</source>
         <translation>Close all pins</translation>
+    </message>
+    <message>
+        <source>JPEG 图片</source>
+        <translation>JPEG image</translation>
+    </message>
+    <message>
+        <source>BMP 图片</source>
+        <translation>BMP image</translation>
+    </message>
+    <message>
+        <source>TIFF 图片</source>
+        <translation>TIFF image</translation>
     </message>
     <message>
         <source>另存为</source>
@@ -2794,6 +3160,18 @@ click here to cancel</translation>
         <translation>Cannot write to %1. Choose another save folder.</translation>
     </message>
     <message>
+        <source>这台电脑录不了 2 倍尺寸，这一段按原尺寸保存。</source>
+        <translation>This computer cannot record at twice the size: this one was saved at the selection's own size.</translation>
+    </message>
+    <message>
+        <source>这台电脑没跟上 %1 帧/秒，实际约 %2 帧/秒。下次可以把画质换成“高清”，或选低一档的帧率。</source>
+        <translation>This computer could not keep up with %1 fps: about %2 fps were recorded. Next time, choose “High” quality or a lower frame rate.</translation>
+    </message>
+    <message>
+        <source>这台电脑没跟上 %1 帧/秒，实际约 %2 帧/秒。下次可以选低一档的帧率。</source>
+        <translation>This computer could not keep up with %1 fps: about %2 fps were recorded. Next time, choose a lower frame rate.</translation>
+    </message>
+    <message>
         <source>选择录屏保存文件夹</source>
         <translation>Choose recording folder</translation>
     </message>
@@ -2891,6 +3269,14 @@ Original video kept at: %2</translation>
         <translation>Shortcut %1</translation>
     </message>
     <message>
+        <source>截图并贴图</source>
+        <translation>Capture &amp; pin</translation>
+    </message>
+    <message>
+        <source>框选后松开鼠标直接贴到原位置</source>
+        <translation>Drag an area and release to pin it in place right away</translation>
+    </message>
+    <message>
         <source>识别屏幕文字</source>
         <translation>Read text on screen</translation>
     </message>
@@ -2919,12 +3305,60 @@ Original video kept at: %2</translation>
         <translation>Pin image</translation>
     </message>
     <message>
+        <source>当前分组 · %1 张贴图</source>
+        <translation>Active group · %1 pin(s)</translation>
+    </message>
+    <message>
+        <source>切换到该分组 · %1 张贴图</source>
+        <translation>Switch to this group · %1 pin(s)</translation>
+    </message>
+    <message>
+        <source>贴图分组：%1</source>
+        <translation>Pin group: %1</translation>
+    </message>
+    <message>
+        <source>贴图分组：显示全部</source>
+        <translation>Pin groups: Show all</translation>
+    </message>
+    <message>
+        <source>当前已显示全部分组 · 共 %1 张</source>
+        <translation>Showing all groups · %1 total</translation>
+    </message>
+    <message>
+        <source>同时显示所有分组的贴图 · 共 %1 张</source>
+        <translation>Show pins from every group · %1 total</translation>
+    </message>
+    <message>
+        <source>新建并切换到贴图分组「%1」</source>
+        <translation>Create &amp; switch to pin group “%1”</translation>
+    </message>
+    <message>
+        <source>创建新分组并设为当前贴图分组</source>
+        <translation>Create a new group and make it active</translation>
+    </message>
+    <message>
         <source>截图设置</source>
         <translation>Screenshot settings</translation>
     </message>
     <message>
         <source>快捷键、鼠标、贴图、打码和工具条</source>
         <translation>Shortcuts, mouse, pins, redaction and toolbar</translation>
+    </message>
+    <message>
+        <source>贴图分组</source>
+        <translation>Pin groups</translation>
+    </message>
+    <message>
+        <source>已新建并切换到分组「%1」</source>
+        <translation>Created and switched to group “%1”</translation>
+    </message>
+    <message>
+        <source>已显示全部分组（共 %1 张）</source>
+        <translation>Showing all groups (%1 total)</translation>
+    </message>
+    <message>
+        <source>已切换到分组「%1」（%2 张）</source>
+        <translation>Switched to group “%1” (%2)</translation>
     </message>
     <message>
         <source>长截图</source>
@@ -2975,12 +3409,28 @@ Original video kept at: %2</translation>
         <translation>Could not save the screenshot</translation>
     </message>
     <message>
+        <source>没能保存到原文件</source>
+        <translation>Could not save to original file</translation>
+    </message>
+    <message>
         <source>截图已保存</source>
         <translation>Screenshot saved</translation>
     </message>
     <message>
         <source>点击打开所在文件夹</source>
         <translation>Click to show it in its folder</translation>
+    </message>
+    <message>
+        <source>已保存到原文件</source>
+        <translation>Saved to original file</translation>
+    </message>
+    <message>
+        <source>已保存到 %1</source>
+        <translation>Saved to %1</translation>
+    </message>
+    <message>
+        <source>保存失败</source>
+        <translation>Save failed</translation>
     </message>
     <message>
         <source>没能编辑这张图片</source>
@@ -3007,8 +3457,56 @@ Original video kept at: %2</translation>
         <translation>The text is only spaces: there is nothing to pin.</translation>
     </message>
     <message>
+        <source>历史截图已全部贴在屏幕上。</source>
+        <translation>All screenshots in history are already pinned on screen.</translation>
+    </message>
+    <message>
         <source>剪贴板里没有可用图片或文字，也没有最近截图。请先复制，或截一张。</source>
         <translation>There is no picture or text on the clipboard and no recent screenshot. Copy something, or take a screenshot, first.</translation>
+    </message>
+    <message>
+        <source>还没有其他贴图分组，可在贴图右键菜单或截图设置里新建。</source>
+        <translation>No other pin groups yet. Create one from a pin’s right-click menu or Screenshot settings.</translation>
+    </message>
+    <message>
+        <source>已切换到「%1」（%2 张贴图）</source>
+        <translation>Switched to “%1” (%2 pins)</translation>
+    </message>
+    <message>
+        <source>已切换到「%1」（暂无贴图）</source>
+        <translation>Switched to “%1” (no pins)</translation>
+    </message>
+    <message>
+        <source>新建分组并移入贴图</source>
+        <translation>New group &amp; move pin</translation>
+    </message>
+    <message>
+        <source>新建贴图分组</source>
+        <translation>New pin group</translation>
+    </message>
+    <message>
+        <source>为新分组命名，当前贴图将移入该分组</source>
+        <translation>Name the new group; this pin will move into it</translation>
+    </message>
+    <message>
+        <source>输入分组名称，用于按工作场景分组显示贴图</source>
+        <translation>Enter a group name to organize pins by workflow</translation>
+    </message>
+    <message>
+        <source>创建</source>
+        <translation>Create</translation>
+    </message>
+    <message>
+        <source>重命名贴图分组</source>
+        <translation>Rename pin group</translation>
+    </message>
+    <message>
+        <source>输入新的分组名称</source>
+        <translation>Enter a new group name</translation>
+    </message>
+    <message>
+        <source>保存</source>
+        <translation>Save</translation>
     </message>
     <message>
         <source>延时截图</source>
@@ -3029,6 +3527,30 @@ Original video kept at: %2</translation>
     <message>
         <source>找回刚放弃的标注</source>
         <translation>Get back the annotations just given up</translation>
+    </message>
+    <message>
+        <source>%1（%2）</source>
+        <translation>%1 (%2)</translation>
+    </message>
+    <message>
+        <source>显示全部分组（%1）</source>
+        <translation>Show all groups (%1)</translation>
+    </message>
+    <message>
+        <source>新建分组…</source>
+        <translation>New group…</translation>
+    </message>
+    <message>
+        <source>重命名当前分组…</source>
+        <translation>Rename current group…</translation>
+    </message>
+    <message>
+        <source>删除当前分组</source>
+        <translation>Delete current group</translation>
+    </message>
+    <message>
+        <source>贴图分组（%1）</source>
+        <translation>Pin groups (%1)</translation>
     </message>
     <message>
         <source>取消所有贴图的穿透（单个：按住 Ctrl 点它）</source>
@@ -3053,6 +3575,10 @@ Original video kept at: %2</translation>
     <message>
         <source>截图设置…</source>
         <translation>Screenshot settings…</translation>
+    </message>
+    <message>
+        <source>已删除分组「%1」，组内贴图已移回默认分组</source>
+        <translation>Deleted group “%1”; its pins moved back to Default</translation>
     </message>
     <message>
         <source>优先剪贴板图片，否则贴回最近截图并保留标注</source>
@@ -3112,6 +3638,14 @@ Original video kept at: %2</translation>
     <message>
         <source>截图翻译</source>
         <translation>Translate screen region</translation>
+    </message>
+    <message>
+        <source>截图并直接贴图</source>
+        <translation>Capture and pin</translation>
+    </message>
+    <message>
+        <source>切换贴图分组</source>
+        <translation>Switch pin group</translation>
     </message>
     <message>
         <source>和“%1”的快捷键相同，按下时会先被它用掉</source>

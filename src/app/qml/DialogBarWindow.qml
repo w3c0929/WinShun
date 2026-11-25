@@ -172,7 +172,7 @@ Window {
         letters: window.bar.letterJumpKeys
     }
     function letterOf(index) {
-        return numberHints.jumping && index >= firstShownRow && index <= lastLetterRow
+        return numberHints.lettersShown && index >= firstShownRow && index <= lastLetterRow
             ? numberHints.letterOf(index - firstShownRow) : ""
     }
     // A key while the letters show: a letter takes the dialog to its row, as
@@ -242,6 +242,13 @@ Window {
         }
         if (isNumberChord(event) && input.preeditText.length === 0) {
             window.bar.pressNumber(event.key - Qt.Key_0)
+            event.accepted = true
+            return
+        }
+        const zoom = input.preeditText.length === 0 ? SearchKeys.uiZoomAction(event.key, event.modifiers) : SearchKeys.zoomNone
+        if (zoom !== SearchKeys.zoomNone) {
+            if (!event.isAutoRepeat)
+                window.bar.adjustUiSize(zoom === SearchKeys.zoomReset ? 0 : zoom)
             event.accepted = true
             return
         }
@@ -413,8 +420,12 @@ Window {
                 id: placeholder
                 anchors.fill: parent
                 verticalAlignment: Text.AlignVCenter
-                text: window.bar.pathCopied ? qsTr("路径已复制，请粘贴到对话框的路径输入框")
-                      : window.bar.copyOnly ? (window.bar.copyOnlyHint === "other" ? qsTr("管理员窗口：搜索后复制路径再手动粘贴（服务属于另一份 Win顺）")
+                // Tessoa's own window takes a folder only in its address bar
+                // (its file name box refuses one), a file's whole path in either.
+                text: window.bar.pathCopied ? (window.bar.copyOnlyHint === "tessoa" ? qsTr("路径已复制：文件夹粘贴到 Tessoa 的地址栏，文件粘贴到文件名框")
+                                                                                   : qsTr("路径已复制，请粘贴到对话框的路径输入框"))
+                      : window.bar.copyOnly ? (window.bar.copyOnlyHint === "tessoa" ? qsTr("Tessoa 的窗口不能自动跳转：搜索后复制路径，或点“改用系统窗口”")
+                                               : window.bar.copyOnlyHint === "other" ? qsTr("管理员窗口：搜索后复制路径再手动粘贴（服务属于另一份 Win顺）")
                                                : window.bar.copyOnlyHint === "service" ? qsTr("管理员窗口：搜索后复制路径再手动粘贴（装 Win顺 服务可直接跳转）")
                                                : qsTr("管理员窗口：搜索后复制路径再手动粘贴"))
                       : window.bar.elevatedJump ? qsTr("管理员窗口：转过去并填好文件名，由你点打开")
@@ -441,9 +452,22 @@ Window {
             spacing: 2
 
             Text {
+                id: flashLabel
+                objectName: "dialogStatusFlash"
+                anchors.verticalCenter: parent.verticalCenter
+                visible: window.bar.statusFlash.length > 0
+                rightPadding: 8
+                text: window.bar.statusFlash
+                textFormat: Text.PlainText
+                color: Theme.accent
+                font.pixelSize: Theme.uiCaption
+                font.weight: Theme.fontStrong
+            }
+
+            Text {
                 id: notFound
                 anchors.verticalCenter: parent.verticalCenter
-                visible: window.bar.nothingFound && window.typed
+                visible: !flashLabel.visible && window.bar.nothingFound && window.typed
                 rightPadding: 8
                 text: qsTr("没有找到")
                 color: Theme.faint
@@ -454,7 +478,7 @@ Window {
                 id: positionLabel
                 objectName: "dialogPositionLabel"
                 anchors.verticalCenter: parent.verticalCenter
-                visible: window.positionText.length > 0 && !notFound.visible
+                visible: !flashLabel.visible && window.positionText.length > 0 && !notFound.visible
                          && (!scopeTag.visible || !chip.visible || window.width >= 560)
                 rightPadding: 8
                 text: window.positionText
@@ -764,12 +788,16 @@ Window {
             showModified: window.bar.showModified
             hint: window.numberOf(index)
             hintLetter: window.letterOf(index)
+            hintArmed: numberHints.jumping
+            hintJumpKey: numberHints.jumpKeyName
             hintOpacity: numberHints.hintOpacity
             hintOffsetY: window.hintOffsetY
             reserveHintSpace: (window.numberKey >= 0 && window.bar.numberHints !== "off") || window.bar.letterJump
             hintModifier: window.numberModifier
             hintTaken: rowItem.hint > 0 && !window.numberUsable(rowItem.hint)
-            z: window.hintOffsetY !== 0 && (rowItem.hint > 0 || rowItem.hintLetter.length > 0) ? 1 : 0
+            // ListView's default delegate z is 1 (above highlightItem at z 0);
+            // raise active-hint rows to 2 during smooth gliding so hints stay on top.
+            z: window.hintOffsetY !== 0 && (rowItem.hint > 0 || rowItem.hintLetter.length > 0) ? 2 : 1
             canOpen: window.bar.canOpen
             copyOnly: window.bar.copyOnly
             nameTip: nameTip

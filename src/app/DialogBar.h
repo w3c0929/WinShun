@@ -2,6 +2,7 @@
 
 #include "DialogBarVisibility.h"
 #include "DialogBarPlacement.h"
+#include "DialogBarSuggestions.h"
 #include "Favorites.h"
 #include "History.h"
 #include "PathText.h"
@@ -74,10 +75,12 @@ class DialogBar : public QObject {
     Q_PROPERTY(bool foldersOnly READ foldersOnly NOTIFY dialogKindChanged FINAL) // a folder picker
     Q_PROPERTY(bool canOpen READ canOpen NOTIFY dialogKindChanged FINAL) // a dialog that opens files: Enter opens one (#353)
     Q_PROPERTY(bool copyOnly READ copyOnly NOTIFY dialogKindChanged FINAL)
-    // Why an elevated dialog is copy-only, for the bar's hint: "service" (no
-    // service runs: installing it lets this copy jump), "other" (the service
-    // was installed by another copy of Win顺 and keeps the navigator for it),
-    // or "" (no reason worth telling, e.g. an older service).
+    // Why the dialog is copy-only, for the bar's hint: "tessoa" (Tessoa's own
+    // window, filedialog::isTessoaPicker: nothing can take it anywhere); or,
+    // for an elevated one, "service" (no service runs: installing it lets this
+    // copy jump), "other" (the service was installed by another copy of Win顺
+    // and keeps the navigator for it), or "" (no reason worth telling, e.g. an
+    // older service).
     Q_PROPERTY(QString copyOnlyHint READ copyOnlyHint NOTIFY dialogKindChanged FINAL)
     // An elevated dialog the index service's helper can navigate for us: it
     // jumps (to a folder), but never opens a file and never types a name.
@@ -101,6 +104,7 @@ class DialogBar : public QObject {
     Q_PROPERTY(int barHeight READ barHeight NOTIFY metricsChanged FINAL)
     Q_PROPERTY(int askHeight READ askHeight NOTIFY metricsChanged FINAL)
     Q_PROPERTY(int rowHeight READ rowHeight NOTIFY metricsChanged FINAL)
+    Q_PROPERTY(QString statusFlash READ statusFlash NOTIFY statusFlashChanged FINAL)
     // As the launcher's (Launcher::showModified, numberKeys).
     Q_PROPERTY(bool showModified READ showModified NOTIFY resultOptionsChanged FINAL)
     Q_PROPERTY(QString numberKeys READ numberKeys NOTIFY resultOptionsChanged FINAL)
@@ -146,6 +150,7 @@ public:
     // none does. A side set: the dialog is made smaller (or moved) for room
     // there.
     using Place = dialogbar::Side;
+    using SuggestionSources = dialogbar::SuggestionSources;
 
     // Takes a dialog to a folder or a file (DialogJump::go).
     using Mover = std::function<void(HWND dialog, std::wstring path, bool isFile, bool open)>;
@@ -158,6 +163,7 @@ public:
     QQuickWindow* window() const { return m_window; }
     // Off: what was opened lately is neither offered nor ranks first.
     void setRecordHistory(bool on) { m_recordHistory = on; }
+    void setFuzzyMode(const QString& mode) { m_fuzzyMode = fuzzyModeFromName(mode); }
     void setExcludedFiles(const QStringList& types, const QStringList& names) // Settings::excludedTypes, excludedFileNames
     {
         m_excludedTypes = types;
@@ -171,9 +177,13 @@ public:
     // Settings::dialogBarSuggestions (GitHub #417). Off: with nothing typed,
     // no list until asked for (askSuggestions).
     void setSuggestOnFocus(bool on);
+    // Which sources populate the empty-query suggestion list (GitHub #438).
+    // Disabled sources never appear, even on ↓, without affecting search.
+    void setSuggestionSources(SuggestionSources sources);
+    SuggestionSources suggestionSources() const noexcept { return m_suggestSources; }
     // ↓ with nothing typed and no list: the suggestions after all, until the
-    // bar loses the focus. False when they are up already (or something is
-    // typed): ↓ moves in the list.
+    // bar loses the focus. False when they are up already, no source is
+    // enabled, or something is typed: ↓ moves in the list.
     Q_INVOKABLE bool askSuggestions();
     void setResultOptions(bool showModified, bool thumbnails, const QString& numberKeys); // Settings: "ctrl", "alt", "off"
     // Settings::numberHints, letterJump, letterJumpKey, letterJumpKeys.
@@ -232,8 +242,8 @@ public:
     bool foldersOnly() const { return m_kind == filedialog::Kind::Folder || m_kind == filedialog::Kind::Browse; }
     bool canOpen() const { return !m_elevated && m_opens; }
     bool copyOnly() const { return m_copyOnly; }
-    QString copyOnlyHint() const { return m_copyOnlyHint; }
-    bool elevatedJump() const { return m_elevated && m_elevatedNavAvailable; }
+    QString copyOnlyHint() const { return m_tessoa ? QStringLiteral("tessoa") : m_copyOnlyHint; }
+    bool elevatedJump() const { return !m_tessoa && m_elevated && m_elevatedNavAvailable; }
     bool pathCopied() const { return m_pathCopied; }
     bool nothingFound() const { return m_nothingFound; }
     QString browsedFolder() const { return m_browsed; }
@@ -243,6 +253,9 @@ public:
     int askHeight() const { return s_metrics.askHeight; }
     bool asking() const { return m_asking; }
     int rowHeight() const { return s_metrics.barRow; }
+    QString statusFlash() const { return m_statusFlash; }
+    void flash(const QString& message);
+    Q_INVOKABLE void adjustUiSize(int delta) { emit uiSizeStepRequested(delta); }
 
     Q_INVOKABLE void choose(int row, bool open = false); // open: a file, where canOpen; else it goes there
     Q_INVOKABLE void chooseExplorer(); // the folder shown in the file manager (as Ctrl+G)
@@ -264,6 +277,8 @@ protected:
 
 signals:
     void metricsChanged();
+    void statusFlashChanged();
+    void uiSizeStepRequested(int delta); // Ctrl++ / Ctrl+- / Ctrl+0 (App::stepUiSize)
     void queryChanged();
     void explorerChanged();
     void originChanged();
@@ -297,9 +312,10 @@ private:
     void search();
     void browse(const pathtext::TypedPath& typed); // in the background
     void showSuggestions(bool refresh = false); // nothing typed; `refresh`: the list was already up
-    bool suggesting() const { return m_suggestOnFocus || m_suggestionsAsked; }
+    bool suggesting() const { return dialogbar::shouldSuggest(m_suggestSources, m_suggestOnFocus, m_suggestionsAsked); }
     // The rows to show and the tag of each; `refresh`: keep the selection if nothing changed.
-    void setRows(SearchResults rows, QStringList tags, const QStringList& highlights, bool refresh = false);
+    void setRows(SearchResults rows, QStringList tags, const QStringList& highlights, bool refresh = false,
+        const QStringList& fuzzyHighlights = {});
     void lookAround(); // the file managers' folders, the recent ones and the rest, in the background
     void onResults(quint64 id, const SearchResults& results);
     bool ofFileType(const SearchResult& r) const; // one the Open dialog shows
@@ -318,7 +334,10 @@ private:
     QString m_dialogApp; // its program file, "notepad.exe"
     filedialog::Kind m_kind = filedialog::Kind::None;
     bool m_opens = false; // pressing its button opens the file: Ctrl+Enter (filedialog::opensFiles, #353)
-    bool m_copyOnly = false; // UIPI: search is available, applying the path is manual (no service helper)
+    // Search is available, applying the path is manual: Tessoa's own window,
+    // or UIPI (an elevated dialog, no service helper).
+    bool m_copyOnly = false;
+    bool m_tessoa = false; // Tessoa's own window (filedialog::isTessoaPicker)
     bool m_elevated = false; // the dialog is of a higher-integrity (elevated) process
     bool m_elevatedNavAvailable = false; // the service can drive elevated dialogs (#104)
     QString m_copyOnlyHint = QStringLiteral("service"); // as for no service, until App says otherwise
@@ -326,6 +345,7 @@ private:
     bool m_inFront = false; // m_dialog (or the bar) is in front
     bool m_dragged = false; // m_dialog is being moved or sized by its frame
     bool m_recordHistory = true;
+    FuzzyMode m_fuzzyMode = FuzzyMode::Fallback;
     QStringList m_excludedTypes;
     QStringList m_excludedFileNames;
     QStringList m_excludedApps;
@@ -371,12 +391,15 @@ private:
     std::atomic<int> m_lookups {0}; // the newest lookAround() wins
 
     bool m_suggestOnFocus = true; // see setSuggestOnFocus
+    SuggestionSources m_suggestSources; // see setSuggestionSources
     bool m_suggestionsAsked = false; // ... and askSuggestions
     int m_rows = 0;
     bool m_listAbove = false;
     bool m_listHeld = false; // just made active: no list until a click is through
     bool m_clickSeen = false;
     QTimer m_listHold; // no click came
+    QString m_statusFlash;
+    QTimer m_flashTimer;
     DialogBarVisibility m_visibility;
     // Peeking out from behind the bar, off the dialog. Where place() put the
     // bar (physical pixels): its window, its box, the work area, the dialog.

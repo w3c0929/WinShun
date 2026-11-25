@@ -37,6 +37,17 @@ set_target_properties(tst_hotpages PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODU
 add_test(NAME tst_hotpages COMMAND tst_hotpages -o -,txt)
 set_tests_properties(tst_hotpages PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
+qt_add_executable(tst_idletrim tst_idletrim.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/platform/HotPages.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/platform/IdleTrim.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/TriggerJournal.cpp)
+target_include_directories(tst_idletrim PRIVATE ${PROJECT_SOURCE_DIR}/src/app ${PROJECT_SOURCE_DIR}/src/core)
+target_link_libraries(tst_idletrim PRIVATE wscore winshun_options Qt6::Gui Qt6::Test psapi user32)
+set_target_properties(tst_idletrim PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+add_test(NAME tst_idletrim COMMAND tst_idletrim -o -,txt)
+set_tests_properties(tst_idletrim PROPERTIES RUN_SERIAL TRUE
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
 qt_add_executable(tst_paster tst_paster.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/Paster.cpp)
 target_include_directories(tst_paster PRIVATE ${PROJECT_SOURCE_DIR}/src/app ${PROJECT_SOURCE_DIR}/src/core)
 target_link_libraries(tst_paster PRIVATE winshun_options Qt6::Test user32 comctl32)
@@ -296,6 +307,13 @@ target_link_libraries(tst_querysyntax PRIVATE wscore Qt6::Test)
 set_target_properties(tst_querysyntax PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_querysyntax COMMAND tst_querysyntax)
 set_tests_properties(tst_querysyntax PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+qt_add_executable(tst_fuzzymatch tst_fuzzymatch.cpp)
+target_link_libraries(tst_fuzzymatch PRIVATE wscore Qt6::Test)
+set_target_properties(tst_fuzzymatch PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_fuzzymatch COMMAND tst_fuzzymatch)
+set_tests_properties(tst_fuzzymatch PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 qt_add_executable(tst_syntax tst_syntax.cpp)
@@ -558,7 +576,8 @@ qt_add_executable(tst_foldermenu tst_foldermenu.cpp
     ${file_dialog_backend}
     ${PROJECT_SOURCE_DIR}/src/app/platform/FileManagers.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/FolderViewHit.cpp
-    ${PROJECT_SOURCE_DIR}/src/app/platform/Integrity.cpp)
+    ${PROJECT_SOURCE_DIR}/src/app/platform/Integrity.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/platform/Power.cpp) # the power commands a places row runs
 target_include_directories(tst_foldermenu PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
 target_link_libraries(tst_foldermenu PRIVATE wscore wsplugin Qt6::Quick Qt6::Svg Qt6::Test
     ole32 oleaut32 oleacc shell32 shlwapi user32 advapi32 taskschd uiautomationcore userenv dwmapi comctl32 shcore gdi32 winhttp)
@@ -752,6 +771,7 @@ set_tests_properties(tst_remotecontent PROPERTIES
 
 qt_add_executable(tst_settings tst_settings.cpp ${PROJECT_SOURCE_DIR}/src/app/Settings.cpp)
 target_include_directories(tst_settings PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
+target_compile_definitions(tst_settings PRIVATE WINSHUN_INSTALLER_SCRIPT="${PROJECT_SOURCE_DIR}/installer/WinShun.iss")
 target_link_libraries(tst_settings PRIVATE wscore Qt6::Gui Qt6::Test)
 set_target_properties(tst_settings PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_settings COMMAND tst_settings)
@@ -759,7 +779,9 @@ set_tests_properties(tst_settings PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 # The screenshot plugin's settings, capture.ini (src/capture-plugin/CaptureSettings).
-qt_add_executable(tst_capturesettings tst_capturesettings.cpp ${PROJECT_SOURCE_DIR}/src/capture-plugin/CaptureSettings.cpp)
+qt_add_executable(tst_capturesettings tst_capturesettings.cpp
+    ${PROJECT_SOURCE_DIR}/src/capture-plugin/CaptureSettings.cpp
+    ${PROJECT_SOURCE_DIR}/src/capture/PinGroups.cpp)
 target_include_directories(tst_capturesettings PRIVATE ${PROJECT_SOURCE_DIR}/src/capture-plugin ${PROJECT_SOURCE_DIR}/src/capture ${PROJECT_SOURCE_DIR}/src/app ${PROJECT_SOURCE_DIR}/src/core)
 target_link_libraries(tst_capturesettings PRIVATE winshun_options Qt6::Gui Qt6::Qml Qt6::Test)
 set_target_properties(tst_capturesettings PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
@@ -1426,6 +1448,19 @@ add_test(NAME tst_winkeys COMMAND tst_winkeys)
 set_tests_properties(tst_winkeys PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
+# Explorer's 贴到屏幕（Win顺）(src/app/platform/ShellMenu): a verb for each
+# picture extension, earlier versions' taken away, nothing empty left behind.
+# In a scratch key that stands in for HKCU; with the stub beside the test, as
+# the verbs are written only for a copy that has it.
+qt_add_executable(tst_shellmenu tst_shellmenu.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/ShellMenu.cpp)
+target_include_directories(tst_shellmenu PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
+target_link_libraries(tst_shellmenu PRIVATE wscore Qt6::Gui Qt6::Test advapi32 ole32 shell32)
+set_target_properties(tst_shellmenu PROPERTIES WIN32_EXECUTABLE FALSE)
+add_dependencies(tst_shellmenu WinShunSearch)
+add_test(NAME tst_shellmenu COMMAND tst_shellmenu)
+set_tests_properties(tst_shellmenu PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
 # The MCP server (src/mcp): the protocol, the tools on a hand-made index, the
 # pipe, and the relay WinShunMcp.exe, whose path it is told; and the
 # plugins' commands as tools (plugin::AiBridge), with plugin_fake.exe through
@@ -1638,7 +1673,9 @@ add_test(NAME tst_puresearch COMMAND $<TARGET_FILE:WinShun>
     --preview-results "${CMAKE_CURRENT_BINARY_DIR}/pure-search" --pure-search --renderer d3d11 --scale 1.5)
 add_test(NAME tst_pluginreviewsettings COMMAND $<TARGET_FILE:WinShun>
     --preview-settings "${CMAKE_CURRENT_BINARY_DIR}/plugin-review-settings" --plugin-review-settings --renderer d3d11 --scale 1.5)
-set_tests_properties(tst_puresearch tst_pluginreviewsettings PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
+add_test(NAME tst_plugingallerysettings COMMAND $<TARGET_FILE:WinShun>
+    --preview-settings "${CMAKE_CURRENT_BINARY_DIR}/plugin-gallery-settings" --plugin-gallery-settings --renderer d3d11 --scale 1.5)
+set_tests_properties(tst_puresearch tst_pluginreviewsettings tst_plugingallerysettings PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 target_include_directories(tst_plugin PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
 target_link_libraries(tst_plugin PRIVATE wsplugin miniz Qt6::Test advapi32 powrprof) # miniz: the test writes zips to install; the others: Power
@@ -1827,3 +1864,47 @@ add_test(NAME tst_settingsnav COMMAND tst_settingsnav -o -,txt)
 set_tests_properties(tst_settingsnav PROPERTIES
     ENVIRONMENT "QT_QUICK_BACKEND=software"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_PLUGIN_PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>/../plugins")
+
+# Pin history cycling (#446): recall ordering, edit/close refresh, PNG compression
+# generation guard, eviction, and rendering on-disk CaptureHistory shots.
+qt_add_executable(tst_pinhistory tst_pinhistory.cpp)
+target_link_libraries(tst_pinhistory PRIVATE wscapture Qt6::Test)
+set_target_properties(tst_pinhistory PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_pinhistory COMMAND tst_pinhistory -o -,txt)
+set_tests_properties(tst_pinhistory PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# Pin groups (#451): pure group store CRUD/cycling/JSON serialization plus real
+# PinManager visibility switching, moving, non-destructive deletion, and closeOthers.
+qt_add_executable(tst_pingroups tst_pingroups.cpp
+    ${PROJECT_SOURCE_DIR}/src/capture/PinManager.cpp
+    ${PROJECT_SOURCE_DIR}/src/capture/PinWindow.cpp)
+target_include_directories(tst_pingroups PRIVATE ${PROJECT_SOURCE_DIR}/src/app ${PROJECT_SOURCE_DIR}/src/core)
+target_link_libraries(tst_pingroups PRIVATE wscapture Qt6::Test dwmapi gdi32 imm32 shcore user32)
+set_target_properties(tst_pingroups PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_pingroups COMMAND tst_pingroups -o -,txt)
+set_tests_properties(tst_pingroups PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# Save-back image writing (#427): format filter, atomic PNG/JPEG/BMP/TIFF encoding,
+# and read-only target protection without corrupting original files.
+qt_add_executable(tst_picturewrite tst_picturewrite.cpp ${PROJECT_SOURCE_DIR}/src/app/PictureFile.cpp)
+target_include_directories(tst_picturewrite PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
+target_link_libraries(tst_picturewrite PRIVATE wscapture Qt6::Test ole32 windowscodecs)
+set_target_properties(tst_picturewrite PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_picturewrite COMMAND tst_picturewrite -o -,txt)
+set_tests_properties(tst_picturewrite PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# Dialog search bar suggestion sources (#438): selective source filtering,
+# deduplication, folder-picker gating, and all-off blocking focus and Down.
+qt_add_executable(tst_dialogbarsuggestions tst_dialogbarsuggestions.cpp)
+target_include_directories(tst_dialogbarsuggestions PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
+target_link_libraries(tst_dialogbarsuggestions PRIVATE wscore Qt6::Test)
+set_target_properties(tst_dialogbarsuggestions PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_dialogbarsuggestions COMMAND tst_dialogbarsuggestions -o -,txt)
+set_tests_properties(tst_dialogbarsuggestions PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")

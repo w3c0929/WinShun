@@ -69,7 +69,20 @@ QString settingsTr(const char* text)
 }
 
 // The plugin's global hotkeys with their names for the user (untranslated),
-// 识别屏幕文字 and then 截图翻译 last: they are registered after the others.
+// in registration order: earlier entries keep a duplicated key.
+enum class HotkeySlot : std::size_t {
+    Capture,
+    PrintScreen,
+    LastPin,
+    Pins,
+    PinsRestore,
+    Present,
+    Ocr,
+    Translate,
+    PinCapture,
+    PinGroup,
+};
+
 std::vector<std::pair<QString, const char*>> ownHotkeys(const CaptureOptions& o)
 {
     return {
@@ -81,6 +94,8 @@ std::vector<std::pair<QString, const char*>> ownHotkeys(const CaptureOptions& o)
         {o.presentHotkey, QT_TRANSLATE_NOOP("ws::captureplugin::CaptureSettings", "演示 / 白板")},
         {o.ocrHotkey, QT_TRANSLATE_NOOP("ws::captureplugin::CaptureSettings", "识别屏幕文字")},
         {o.translateHotkey, QT_TRANSLATE_NOOP("ws::captureplugin::CaptureSettings", "截图翻译")},
+        {o.pinCaptureHotkey, QT_TRANSLATE_NOOP("ws::captureplugin::CaptureSettings", "截图并直接贴图")},
+        {o.pinGroupHotkey, QT_TRANSLATE_NOOP("ws::captureplugin::CaptureSettings", "切换贴图分组")},
     };
 }
 
@@ -178,14 +193,25 @@ CaptureOptions CaptureOptions::load(const QString& file)
     o.presentHotkey = readOrDefault(s, u"Capture/PresentHotkey"_s, d.presentHotkey).trimmed();
     o.ocrHotkey = readOrDefault(s, u"Capture/OcrHotkey"_s, d.ocrHotkey).trimmed();
     o.translateHotkey = readOrDefault(s, u"Capture/TranslateHotkey"_s, d.translateHotkey).trimmed();
+    o.pinCaptureHotkey = readOrDefault(s, u"Capture/PinCaptureHotkey"_s, d.pinCaptureHotkey).trimmed();
+    o.pinGroupHotkey = readOrDefault(s, u"Capture/PinGroupHotkey"_s, d.pinGroupHotkey).trimmed();
+    capture::PinGroupStore groups;
+    groups.loadGroups(listOrText(s, u"Capture/PinGroups"_s, d.pinGroups));
+    groups.setActiveStateToken(readOrDefault(s, u"Capture/ActivePinGroup"_s, d.activePinGroup));
+    o.pinGroups = groups.serializeGroups();
+    o.activePinGroup = groups.activeStateToken();
     o.saveFolder = readOrDefault(s, u"Capture/SaveFolder"_s, d.saveFolder).trimmed();
     o.recordingFolder = readOrDefault(s, u"Capture/RecordingFolder"_s, d.recordingFolder).trimmed();
     o.recordingSystemAudio = readOrDefault(s, u"Capture/RecordingSystemAudio"_s, d.recordingSystemAudio);
     o.recordingMicrophone = readOrDefault(s, u"Capture/RecordingMicrophone"_s, d.recordingMicrophone);
     o.recordingQuality = readOrDefault(s, u"Capture/RecordingQuality"_s,
         readOrDefault(s, u"Capture/RecordingHighQuality"_s, false) ? 2 : d.recordingQuality); // the first version's
-    if (o.recordingQuality < 0 || o.recordingQuality > 2)
+    if (o.recordingQuality < 0 || o.recordingQuality > 3)
         o.recordingQuality = d.recordingQuality;
+    // Before the rate was a choice of its own, 小体积 recorded 15 frames a second: kept for who had chosen it.
+    o.recordingFrameRate = readOrDefault(s, u"Capture/RecordingFrameRate"_s, o.recordingQuality == 0 ? 15 : d.recordingFrameRate);
+    if (o.recordingFrameRate != 15 && o.recordingFrameRate != 30 && o.recordingFrameRate != 60)
+        o.recordingFrameRate = d.recordingFrameRate;
     o.recordingCursor = readOrDefault(s, u"Capture/RecordingCursor"_s, d.recordingCursor);
     o.recordingCountdown = readOrDefault(s, u"Capture/RecordingCountdown"_s, d.recordingCountdown);
     o.recordingClicks = readOrDefault(s, u"Capture/RecordingClicks"_s, d.recordingClicks);
@@ -196,9 +222,13 @@ CaptureOptions CaptureOptions::load(const QString& file)
     if (o.recordingKeys != u"shortcuts" && o.recordingKeys != u"all")
         o.recordingKeys = d.recordingKeys;
     o.recordingMouseButtons = readOrDefault(s, u"Capture/RecordingMouseButtons"_s, d.recordingMouseButtons);
+    o.recordingCursorTrail = readOrDefault(s, u"Capture/RecordingCursorTrail"_s, d.recordingCursorTrail);
     const QString action = readOrDefault(s, u"Capture/PinDoubleClick"_s, d.pinDoubleClick).trimmed().toLower();
     o.pinDoubleClick = action == u"close" || action == u"collapse" || action == u"none" ? action : u"reset"_s;
     o.pinAutoOcr = readOrDefault(s, u"Capture/PinAutoOcr"_s, d.pinAutoOcr);
+    o.pinHistoryCount = std::clamp(readOrDefault(s, u"Capture/PinHistoryCount"_s, d.pinHistoryCount), 0, 100);
+    const QString order = readOrDefault(s, u"Capture/PinHistoryOrder"_s, d.pinHistoryOrder).trimmed().toLower();
+    o.pinHistoryOrder = order == u"created" ? u"created"_s : u"closed"_s;
     // The keys (#187): missing or unreadable, the default; empty, none. One
     // written by hand that the settings window would refuse (a key the capture
     // uses, one an action before it has): the default, or none when that is
@@ -254,19 +284,27 @@ void CaptureOptions::save(const QString& file) const
     s.setValue(u"Capture/PresentHotkey"_s, presentHotkey);
     s.setValue(u"Capture/OcrHotkey"_s, ocrHotkey);
     s.setValue(u"Capture/TranslateHotkey"_s, translateHotkey);
+    s.setValue(u"Capture/PinCaptureHotkey"_s, pinCaptureHotkey);
+    s.setValue(u"Capture/PinGroupHotkey"_s, pinGroupHotkey);
+    s.setValue(u"Capture/PinGroups"_s, pinGroups);
+    s.setValue(u"Capture/ActivePinGroup"_s, activePinGroup);
     s.setValue(u"Capture/SaveFolder"_s, saveFolder);
     s.setValue(u"Capture/RecordingFolder"_s, recordingFolder);
     s.setValue(u"Capture/RecordingSystemAudio"_s, recordingSystemAudio);
     s.setValue(u"Capture/RecordingMicrophone"_s, recordingMicrophone);
     s.setValue(u"Capture/RecordingQuality"_s, recordingQuality);
+    s.setValue(u"Capture/RecordingFrameRate"_s, recordingFrameRate);
     s.setValue(u"Capture/RecordingCursor"_s, recordingCursor);
     s.setValue(u"Capture/RecordingCountdown"_s, recordingCountdown);
     s.setValue(u"Capture/RecordingClicks"_s, recordingClicks);
     s.setValue(u"Capture/RecordingFormat"_s, recordingFormat);
     s.setValue(u"Capture/RecordingKeys"_s, recordingKeys);
     s.setValue(u"Capture/RecordingMouseButtons"_s, recordingMouseButtons);
+    s.setValue(u"Capture/RecordingCursorTrail"_s, recordingCursorTrail);
     s.setValue(u"Capture/PinDoubleClick"_s, pinDoubleClick);
     s.setValue(u"Capture/PinAutoOcr"_s, pinAutoOcr);
+    s.setValue(u"Capture/PinHistoryCount"_s, pinHistoryCount);
+    s.setValue(u"Capture/PinHistoryOrder"_s, pinHistoryOrder);
     // Only the keys changed: a default changed later reaches whoever never set one.
     for (const capture::keys::ActionInfo& a : capture::keys::kActions) {
         if (keys.key(a.action) == a.key)
@@ -317,11 +355,20 @@ void CaptureSettings::setCapturePinDoubleClick(const QString& action)
         change(m_options.pinDoubleClick, action);
 }
 
+void CaptureSettings::setCapturePinHistoryOrder(const QString& order)
+{
+    const QString v = order.trimmed().toLower();
+    if (v == u"closed" || v == u"created")
+        change(m_options.pinHistoryOrder, v);
+}
+
 void CaptureSettings::setProblems(const Problems& p)
 {
     if (p.hotkey == m_hotkeyError && p.pinsHotkey == m_pinsHotkeyError && p.pinsRestoreHotkey == m_pinsRestoreHotkeyError
         && p.lastPinHotkey == m_lastPinHotkeyError && p.presentHotkey == m_presentHotkeyError
-        && p.ocrHotkey == m_ocrHotkeyError && p.translateHotkey == m_translateHotkeyError && p.note == m_note)
+        && p.ocrHotkey == m_ocrHotkeyError && p.translateHotkey == m_translateHotkeyError
+        && p.pinCaptureHotkey == m_pinCaptureHotkeyError && p.pinGroupHotkey == m_pinGroupHotkeyError
+        && p.note == m_note)
         return;
     m_hotkeyError = p.hotkey;
     m_pinsHotkeyError = p.pinsHotkey;
@@ -330,6 +377,8 @@ void CaptureSettings::setProblems(const Problems& p)
     m_presentHotkeyError = p.presentHotkey;
     m_ocrHotkeyError = p.ocrHotkey;
     m_translateHotkeyError = p.translateHotkey;
+    m_pinCaptureHotkeyError = p.pinCaptureHotkey;
+    m_pinGroupHotkeyError = p.pinGroupHotkey;
     m_note = p.note;
     emit problemsChanged();
 }
@@ -426,14 +475,92 @@ QString CaptureSettings::hotkeyConflict(QKeyCombination key, bool askSystem) con
 
 QString CaptureSettings::ocrHotkeyClash() const
 {
-    const auto own = ownHotkeys(m_options);
-    return clashBefore(own, own.size() - 2); // those before it: not itself, not the one registered after it
+    return clashBefore(ownHotkeys(m_options), static_cast<std::size_t>(HotkeySlot::Ocr));
 }
 
 QString CaptureSettings::translateHotkeyClash() const
 {
-    const auto own = ownHotkeys(m_options);
-    return clashBefore(own, own.size() - 1);
+    return clashBefore(ownHotkeys(m_options), static_cast<std::size_t>(HotkeySlot::Translate));
+}
+
+QString CaptureSettings::pinCaptureHotkeyClash() const
+{
+    return clashBefore(ownHotkeys(m_options), static_cast<std::size_t>(HotkeySlot::PinCapture));
+}
+
+QString CaptureSettings::pinGroupHotkeyClash() const
+{
+    return clashBefore(ownHotkeys(m_options), static_cast<std::size_t>(HotkeySlot::PinGroup));
+}
+
+QVariantList CaptureSettings::capturePinGroups() const
+{
+    capture::PinGroupStore store;
+    store.loadGroups(m_options.pinGroups);
+    store.setActiveStateToken(m_options.activePinGroup);
+    QVariantList list;
+    for (const capture::PinGroup& g : store.groups()) {
+        list.append(QVariantMap {
+            {u"id"_s, g.id},
+            {u"name"_s, g.name},
+            {u"builtin"_s, g.id.isEmpty()},
+            {u"active"_s, !store.showingAll() && store.activeGroupId() == g.id},
+        });
+    }
+    return list;
+}
+
+QString CaptureSettings::addPinGroup(const QString& name)
+{
+    capture::PinGroupStore store;
+    store.loadGroups(m_options.pinGroups);
+    store.setActiveStateToken(m_options.activePinGroup);
+    QString error;
+    if (!store.createGroup(name, &error))
+        return error;
+    m_options.pinGroups = store.serializeGroups();
+    commit();
+    return {};
+}
+
+QString CaptureSettings::renamePinGroup(const QString& id, const QString& name)
+{
+    capture::PinGroupStore store;
+    store.loadGroups(m_options.pinGroups);
+    store.setActiveStateToken(m_options.activePinGroup);
+    QString error;
+    if (!store.renameGroup(id, name, &error))
+        return error;
+    m_options.pinGroups = store.serializeGroups();
+    commit();
+    return {};
+}
+
+void CaptureSettings::removePinGroup(const QString& id)
+{
+    capture::PinGroupStore store;
+    store.loadGroups(m_options.pinGroups);
+    store.setActiveStateToken(m_options.activePinGroup);
+    if (!store.deleteGroup(id))
+        return;
+    m_options.pinGroups = store.serializeGroups();
+    m_options.activePinGroup = store.activeStateToken();
+    commit();
+}
+
+void CaptureSettings::selectPinGroup(const QString& id)
+{
+    capture::PinGroupStore store;
+    store.loadGroups(m_options.pinGroups);
+    store.setActiveStateToken(id);
+    change(m_options.activePinGroup, store.activeStateToken());
+}
+
+QString CaptureSettings::suggestedPinGroupName() const
+{
+    capture::PinGroupStore store;
+    store.loadGroups(m_options.pinGroups);
+    return store.suggestedNewName();
 }
 
 QString CaptureSettings::pickFolder(const QString& title)

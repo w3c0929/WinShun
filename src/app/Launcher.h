@@ -28,10 +28,12 @@
 #include <QWindow>
 #include <QtQml/qqmlregistration.h>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -193,6 +195,12 @@ class Launcher : public QObject {
     // was left, 文件夹 too (fileChoice, remembered between runs).
     Q_PROPERTY(int fileType READ fileType NOTIFY fileTypeChanged FINAL)
     Q_PROPERTY(QList<int> selectedFileTypes READ selectedFileTypes NOTIFY fileTypeChanged FINAL)
+    // 内容 narrowed to kinds of file (GitHub #447: the words in pictures
+    // only): their indexes in fileTypes, empty for any. Chosen with the same
+    // toggleFileType / chooseFileType while in 内容, which then stays 内容;
+    // kept apart from 文件's kind and, like the folder chosen, while the app
+    // runs. Shown as chips of 内容's strip (folderChips) and in the placeholder.
+    Q_PROPERTY(QList<int> contentFileTypes READ contentFileTypes NOTIFY fileTypeChanged FINAL)
     Q_PROPERTY(QString queryError READ queryError NOTIFY queryErrorChanged FINAL)
     Q_PROPERTY(bool gallery READ gallery WRITE setGallery NOTIFY galleryChanged FINAL)
     Q_PROPERTY(int thumbnailSize READ thumbnailSize WRITE setThumbnailSize NOTIFY galleryChanged FINAL)
@@ -250,6 +258,9 @@ class Launcher : public QObject {
     // expression on names (parseQuery's regexTerms), in 全部 and 文件; 内容
     // is as ever. Kept in the settings (regexModeChanged).
     Q_PROPERTY(bool regexMode READ regexMode WRITE setRegexMode NOTIFY regexModeChanged FINAL)
+    // Independent FZF subsequence matching policy: "off" | "fallback" | "on".
+    // Kept in the settings (fuzzyModeChanged).
+    Q_PROPERTY(QString fuzzyMode READ fuzzyMode WRITE setFuzzyMode NOTIFY fuzzyModeChanged FINAL)
     // Its filters, applied in the panel alone (the box is the plain quick
     // search): when written (dateChoice: 0 不限, 1 今天, 2 最近 7 天, 3 最近
     // 30 天, 4 今年, 5 自定义 with dateFrom and dateTo as "yyyy-MM-dd", either
@@ -338,7 +349,7 @@ public:
         RemoveScreenshot, // 从历史删除: a screenshot's row (Delete)
         SwitchOn, // a system switch's row, set on / off (the menu's two entries; Enter is the row's own)
         SwitchOff,
-        EditPicture, // 编辑: a screenshot's row, in the editing window (Shift+Enter)
+        EditPicture, // 编辑: a screenshot's row (Shift+Enter) or a picture file's, in the editing window
         BrowseFolder, // list a folder in Win顺, then keep typing to search there
         Rename, // 重命名: a file's or folder's row, in place (F2; Main.qml opens the box, see beginRename)
         RunAsUser, // 以普通权限运行: a row whose Enter runs as administrator (adminRemembered); Open from then on
@@ -681,7 +692,11 @@ public:
     // Nothing typed, 全部, no folder chosen in 内容: as at the first opening
     // (Settings::clearOnOpen); the search follows in handleShown.
     void startOver();
-    void handleShown();
+    // `deferBackgroundWork`: when the window is cloaked waiting for its first
+    // frame, keep catalog/registry refreshes and same-query re-searches off
+    // the critical reveal path until finishShownRefresh() runs after reveal.
+    void handleShown(bool deferBackgroundWork = false);
+    void finishShownRefresh();
     void handleHidden();
     void retranslate(); // the language changed: status, placeholder, rows
     // A few words in the footer for a moment ("已复制"); longer for one that
@@ -699,6 +714,10 @@ public:
     // place of shell::copyFiles (the clipboard left be).
     quint64 serverChecksStarted() const { return m_serverChecksStarted; }
     void setFileCopier(std::function<void(const QStringList& files)> copier) { m_fileCopier = std::move(copier); }
+    void setFileRecycler(std::function<void(const QStringList& files, std::function<void(bool)> done)> recycler)
+    {
+        m_fileRecycler = std::move(recycler);
+    }
     // A plugin's effects from outside a row: a click on its system
     // notification (Host::toastRequested), held to its permissions as an
     // action's are.
@@ -775,11 +794,12 @@ public:
     // for a moment and gives it back; the launcher is not to go for that.
     // Over once the launcher is active again, or another program's window
     // took the focus (App's activeChanged), or the launcher was hidden.
-    bool systemCommandRunning() const { return m_systemCommand; }
+    bool systemCommandRunning() const { return m_systemCommand || m_shellOpsInFlight > 0; }
     void systemCommandDone() { m_systemCommand = false; }
     Q_INVOKABLE void cycleScope(int delta);
     int fileType() const { return m_fileType; }
     QList<int> selectedFileTypes() const;
+    QList<int> contentFileTypes() const { return m_contentTypes; }
     QString queryError() const;
     bool gallery() const { return m_gallery; }
     void setGallery(bool gallery);
@@ -813,7 +833,8 @@ public:
     QString contentWords() const;
     QString contentWhere() const;
     QString whereMissing() const;
-    // A chip of the strip in 内容 (folderChips): searched there.
+    // A chip of the strip in 内容 (folderChips): searched there. 不限 ("")
+    // also takes off the kinds of file it is narrowed to (GitHub #447).
     Q_INVOKABLE void chooseFolderChip(const QString& key);
     // Ctrl+Tab in 内容: the next folder chip (or the one before), round; nothing with none to go to.
     Q_INVOKABLE void cycleFolderChip(int delta);
@@ -881,10 +902,20 @@ public:
     bool regexMode() const { return m_regexMode; }
     void setRegexMode(bool on);
     Q_INVOKABLE void toggleRegexMode(); // Ctrl+R: says so in the footer
+    QString fuzzyMode() const { return m_fuzzyMode; }
+    void setFuzzyMode(const QString& mode);
+    Q_INVOKABLE void toggleFuzzyMode(); // turns off always-on mode (chip click) or toggles on
     // The search logo left-clicked (not dragged, WindowFrame::handleClicked):
     // the settings window (settingsRequested).
     Q_INVOKABLE void openSettings() { emit settingsRequested(); }
     Q_INVOKABLE void openShortcutSettings() { emit shortcutSettingsRequested(); } // the shortcut panel's last row
+    // Ctrl++ / Ctrl+- / Ctrl+0: request a step of 界面大小 (+1 larger, -1 smaller, 0 reset).
+    Q_INVOKABLE void adjustUiSize(int delta) { emit uiSizeStepRequested(delta); }
+    void notifyUiSize(const QString& message, int level)
+    {
+        flash(message);
+        emit uiSizeNotified(message, level);
+    }
     int dateChoice() const { return m_dateChoice; }
     QString dateFrom() const { return m_dateFrom; }
     QString dateTo() const { return m_dateTo; }
@@ -965,6 +996,7 @@ signals:
     void sortChanged();
     void startListChanged();
     void regexModeChanged();
+    void fuzzyModeChanged();
     void resultOptionsChanged();
     void inTaskbarBoxChanged();
     void keysRoutedChanged();
@@ -983,6 +1015,7 @@ signals:
     // 贴到屏幕 (PinPicture, Ctrl+Enter on a screenshot): the picture in
     // `path`; `screenshot`: it is one of the history's.
     void pinRequested(const QString& path, bool screenshot);
+    void editPictureRequested(const QString& path); // 编辑 on a picture file's row: the editing window
     void folderChipsChanged();
     void typingFolderChanged();
     void folderSearchChanged();
@@ -994,6 +1027,8 @@ signals:
     void closingChanged();
     void settingsRequested();
     void shortcutSettingsRequested(); // the settings' overview of all shortcuts
+    void uiSizeStepRequested(int delta); // Ctrl++ / Ctrl+- / Ctrl+0 (App::stepUiSize)
+    void uiSizeNotified(const QString& message, int level); // for pureEmpty where Footer is hidden
     void folderSettingsRequested(); // the settings' page of the chosen folders
     void excludedSettingsRequested(); // the settings' section of excluded folders
     void excludedFilesSettingsRequested(); // the settings' section of skipped file types & names
@@ -1105,7 +1140,7 @@ private:
     void startContentSearch();
     SearchEngine::Request contentRequest() const;
     void syncContentPane();
-    void showRows(SearchResults rows, QStringList highlights);
+    void showRows(SearchResults rows, QStringList highlights, QStringList fuzzyHighlights = {});
     // Web suggestions (WebSuggester). Part of search(): the site's asked for
     // the words typed after its keyword, or the rows go (another site, no
     // words, a plugin's keyword, another scope, the panel). The answer's rows
@@ -1145,10 +1180,14 @@ private:
     // down), the same files join it, the answer going to the newest.
     void checkServersThen(const QStringList& paths, std::function<void(const ServerFound&)> then);
     void copyFiles(const QStringList& files); // m_fileCopier, else shell::copyFiles
+    void recycleFiles(const QStringList& files, std::function<void(bool)> done); // m_fileRecycler, else shell::recycle
     navigation::TabAction tabAction(int row) const;
     void browseFolder(const SearchResult& folder);
     // GitHub #361: Tab steps into `r` (navigation::tabAction's `stepsIn`).
     bool stepsInto(const SearchResult& r) const;
+    // The box read as a path being typed: its text, or typed in a folder's
+    // window the words after that folder (navigation::typedIn, GitHub #454).
+    pathtext::TypedPath typedPath() const;
     // A part of a name typed after a path ("D:\Wo"), which a folder listed
     // completes (stepsInto); not where Tab never steps in.
     bool completingPath() const;
@@ -1223,7 +1262,8 @@ private:
     void walkHereSoon(); // noteSearchHere: its folder walked as soon as the search ends
     void finishLeftOut(bool stopped); // the one running is over: the hint goes, the footer says what came of it
     void refreshStatus();
-    void refreshFrequentApps();
+    void refreshFrequentApps(bool refreshWindows = true);
+    bool matchesShownRows() const;
     void followPreview(); // the current row's file into the open preview
     // The search panel's details on show (内容, the panel, the pane open):
     // their 预览 tab is the preview there, never a window beside them (GitHub #224).
@@ -1335,6 +1375,7 @@ private:
     QHash<QString, ServerCheck> m_serverChecks;
     quint64 m_serverChecksStarted = 0;
     std::function<void(const QStringList& files)> m_fileCopier; // setFileCopier
+    std::function<void(const QStringList& files, std::function<void(bool)> done)> m_fileRecycler; // setFileRecycler
     qint64 m_totalMatches = 0;
     qint64 m_elapsedUs = 0;
     bool m_contentRunning = false;
@@ -1420,7 +1461,8 @@ private:
     mutable bool m_outsideKnown = false;
     bool m_walkRunning = false; // ... it is a walk of a drive (SearchEngine::driveProgress ends it)
     int m_walkSeen = 0; // files and folders it has looked at
-    bool m_approximate = false; // the rows were found by reading (approximateHeading)
+    bool m_approximate = false; // the rows were found by reading or fuzzy fallback (approximateHeading)
+    bool m_approximateFuzzy = false; // specifically FZF fuzzy fallback (not homophone reading)
     int m_currentRow = -1;
     QVariantMap m_keyHints; // see keyHints
     FileTypes m_fileTypes;
@@ -1429,6 +1471,9 @@ private:
     bool m_searchPlaces = true;
     bool m_regexMode = false;
     bool m_shownRegex = false; // of the rows on screen, as m_shownText
+    QString m_fuzzyMode = QStringLiteral("fallback"); // off | fallback | on
+    QString m_fuzzyBeforeOn = QStringLiteral("fallback"); // restored when turning off always-on chip
+    QString m_shownFuzzyMode = QStringLiteral("fallback");
     // What is typed is parsed as regexes on names (regexMode, and not 内容:
     // there the words are expressions on the files' text, m_regexMode as it is).
     bool regexTerms() const { return m_regexMode && m_scope != Content; }
@@ -1446,6 +1491,12 @@ private:
     bool clearQueryPrefix(); // an explicit scope/type choice replaces the typed prefix
     int m_fileType = -1; // see fileType
     QList<int> m_extraFileTypes;
+    QList<int> m_contentTypes; // see contentFileTypes
+    void setContentTypes(QList<int> types); // and search again
+    void chooseFolder(const QString& key); // chooseFolderChip's folders; Ctrl+Tab's, the kinds kept
+    QStringList contentTypeExtensions() const; // the kinds chosen in 内容: their extensions, any case, no dot
+    QStringList contentTypeFolders() const; // ... the folders they are bound to; empty when one is not
+    QString contentTypesKey() const { return contentTypeExtensions().join(u' ') + u'\n' + contentTypeFolders().join(u'\n'); }
     bool m_gallery = false;
     int m_thumbnailSize = 160;
     QString m_queryError;
@@ -1463,6 +1514,7 @@ private:
     SearchEngine::Request::ContentPick m_contentPick;
     ContentScope m_contentScope; // as the last content scan made it out (onContentScope)
     QString m_shownContentFolder; // what the rows are for, as m_shownText
+    QString m_shownContentTypes; // the same (contentTypesKey)
     QString m_shownPick;
     QString m_shownPanelKey; // panelKey() of the rows
 
@@ -1517,6 +1569,11 @@ private:
         QString from; // the words
         Scope scope = All;
         QString folder; // its path: its row is chosen again on the way back
+        // Stepped in from a folder's window typed in (GitHub #454): its
+        // prefix, and how its folder was searched, to come back to.
+        QString typingPrefix;
+        bool typingOnly = false;
+        bool typingLevel = false;
     };
     QList<FolderStep> m_folderSteps;
     QString m_returnRow; // returnTo: the row the next list starts on
@@ -1545,6 +1602,7 @@ private:
     bool m_systemMenuOpen = false; // the shell's menu is up (its loop runs inside runSystemMenu)
     std::optional<SearchResult> m_renaming; // the row whose name is being typed (beginRename)
     bool m_systemCommand = false; // see systemCommandRunning
+    int m_shellOpsInFlight = 0; // active IFileOperation (recycle / rename) calls keeping the launcher up for shell dialogs
     QElapsedTimer m_systemMenuAsked; // since showSystemMenu was last called
     std::optional<std::pair<int, int>> m_held; // holdUntilShown(): action, number
     std::vector<FrequentApp> m_frequent;
@@ -1576,9 +1634,15 @@ private:
     bool m_appsLeft = false; // 程序 was left because its tab went for a while (the panel, a dialog's bar)
     void showApps(); // search() in 程序
     void appsTabMoved();
-    void readWindowsUses();
-    std::vector<AppUse> m_windowsUses; // Windows' record of what was started, read at most every minute
+    void refreshWindowsUsesAsync();
+    std::vector<AppUse> m_windowsUses; // Windows' record of what was started, read off the GUI thread at most every minute
     QElapsedTimer m_windowsUsesAge;
+    std::atomic<bool> m_windowsUsesLoading {false};
+    std::jthread m_windowsUsesWorker;
+    bool m_shownStale = false; // rows need a fresh search before reveal (settings/favorites changed while hidden)
+    bool m_historyDirty = false; // history changed since rows were last shown (matters for empty RecentlyOpened)
+    bool m_deferredCatalogRefresh = false; // finishShownRefresh() runs catalog/switch/UserAssist refreshes
+    bool m_deferredSearchRefresh = false; // finishShownRefresh() refreshes the same-query rows in place
     QStringList m_contentExtensions {QStringLiteral("txt")};
     ContentSizeLimits m_contentSizeLimits;
     bool m_contentInLowPriority = false; // 内容 also looks in system, program and tool folders
@@ -1688,6 +1752,13 @@ private:
 
     QPointer<FilePreview> m_preview;
     QPoint m_pointerAtKeys {-1, -1}; // where the pointer was when the keyboard last moved (keyboardMoved)
+    // Power/session confirmation state (GitHub #428): disruptive commands require
+    // a second Enter or click within 5 s to execute.
+    QString m_armedPowerCommand;
+    QString m_armedPowerFlash;
+    QTimer m_armedPowerTimer;
+    void disarmPower();
+    bool isPowerArmed(QStringView command) const noexcept;
 };
 
 } // namespace ws

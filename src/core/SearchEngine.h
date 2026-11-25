@@ -223,6 +223,10 @@ public:
         QStringList contentExtensions; // e.g. {"txt"}
         ContentSizeLimits contentSizeLimits; // by kind of file
         bool contentDocuments = true; // and Word, Excel, PowerPoint, PDF (documentExtensions())
+        // 内容 narrowed to kinds of file (GitHub #447: 图片, 文档): only files
+        // with one of these extensions (no dot, any case) are read, and only
+        // those are counted as passed over (ContentLeftOut). Empty: any.
+        QStringList contentTypes;
         int maxContentResults = 300;
         // Also inside system, program and tool folders (EntryFlag::LowPriority).
         bool contentInLowPriority = false;
@@ -268,6 +272,11 @@ public:
         // Every term of `text` is a regex (parseQuery's regexTerms for names,
         // contentPattern's regexMode for a content search).
         bool regex = false;
+        // Independent FZF subsequence matching policy (Settings::fuzzyMode).
+        // Off by default so CLI/MCP/tests stay strictly deterministic; Launcher
+        // and DialogBar pass the user's setting. Explicit fz:/fuzzy: terms still
+        // work regardless of this mode (except in regex mode).
+        FuzzyMode fuzzyMode = FuzzyMode::Off;
     };
 
     explicit SearchEngine(

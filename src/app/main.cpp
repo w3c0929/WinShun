@@ -23,6 +23,7 @@
 #include "SystemCatalog.h"
 #include "platform/MessageWindow.h"
 #include "platform/Shell.h"
+#include "platform/ThreadQos.h"
 #include "platform/WinV.h"
 
 #include <QClipboard>
@@ -278,6 +279,16 @@ int main(int argc, char* argv[])
     if (setPlatform)
         qputenv("QT_QPA_PLATFORM", ws::Settings::resolveRenderer(ws::Settings::storedRenderer()) == u"software"
                                        ? "windows:fontengine=gdi" : "windows:fontengine=freetype");
+    // Qt's D3D11 swap chain waits, at the start of every frame, for DWM to
+    // take one of the last two, for up to a second. DWM takes them as it
+    // composes the screen, and the frames of a cloaked window (the launcher
+    // shows cloaked until its rows are drawn, prewarmed windows stay
+    // cloaked) or of one off every screen give it nothing to compose: with
+    // nothing else changing on the screen a frame waited the full second,
+    // the GUI thread with the render thread, and new rows came that late.
+    // Without the waitable object the same runs had no wait at all.
+    if (!qEnvironmentVariableIsSet("QT_D3D_MAX_FRAME_LATENCY"))
+        qputenv("QT_D3D_MAX_FRAME_LATENCY", "0");
     if (preview || pieHelper || clipboardDisplay) {
         // A picture of a settings page, and nothing else: before the single
         // instance below, which would hand the arguments to the running copy.
@@ -358,7 +369,12 @@ int main(int argc, char* argv[])
     // For tests: the running copy writes what its launcher shows into this file (App::dumpLauncher).
     QCommandLineOption dump(u"dump"_s, u"Write the launcher's rows and state to this file."_s, u"file"_s);
     dump.setFlags(QCommandLineOption::HiddenFromHelp);
-    parser.addOptions({background, toggle, query, quit, settings, settingsAt, takeAutostart, hadAutostart, uninstallCleanup, profile, dump, unelevatedOnce});
+    // With --background, from Setup while its last page is up (installer [Run]):
+    // a welcome guide still to come waits for Finish (App::showOnboarding).
+    QCommandLineOption setupPage(u"setup-page"_s, u"With --background: started by Setup before its last page closes."_s);
+    setupPage.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOptions({background, toggle, query, quit, settings, settingsAt, takeAutostart, hadAutostart, uninstallCleanup, profile,
+        dump, unelevatedOnce, setupPage});
     parser.process(app);
 
     // Before the instance check: it ends this copy itself and must not hand
@@ -470,10 +486,12 @@ int main(int argc, char* argv[])
     int code = 1;
     std::optional<QStringList> restart;
     ws::App::Elevation elevation = ws::App::Elevation::Same;
+    ws::qos::keepCurrentThreadResponsive(); // resident tray GUI thread: stay off EcoQoS after long idle
     {
         ws::App application;
         ws::App::StartOptions options;
         options.background = parser.isSet(background);
+        options.setupPage = parser.isSet(setupPage);
         options.query = parser.value(query);
         options.settings = parser.isSet(settings);
         options.settingsAt = parser.value(settingsAt);

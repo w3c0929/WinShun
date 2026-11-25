@@ -67,9 +67,9 @@ Rectangle {
 
 
     // In the launcher: as large as 界面大小 says (Theme.tabHeight); in the
-    // settings window, as the rest there.
+    // settings window, follows Theme.step cleanly (28 / 32 / 36).
     property bool scaled: false
-    readonly property int tabHeight: scaled ? Theme.tabHeight : 32
+    readonly property int tabHeight: scaled ? Theme.tabHeight : [28, 32, 36][Theme.step]
     // The tabs' own height: lower when a host holds it lower than it would be
     // (the keys in a style's inset search field). A segmented track fills the
     // height it is given; the margin only belongs to the plain track.
@@ -140,6 +140,13 @@ Rectangle {
                 height: tabs.shownTabHeight
                 radius: Theme.largeControlRadius
                 clip: true
+                Accessible.role: tabs.multiSelect ? Accessible.CheckBox : Accessible.RadioButton
+                Accessible.name: tab.modelData
+                Accessible.checked: tab.active
+                Accessible.onPressAction: if (!tab.off) {
+                    if (tabs.multiSelect) tabs.toggled(tab.index, !tab.isChecked)
+                    else tabs.activated(tab.index)
+                }
                 // One choice: the segmented part draws the chip under the words.
                 color: tabs.segmentedPart ? "transparent" : active ? Theme.chipActive : area.containsMouse ? Theme.chipHover : "transparent"
                 border.width: active && !tabs.segmentedPart ? Theme.edge(tabs.dpr) : 0

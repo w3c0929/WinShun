@@ -80,17 +80,27 @@ struct CustomFileBoxes {
     HWND type = nullptr;
 };
 
-bool customCadProgram(HWND window)
+// The file name of the program a window belongs to ("acad.exe"); empty when
+// it cannot be told. Asked of an elevated program too: the limited query right
+// is granted across integrity levels.
+std::wstring programOf(HWND window)
 {
     DWORD pid = 0;
-    ::GetWindowThreadProcessId(window, &pid);
+    if (!::GetWindowThreadProcessId(window, &pid))
+        return {};
     const win32::UniqueHandle process(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
     wchar_t image[1024] {};
     DWORD length = static_cast<DWORD>(std::size(image));
     if (!process.valid() || !::QueryFullProcessImageNameW(process.get(), 0, image, &length))
-        return false;
-    const wchar_t* leaf = ::wcsrchr(image, L'\\');
-    return leaf && (::_wcsicmp(leaf + 1, L"acad.exe") == 0 || ::_wcsicmp(leaf + 1, L"acadlt.exe") == 0);
+        return {};
+    const std::wstring_view path(image, length);
+    return std::wstring(path.substr(path.find_last_of(L'\\') + 1));
+}
+
+bool customCadProgram(HWND window)
+{
+    const std::wstring program = programOf(window);
+    return win32::equalsIgnoreCase(program, L"acad.exe") || win32::equalsIgnoreCase(program, L"acadlt.exe");
 }
 
 // Autodesk's CNavDialog uses its own control IDs and view host. Match the
@@ -433,23 +443,6 @@ void remember(HWND hwnd, Kind k)
     g_known.emplace_back(hwnd, k);
 }
 
-std::wstring programOf(HWND hwnd)
-{
-    DWORD pid = 0;
-    ::GetWindowThreadProcessId(hwnd, &pid);
-    const HANDLE process = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!process)
-        return {};
-    std::wstring path(MAX_PATH, L'\0');
-    DWORD size = MAX_PATH;
-    const bool ok = ::QueryFullProcessImageNameW(process, 0, path.data(), &size);
-    ::CloseHandle(process);
-    if (!ok)
-        return {};
-    path.resize(size);
-    return path.substr(path.find_last_of(L'\\') + 1);
-}
-
 // The dialog through UI Automation, made for each use: given up on soon
 // should the program hang.
 class Dialog {
@@ -562,18 +555,22 @@ private:
     int m_process = 0;
 };
 
-Kind probe(HWND hwnd)
+std::optional<Kind> probe(HWND hwnd)
 {
     const Dialog dialog(hwnd);
     if (!dialog)
-        return Kind::None;
+        return std::nullopt;
     // Until Qt has its accessibility up (the first question turns it on), the
-    // window answers for itself: "Qt5QWindowIcon".
+    // window answers for itself: "Qt5QWindowIcon". Wait longer on cold start
+    // and return nullopt if Qt has not reported a widget class yet, so a slow
+    // first open is not permanently cached as non-dialog.
     std::wstring name;
     waitFor([&] {
         name = Dialog::classOf(dialog.root());
-        return !name.starts_with(L"Qt");
-    }, 500ms);
+        return !name.empty() && !name.starts_with(L"Qt");
+    }, 1000ms);
+    if (name.empty() || name.starts_with(L"Qt"))
+        return std::nullopt;
     if (name != L"KcfdFileDialog")
         return Kind::None;
     // Its buttons may come a moment after it is in front.
@@ -600,10 +597,18 @@ bool goTo(HWND hwnd, const std::wstring& folder)
     if (!box)
         return false;
     // Enter goes to whatever has the focus: never with it elsewhere, as in the
-    // file name box, where it would save.
+    // file name box, where it would save. Right after opening, Qt may take a
+    // moment to reflect SetFocus in UIA or finish initial focus to the name box.
     constexpr const wchar_t* kBox = L"KcfdLocNavigationLineEdit";
     box->SetFocus();
-    if (!dialog.focusIn(kBox) || !Dialog::setValue(box.Get(), folder) || !dialog.focusIn(kBox))
+    if (!waitFor([&] { return dialog.focusIn(kBox); }, 250ms)) {
+        if (::GetForegroundWindow() != hwnd)
+            return false;
+        box->SetFocus();
+        if (!waitFor([&] { return dialog.focusIn(kBox); }, 250ms))
+            return false;
+    }
+    if (!Dialog::setValue(box.Get(), folder) || ::GetForegroundWindow() != hwnd || !dialog.focusIn(kBox))
         return false;
     ::PostMessageW(hwnd, WM_KEYDOWN, VK_RETURN, 0x001C0001);
     ::PostMessageW(hwnd, WM_KEYUP, VK_RETURN, 0xC01C0001);
@@ -703,8 +708,22 @@ bool mayBeKingsoft(HWND hwnd)
     const std::wstring_view className(name); // "Qt5QWindowIcon"
     if (!className.starts_with(L"Qt") || !className.ends_with(L"QWindowIcon") || !::GetWindow(hwnd, GW_OWNER))
         return false;
-    const std::wstring program = kingsoft::programOf(hwnd);
-    return std::ranges::any_of(kingsoft::kPrograms, [&](const wchar_t* p) { return ::_wcsicmp(program.c_str(), p) == 0; });
+    const std::wstring program = programOf(hwnd);
+    return std::ranges::any_of(kingsoft::kPrograms, [&](const wchar_t* p) { return win32::equalsIgnoreCase(program, p); });
+}
+
+bool isTessoaPicker(HWND hwnd)
+{
+    // Its owner is the calling program's window; Tessoa's own windows (the
+    // main ones, their menus and its own pickers) have none, or one of Tessoa's.
+    const HWND owner = hwnd ? ::GetWindow(hwnd, GW_OWNER) : nullptr;
+    if (!owner || ::GetAncestor(hwnd, GA_ROOT) != hwnd)
+        return false;
+    DWORD process = 0;
+    DWORD caller = 0;
+    if (!::GetWindowThreadProcessId(hwnd, &process) || !::GetWindowThreadProcessId(owner, &caller) || process == caller)
+        return false;
+    return win32::equalsIgnoreCase(programOf(hwnd), L"tessoa.exe");
 }
 
 bool probed(HWND hwnd)
@@ -716,10 +735,12 @@ Kind probe(HWND hwnd)
 {
     if (const std::optional<Kind> k = kingsoft::known(hwnd))
         return *k;
-    const Kind k = mayBeKingsoft(hwnd) ? kingsoft::probe(hwnd) : Kind::None;
-    if (::IsWindow(hwnd))
-        kingsoft::remember(hwnd, k);
-    return k;
+    if (!mayBeKingsoft(hwnd))
+        return Kind::None;
+    const std::optional<Kind> k = kingsoft::probe(hwnd);
+    if (k && ::IsWindow(hwnd))
+        kingsoft::remember(hwnd, *k);
+    return k.value_or(Kind::None);
 }
 
 std::wstring currentFolder(HWND dialog)

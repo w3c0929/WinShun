@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CaptureSettings.h"
+#include "PinHistory.h"
 #include "PrintScreen.h"
 #include "platform/HotPages.h"
 #include "platform/UiStall.h"
@@ -104,22 +105,47 @@ private:
     // 识别屏幕文字 (#198): the hotkey, the search box, the tray menu; 截图翻译
     // (#356) with `translate`.
     void startOcr(bool translate = false);
+    // 截图并直接贴图 (#450): the hotkey, the search box, the tray menu.
+    void startPinCapture();
     void readScreenText(const QImage& image, double dpr, const QRect& where);
     void showOcrBubble(const QString& phase, const QString& words, const QString& detail);
     bool closeOcrBubble(); // whether it was up
     // `window` (logical size) beside `where` (physical, virtual desktop) on its monitor.
     void placeNear(QQuickWindow* window, const QRect& where);
-    void notifySaved(const QString& path, const QString& error);
-    void pinPicture(const QString& path, bool screenshot);
-    void pinCurrentImage(); // clipboard picture first, then copied words, otherwise the editable last capture
+    void notifySaved(const QString& path, const QString& error, bool toSource = false);
+    void saveToSource(capture::PinWindow* pin, const QImage& image, const QString& path);
+    // `slot`: its place among several pinned at once (pinimage::cascaded).
+    void pinPicture(const QString& path, bool screenshot, int slot = 0, bool sourceFile = false);
+    void pinInTurn(quint64 ticket, QImage image, QPoint origin, QPoint anchor, bool screenshot, QString sourcePath);
+    void pinCurrentImage(); // clipboard picture first, then copied words, otherwise recall PinHistory (#446)
     // Copied words as a card on the screen (GitHub #388), at the cursor; Ctrl+C on it copies them.
-    void pinText(const QString& text);
+    capture::PinWindow* pinText(const QString& text);
+    // PinHistory (#446): record screenshots/pins, update on edit/close, recall on repeated hotkey.
+    quint64 recordPinHistory(capture::PinHistoryEntry entry, capture::PinWindow* pin = nullptr);
+    void encodeHistoryAsync(quint64 id, quint64 generation, QImage image);
+    void onPinClosing(capture::PinWindow* pin);
+    void restorePinHistoryEntry(const capture::PinHistoryEntry& entry);
+    void pinNextFromHistory(bool clipboardEmpty);
+    void loadNextDiskHistory(bool clipboardEmpty);
     void editPicture(qint64 clipId, const QString& file, const QString& projectFile);
+    void editFile(const QString& path);
     void editPin(capture::PinWindow* pin);
     void showSettings();
+    void persistPinGroups();
+    capture::PinGroupStore effectivePinGroups() const;
+    void cyclePinGroup();
+    void promptNewPinGroup(capture::PinWindow* moveTarget = nullptr);
+    void promptRenamePinGroup(const QString& groupId);
+    void ensureGroupPrompt();
     QJsonArray trayMenu() const;
     void menuChosen(const QString& id);
     void prepareWindow(QQuickWindow* window, bool backdrop);
+
+private slots:
+    void onGroupPromptSubmitted(const QString& name);
+    void onGroupPromptCancelled();
+
+private:
 
     // ---- Win顺's side ----
     // Into the clipboard history (copy: and onto the clipboard), as a
@@ -168,6 +194,11 @@ private:
     std::unique_ptr<WindowFrame> m_settingsFrame;
     QPointer<QQuickWindow> m_settingsWindow;
     QPointer<SavedWindowSize> m_settingsSize; // owned by m_settingsWindow (state.ini [SettingsWindow])
+    std::unique_ptr<WindowFrame> m_groupPromptFrame;
+    QPointer<QQuickWindow> m_groupPromptWindow;
+    QString m_groupPromptRenameId;
+    capture::PinWindow* m_groupPromptMovePin = nullptr;
+    bool m_persistingPinGroups = false;
     std::unique_ptr<RawClicks> m_clicks; // while a recording shows the clicks
     QStringList m_reportedHotkeys; // what Win顺 was told it holds (applyHotkeys)
     bool m_hostHotkeys = false;
@@ -186,6 +217,22 @@ private:
     QTimer m_applyLater;
     bool m_started = false;
     bool m_pinPending = false;
+    // Picture files read side by side, pinned in the order asked for (pinInTurn).
+    struct ReadPin {
+        QImage image; // null: it could not be read
+        QPoint origin;
+        QPoint anchor;
+        bool screenshot = false;
+        QString sourcePath;
+    };
+    std::map<quint64, ReadPin> m_pinsRead;
+    quint64 m_pinTicket = 0; // the next one asked for
+    quint64 m_pinTurn = 0; // the next one to go on the screen
+    capture::PinHistory m_pinHistory;
+    quint32 m_lastPinnedClipboardSeq = 0;
+    bool m_historyLoading = false;
+    QStringList m_diskHistoryTried;
+    std::jthread m_historyEncoder;
     QString m_uiFont; // the family of Win顺's words (its look's resolvedUiFont): copied words pinned
     bool m_themeMade = false; // ensureTheme
 };

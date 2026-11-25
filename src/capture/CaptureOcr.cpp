@@ -205,6 +205,35 @@ QString CaptureOcr::oneLine(const QString& text)
     return ocrOneLine(text, kMaxQuery); // lines as words: the search box is one line
 }
 
+QString CaptureOcr::mergeLines(const QString& text)
+{
+    const QStringList rawLines = text.split(u'\n');
+    QString out;
+    QString prevLine;
+    bool pendingBlank = false;
+    for (const QString& raw : rawLines) {
+        const QString line = raw.simplified();
+        if (line.isEmpty()) {
+            if (!out.isEmpty())
+                pendingBlank = true;
+            prevLine.clear();
+            continue;
+        }
+        if (out.isEmpty()) {
+            out = line;
+        } else if (pendingBlank) {
+            out += u"\n\n"_s + line;
+            pendingBlank = false;
+        } else if (!prevLine.isEmpty() && ocrGoesOn(prevLine, line)) {
+            ocrGlue(out, line);
+        } else {
+            out += u'\n' + line;
+        }
+        prevLine = line;
+    }
+    return out;
+}
+
 void CaptureOcr::search(const QString& text)
 {
     const QString query = oneLine(text);
@@ -237,8 +266,9 @@ void CaptureOcr::setTranslation(int ticket, Translated outcome, const QString& t
     case Translated::Failed:
         m_translationNote = text.trimmed().isEmpty() ? tr("翻译失败。") : tr("翻译失败：%1").arg(text.trimmed());
         break;
-    case Translated::NoService:
-        m_translationNote = tr("还没有设置翻译服务，设置好后再点“翻译”。");
+    case Translated::NoService: // `text`: the translate plugin's words on what to set (a key it refused …)
+        m_translationNote = text.trimmed().isEmpty() ? tr("还没有设置翻译服务，设置好后再点“翻译”。")
+                                                     : tr("%1。设置好后再点“翻译”。").arg(text.trimmed());
         m_translationNeeds = u"service"_s;
         break;
     case Translated::NoPlugin:

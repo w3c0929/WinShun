@@ -408,15 +408,17 @@ Item {
     RowAction {
         dpr: footer.dpr
         id: clearHistory
+        objectName: "clearHistoryButton"
 
         property bool armed: false
 
         visible: footer.launcher.canClearHistory
         role: "footer"
+        iconSize: 16 // match the footer's other icons (ShortcutsButton, sort, FileViewSwitch)
         anchors.right: viewSwitch.visible ? viewSwitch.left : parent.right
         anchors.rightMargin: viewSwitch.visible ? 8 : 6
         anchors.verticalCenter: parent.verticalCenter
-        glyph: "\uE74D" // Delete
+        iconName: "broom"
         tip: armed ? "" : qsTr("清除最近使用记录")
         text: armed ? qsTr("确认清除") : ""
         danger: armed

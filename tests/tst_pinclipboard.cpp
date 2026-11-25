@@ -600,6 +600,64 @@ private slots:
         QCOMPARE(small.image.size(), m_image.size());
         QCOMPARE(small.origin, work.center() - QPoint(m_image.width() / 2, m_image.height() / 2));
     }
+
+    // Several pictures pinned at once (a 文件 entry of picture files, picked
+    // entries): each a step on from the one before, towards the side with
+    // more room, at the monitor's scale; never off its work area.
+    void cascade_data()
+    {
+        QTest::addColumn<int>("dpi");
+        for (const int dpi : {96, 120, 144, 168})
+            QTest::newRow(qPrintable(QString::number(dpi))) << dpi;
+    }
+
+    void cascade()
+    {
+        QFETCH(int, dpi);
+        const QRect work(-1920, 0, 1920, 1040); // left of the main monitor
+        const int step = pin::kCascadeStep * dpi / 96;
+        const pin::Placement start {work.topLeft() + QPoint(400, 300), work, dpi}; // more room right and down
+        QCOMPARE(pin::cascaded(start, 0).cursor, start.cursor);
+        QCOMPARE(pin::cascaded(start, -3).cursor, start.cursor);
+        QCOMPARE(pin::cascaded(start, 1).cursor, start.cursor + QPoint(step, step));
+        QCOMPARE(pin::cascaded(start, 3).cursor, start.cursor + QPoint(3 * step, 3 * step));
+        QCOMPARE(pin::cascaded(start, 3).work, work);
+        QCOMPARE(pin::cascaded(start, 3).dpi, dpi);
+        // Near the bottom right corner: up and left, where there is room.
+        const pin::Placement corner {work.bottomRight() - QPoint(10, 10), work, dpi};
+        QCOMPARE(pin::cascaded(corner, 2).cursor, corner.cursor - QPoint(2 * step, 2 * step));
+        // Near the top right: left and down.
+        const pin::Placement top {QPoint(work.right() - 5, work.top() + 5), work, dpi};
+        QCOMPARE(pin::cascaded(top, 1).cursor, top.cursor + QPoint(-step, step));
+        // More slots than the area has room for: held at its edge.
+        for (int slot = 1; slot <= 100; slot += 11)
+            QVERIFY(work.contains(pin::cascaded(start, slot).cursor));
+        QCOMPARE(pin::cascaded(start, 100).cursor, work.bottomRight());
+    }
+
+    // CF_HDROP image file returns its sourcePath and non-zero clipboardSequence (#427, #446);
+    // plain DIB images keep sourcePath empty.
+    void clipboardFileSourcePath()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString file = QDir::toNativeSeparators(dir.filePath(u"source.png"_s));
+        QVERIFY(m_image.save(file, "PNG"));
+
+        write({.files = {file}});
+        const auto fromFile = read();
+        QCOMPARE(fromFile.status, pin::ClipboardStatus::Image);
+        QCOMPARE(fromFile.sourcePath, file);
+        QVERIFY(!fromFile.downscaled);
+        QVERIFY(fromFile.clipboardSequence != 0);
+
+        writeFormats({{CF_DIB, dib(false)}});
+        const auto fromDib = read();
+        QCOMPARE(fromDib.status, pin::ClipboardStatus::Image);
+        QVERIFY(fromDib.sourcePath.isEmpty());
+        QVERIFY(fromDib.clipboardSequence != 0);
+        QVERIFY(fromDib.clipboardSequence != fromFile.clipboardSequence);
+    }
 };
 
 int main(int argc, char** argv)

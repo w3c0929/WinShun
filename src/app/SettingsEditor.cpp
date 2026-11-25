@@ -2,6 +2,7 @@
 #include "DoubleTapAction.h"
 #include "TrayAction.h"
 #include "UiFont.h"
+#include "UiSize.h"
 #include "SystemTheme.h"
 
 #include "HealthMonitor.h"
@@ -355,6 +356,15 @@ void SettingsEditor::setRegexMode(bool on)
     commit();
 }
 
+void SettingsEditor::setFuzzyMode(const QString& mode)
+{
+    const QString clean = fuzzyModeName(fuzzyModeFromName(mode));
+    if (m_settings.fuzzyMode == clean)
+        return;
+    m_settings.fuzzyMode = clean;
+    commit();
+}
+
 void SettingsEditor::setThumbnails(bool on)
 {
     if (m_settings.thumbnails == on)
@@ -602,6 +612,15 @@ void SettingsEditor::setRememberWindowSize(bool on)
     commit();
 }
 
+void SettingsEditor::setSettingsEdgeScroll(const QString& mode)
+{
+    const QString normalized = mode.trimmed().toLower();
+    if (!Settings::isSettingsEdgeScrollMode(normalized) || m_settings.settingsEdgeScroll == normalized)
+        return;
+    m_settings.settingsEdgeScroll = normalized;
+    commit();
+}
+
 void SettingsEditor::setDonateOnGleaningPage(bool on)
 {
     if (m_settings.donateOnGleaningPage == on)
@@ -616,6 +635,37 @@ void SettingsEditor::setHoverTips(bool on)
         return;
     m_settings.hoverTips = on;
     commit();
+}
+
+namespace {
+bool updateHoverTipKind(Settings& settings, bool Settings::* field, bool on)
+{
+    if (settings.*field == on)
+        return false;
+    const int enabledCount = int(settings.hoverTipsInterface) + int(settings.hoverTipsActions) + int(settings.hoverTipsPaths);
+    if (!on && enabledCount <= 1)
+        return false; // at least one category stays on while hoverTips is enabled
+    settings.*field = on;
+    return true;
+}
+} // namespace
+
+void SettingsEditor::setHoverTipsInterface(bool on)
+{
+    if (updateHoverTipKind(m_settings, &Settings::hoverTipsInterface, on))
+        commit();
+}
+
+void SettingsEditor::setHoverTipsActions(bool on)
+{
+    if (updateHoverTipKind(m_settings, &Settings::hoverTipsActions, on))
+        commit();
+}
+
+void SettingsEditor::setHoverTipsPaths(bool on)
+{
+    if (updateHoverTipKind(m_settings, &Settings::hoverTipsPaths, on))
+        commit();
 }
 
 void SettingsEditor::setPureSearch(bool on)
@@ -1288,10 +1338,28 @@ void SettingsEditor::setTaskbarIcon(const QString& style)
 
 void SettingsEditor::setUiSize(const QString& size)
 {
-    if (m_settings.uiSize == size || (size != u"dense" && size != u"compact" && size != u"standard" && size != u"roomy"))
+    if (m_settings.uiSize == size || !uisize::isValid(size))
         return;
     m_settings.uiSize = size;
     commit();
+}
+
+QVariantMap SettingsEditor::stepUiSize(int delta)
+{
+    const uisize::StepResult next = uisize::step(uisize::parse(m_settings.uiSize), delta);
+    const QString sizeName = uisize::name(next.size).toString();
+    if (next.changed) {
+        m_settings.uiSize = sizeName;
+        commit();
+    }
+    return {
+        {u"size"_s, sizeName},
+        {u"level"_s, uisize::index(next.size)},
+        {u"count"_s, uisize::kCount},
+        {u"changed"_s, next.changed},
+        {u"atLimit"_s, next.atLimit},
+        {u"message"_s, uisize::feedback(next, delta)}
+    };
 }
 
 QStringList SettingsEditor::uiFonts() const { return uifont::families(); }
@@ -1364,6 +1432,38 @@ void SettingsEditor::setDialogBarSuggestions(bool on)
     if (m_settings.dialogBarSuggestions == on)
         return;
     m_settings.dialogBarSuggestions = on;
+    commit();
+}
+
+void SettingsEditor::setDialogBarSuggestOpen(bool on)
+{
+    if (m_settings.dialogBarSuggestOpen == on)
+        return;
+    m_settings.dialogBarSuggestOpen = on;
+    commit();
+}
+
+void SettingsEditor::setDialogBarSuggestClipboard(bool on)
+{
+    if (m_settings.dialogBarSuggestClipboard == on)
+        return;
+    m_settings.dialogBarSuggestClipboard = on;
+    commit();
+}
+
+void SettingsEditor::setDialogBarSuggestFavorites(bool on)
+{
+    if (m_settings.dialogBarSuggestFavorites == on)
+        return;
+    m_settings.dialogBarSuggestFavorites = on;
+    commit();
+}
+
+void SettingsEditor::setDialogBarSuggestRecent(bool on)
+{
+    if (m_settings.dialogBarSuggestRecent == on)
+        return;
+    m_settings.dialogBarSuggestRecent = on;
     commit();
 }
 
@@ -1663,6 +1763,14 @@ void SettingsEditor::setExplorerMenu(bool on)
     if (m_settings.explorerMenu == on)
         return;
     m_settings.explorerMenu = on;
+    commit();
+}
+
+void SettingsEditor::setExplorerPinPicture(bool on)
+{
+    if (m_settings.explorerPinPicture == on)
+        return;
+    m_settings.explorerPinPicture = on;
     commit();
 }
 
@@ -2314,6 +2422,14 @@ void SettingsEditor::setClipboardClickToPaste(bool on)
     commit();
 }
 
+void SettingsEditor::setClipboardPlainByDefault(bool on)
+{
+    if (m_settings.clipboardPlainByDefault == on)
+        return;
+    m_settings.clipboardPlainByDefault = on;
+    commit();
+}
+
 void SettingsEditor::setClipboardKeepPlace(bool on)
 {
     if (m_settings.clipboardKeepPlace == on)
@@ -2351,8 +2467,7 @@ void SettingsEditor::setClipboardOpenTabs(const QVariantList& tabs)
 
 void SettingsEditor::setClipboardUiSize(const QString& size)
 {
-    if (m_settings.clipboardUiSize == size
-        || (size != u"follow" && size != u"dense" && size != u"compact" && size != u"standard" && size != u"roomy"))
+    if (m_settings.clipboardUiSize == size || (size != u"follow" && !uisize::isValid(size)))
         return;
     m_settings.clipboardUiSize = size;
     commit();

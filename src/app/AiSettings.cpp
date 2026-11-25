@@ -291,6 +291,9 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Launcher/ExplorerMenu", QT_TRANSLATE_NOOP("AiSettings", "资源管理器右键“用 Win顺 搜索此处”"), "files_and_dialogs", 1,
                     "Adds 用 Win顺 搜索此处 to the right-click menu of folders in File Explorer."},
         &Settings::explorerMenu));
+    add(boolean({"Launcher/ExplorerPinPicture", QT_TRANSLATE_NOOP("AiSettings", "资源管理器右键“贴到屏幕（Win顺）”"), "files_and_dialogs", 1,
+                    "Adds 贴到屏幕（Win顺） to the right-click menu of picture files in File Explorer while the screenshot plugin is on."},
+        &Settings::explorerPinPicture));
     add(boolean({"Launcher/UriProtocol", QT_TRANSLATE_NOOP("AiSettings", "winshun:// 链接"), "files_and_dialogs", 1,
                     "Lets winshun:// links open Win顺: winshun://search/<words> opens the search box with the words typed, "
                     "winshun://settings opens the settings. Links never open or run files."},
@@ -439,9 +442,33 @@ std::vector<Entry> buildCatalog()
     }
     {
         Entry& e = add(boolean({"Launcher/DialogBarSuggestions", QT_TRANSLATE_NOOP("AiSettings", "点进对话框旁的搜索框就列出常用位置"), "files_and_dialogs", 3,
-                                   "Clicked into with nothing typed, the dialog search bar lists the folders open in file managers, favorites and recent folders. Off: nothing until typing (or the Down key)."},
+                                   "Clicked into with nothing typed, the dialog search bar lists the enabled suggestion sources. Off: nothing until typing (or the Down key)."},
             &Settings::dialogBarSuggestions));
         e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "点进来就列出常用位置");
+    }
+    {
+        Entry& e = add(boolean({"Launcher/DialogBarSuggestOpen", QT_TRANSLATE_NOOP("AiSettings", "对话框常用位置列出已打开的文件夹"), "files_and_dialogs", 3,
+                                   "Include folders currently open in file managers in the dialog search bar's empty-query list. Off: never listed there, even on Down."},
+            &Settings::dialogBarSuggestOpen));
+        e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "常用位置里列出的内容");
+    }
+    {
+        Entry& e = add(boolean({"Launcher/DialogBarSuggestClipboard", QT_TRANSLATE_NOOP("AiSettings", "对话框常用位置列出剪贴板路径"), "files_and_dialogs", 3,
+                                   "Include a file or folder path from the clipboard in the dialog search bar's empty-query list. Off: never listed there, even on Down."},
+            &Settings::dialogBarSuggestClipboard));
+        e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "常用位置里列出的内容");
+    }
+    {
+        Entry& e = add(boolean({"Launcher/DialogBarSuggestFavorites", QT_TRANSLATE_NOOP("AiSettings", "对话框常用位置列出收藏夹"), "files_and_dialogs", 3,
+                                   "Include favorites in the dialog search bar's empty-query list. Off: never listed there, even on Down."},
+            &Settings::dialogBarSuggestFavorites));
+        e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "常用位置里列出的内容");
+    }
+    {
+        Entry& e = add(boolean({"Launcher/DialogBarSuggestRecent", QT_TRANSLATE_NOOP("AiSettings", "对话框常用位置列出最近使用的文件夹"), "files_and_dialogs", 3,
+                                   "Include recently used folders in the dialog search bar's empty-query list. Off: never listed there, even on Down."},
+            &Settings::dialogBarSuggestRecent));
+        e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "常用位置里列出的内容");
     }
     {
         Entry& e = add(boolean({"Launcher/DialogAutoJump", QT_TRANSLATE_NOOP("AiSettings", "对话框自动转到文件管理器的文件夹"), "files_and_dialogs", 3,
@@ -494,15 +521,40 @@ std::vector<Entry> buildCatalog()
             {u"light"_s, u"light shadow"_s, QT_TRANSLATE_NOOP("AiSettings", "浅")},
             {u"none"_s, u"no shadow"_s, QT_TRANSLATE_NOOP("AiSettings", "无")}}));
     add(boolean({"Appearance/HoverTips", QT_TRANSLATE_NOOP("AiSettings", "悬停提示"), "appearance", -1,
-                    "true: resting the mouse on an icon or button (the kinds of file under the search box, the +, a row's buttons) shows a line "
-                    "saying what it is. false: no such tips; an \"i\" in the settings still shows its words, and a cut-off name still shows in full."},
+                    "true: resting the mouse on an icon or button (subject to the chosen tip categories) shows a line saying what it is. "
+                    "false: no non-essential tips; an \"i\" in the settings still shows its words, and a cut-off name still shows in full."},
         &Settings::hoverTips));
+    {
+        Entry& e = add(boolean({"Appearance/HoverTipsInterface", QT_TRANSLATE_NOOP("AiSettings", "悬停提示：界面与按钮"), "appearance", -1,
+                                   "Show hover tips on UI chrome, toolbar buttons, type strip extensions, and shortcut key hints while Appearance/HoverTips is on. At least one of the three tip categories stays on."},
+            &Settings::hoverTipsInterface));
+        e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "显示哪些悬停提示");
+    }
+    {
+        Entry& e = add(boolean({"Appearance/HoverTipsActions", QT_TRANSLATE_NOOP("AiSettings", "悬停提示：结果行操作"), "appearance", -1,
+                                   "Show hover tips on search result and clipboard row action buttons and full timestamps while Appearance/HoverTips is on. At least one of the three tip categories stays on."},
+            &Settings::hoverTipsActions));
+        e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "显示哪些悬停提示");
+    }
+    {
+        Entry& e = add(boolean({"Appearance/HoverTipsPaths", QT_TRANSLATE_NOOP("AiSettings", "悬停提示：文件夹菜单路径"), "appearance", -1,
+                                   "Show full-path hover tips on folder menu items while Appearance/HoverTips is on (cut-off names always show). At least one of the three tip categories stays on."},
+            &Settings::hoverTipsPaths));
+        e.rowTitle = QT_TRANSLATE_NOOP("AiSettings", "显示哪些悬停提示");
+    }
     add(boolean({"Appearance/RememberWindowSize", QT_TRANSLATE_NOOP("AiSettings", "记住窗口大小"), "appearance", -1,
                     "true: the settings window, the screenshot plugin's settings and picture text search open at the size their user last "
                     "dragged them to, maximized if they were left so, the next run too. false: each run they open at their default size "
                     "(a size dragged out lasts while it runs) and what was saved is forgotten. "
                     "Either way a double click on such a window's edge gives it its default size."},
         &Settings::rememberWindowSize));
+    add(choice({"Appearance/SettingsEdgeScroll", QT_TRANSLATE_NOOP("AiSettings", "设置页滚轮触边翻页"), "appearance", -1,
+                   "Whether scrolling past the top or bottom of a Settings page switches to the previous or next tab/page, and how firm the trigger is."},
+        &Settings::settingsEdgeScroll,
+        {{u"off"_s, u"never switch pages by overscrolling"_s, QT_TRANSLATE_NOOP("AiSettings", "关闭")},
+            {u"light"_s, u"switch after about 2 settled notches"_s, QT_TRANSLATE_NOOP("AiSettings", "轻快")},
+            {u"standard"_s, u"switch after about 3 settled notches with a short dwell guard"_s, QT_TRANSLATE_NOOP("AiSettings", "标准")},
+            {u"steady"_s, u"switch after about 5 settled notches with a longer dwell guard"_s, QT_TRANSLATE_NOOP("AiSettings", "稳重")}}));
     add(choice({"Appearance/Theme", QT_TRANSLATE_NOOP("AiSettings", "主题"), "appearance", -1, "Light or dark windows."},
         &Settings::theme,
         {{u"system"_s, u"follow Windows' light or dark mode"_s, QT_TRANSLATE_NOOP("AiSettings", "跟随系统")},
@@ -531,7 +583,7 @@ std::vector<Entry> buildCatalog()
                     "Liquid glass reading surface opacity. 50 is the theme default; higher makes cards more opaque."},
         &Settings::glassClarity, 0, 100));
     add(choice({"Appearance/UiSize", QT_TRANSLATE_NOOP("AiSettings", "界面大小"), "appearance", -1,
-                   "Type and row heights of the search box, the clipboard and the dialog bar (not the settings window). Dense: one small line per result."},
+                   "Type and row heights of the search box, search panel, settings, clipboard and dialog bar (also Ctrl++/Ctrl+-/Ctrl+0). Dense: one small line per result."},
         &Settings::uiSize,
         {{u"dense"_s, u"one small line per result"_s, QT_TRANSLATE_NOOP("AiSettings", "密集")},
             {u"compact"_s, u"smaller type and rows"_s, QT_TRANSLATE_NOOP("AiSettings", "紧凑")},
@@ -671,6 +723,15 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Results/RegexMode", QT_TRANSLATE_NOOP("AiSettings", "正则模式"), "results", 1,
                     "Every word typed is a regular expression: on names in All and Files, on the text of files in Content (Ctrl+R in the search box toggles it). A single word can be one with regex: before it either way."},
         &Settings::regexMode));
+    add(choice({"Results/FuzzyMode", QT_TRANSLATE_NOOP("AiSettings", "模糊匹配（FZF）"), "results", 1,
+                    "Independent FZF subsequence matching (e.g. nsrch -> NameSearch.cpp, vcode -> Visual Studio Code). Off: deterministic search only (explicit fz:/fuzzy: still works). Fallback: normal search stays untouched and falls back to FZF (>=3 chars) on 0 hits, plus word-boundary FZF for apps. On: always includes FZF (>=3 chars) ranked strictly below normal hits."},
+        &Settings::fuzzyMode,
+        {{u"off"_s, u"deterministic search only; explicit fz:/fuzzy: prefix still works"_s,
+             QT_TRANSLATE_NOOP("AiSettings", "关闭")},
+            {u"fallback"_s, u"only fall back to FZF when normal search finds nothing (and word-boundary FZF for apps)"_s,
+                QT_TRANSLATE_NOOP("AiSettings", "无结果时")},
+            {u"on"_s, u"always include FZF matches ranked strictly below normal matches"_s,
+                QT_TRANSLATE_NOOP("AiSettings", "始终开启")}}));
     add(boolean({"Results/ShowModified", QT_TRANSLATE_NOOP("AiSettings", "显示修改日期"), "results", 1,
                     "Each result says when the file was last written."},
         &Settings::showModified));
@@ -686,7 +747,7 @@ std::vector<Entry> buildCatalog()
         &Settings::thumbnails));
     add(boolean({"Results/DeleteButton", QT_TRANSLATE_NOOP("AiSettings", "显示删除按钮"), "results", 1,
                     "A file's or folder's row has a delete button (clicked twice, to the Recycle Bin) among its "
-                    "buttons. Off: none; Windows' own menu (更多选项 in its right-click menu) still deletes."},
+                    "buttons. Off: none; the right-click menu still has Move to Recycle Bin."},
         &Settings::rowDeleteButton));
     add(choice({"Results/PreviewWith", QT_TRANSLATE_NOOP("AiSettings", "预览文件"), "results", 1,
                    "Which viewer the result preview uses."},
@@ -769,7 +830,8 @@ std::vector<Entry> buildCatalog()
         {{u"ctrl"_s, u"Ctrl+1…9"_s, "Ctrl+1…9"}, {u"alt"_s, u"Alt+1…9"_s, "Alt+1…9"},
             {u"off"_s, u"none"_s, QT_TRANSLATE_NOOP("AiSettings", "不用")}}));
     add(choice({"Results/NumberHints", QT_TRANSLATE_NOOP("AiSettings", "序号提示"), "results", 2,
-                   "When the numbers 1…9 show on the rows of the search box and the clipboard."},
+                   "When the row shortcut hints show in the search box, clipboard, and dialog bar: 1…9 when number keys "
+                   "are on, or passive letter previews when number keys are off and 字母直达 is on."},
         &Settings::numberHints,
         {{u"held"_s, u"while the modifier key is held"_s, QT_TRANSLATE_NOOP("AiSettings", "按住修饰键时")},
             {u"always"_s, u"always"_s, QT_TRANSLATE_NOOP("AiSettings", "一直显示")},
@@ -852,6 +914,10 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Clipboard/ClickToPaste", QT_TRANSLATE_NOOP("AiSettings", "单击粘贴"), "clipboard", 0,
                     "A click pastes the row (Windows' way); off: a click picks it and a double click pastes."},
         &Settings::clipboardClickToPaste));
+    add(boolean({"Clipboard/PlainByDefault", QT_TRANSLATE_NOOP("AiSettings", "默认粘贴为纯文本"), "clipboard", 0,
+                    "Pasting words from the history (a click, Enter, Alt+1-9, the quick paste keys) drops their formatting; "
+                    "Shift+Enter or the menu's keep-formatting entry keeps it. Files and pictures paste as they are."},
+        &Settings::clipboardPlainByDefault));
     add(boolean({"Clipboard/KeepPlace", QT_TRANSLATE_NOOP("AiSettings", "粘贴后保持位置"), "clipboard", 0,
                     "Pasting an entry from the history leaves it where it is in the list; off: it moves to the top."},
         &Settings::clipboardKeepPlace));
@@ -1037,7 +1103,8 @@ std::vector<Entry> buildCatalog()
 
     // ---- never seen: paths and shares (what leaves the PC), AI's own switches, plugins, bookkeeping ----
     for (const char* key : {"Backup/Folder", "Index/Folder", "Capture/PrintScreenBefore", "Launcher/DialogAutoJumpAsked", "Index/FolderHintDismissed",
-             "Launcher/AdminTapHinted", "Launcher/AdminDialogHinted", "Launcher/ServiceUpdateHinted", "Favorites/DropPieKeyTakenTold",
+             "Launcher/AdminTapHinted", "Launcher/AdminDialogHinted", "Launcher/TessoaPickerHinted", "Launcher/ServiceUpdateHinted",
+             "Favorites/DropPieKeyTakenTold",
              "Launcher/FolderMenuOpusBefore", "Launcher/FolderMenuOpusMiddleBefore",
              "Launcher/FolderMenuOpusSingleMiddleBefore", "Mcp/Enabled", "Mcp/AllowOpen", "Mcp/Clipboard", "Mcp/Screenshot",
              "Mcp/ExcludedPaths", "Mcp/Plugins", "Mcp/PluginActions", "Mcp/Settings", "Plugins/DeveloperMode",
@@ -2039,6 +2106,13 @@ void checkFolderMenuOneLeft(Plan& plan)
         plan.problems.push_back(
             u"Launcher/FolderMenuFavoriteFolders, Launcher/FolderMenuFavoriteFiles, Launcher/FolderMenuFavoriteApps, "
             u"Launcher/FolderMenuFavoritePlaces, Launcher/FolderMenuFavoriteCommands: at least one of them stays on."_s);
+    }
+    if (!s.hoverTipsInterface && !s.hoverTipsActions && !s.hoverTipsPaths
+        && (changed(u"Appearance/HoverTipsInterface"_s) || changed(u"Appearance/HoverTipsActions"_s)
+            || changed(u"Appearance/HoverTipsPaths"_s))) {
+        plan.problems.push_back(
+            u"Appearance/HoverTipsInterface, Appearance/HoverTipsActions, Appearance/HoverTipsPaths: "
+            u"at least one of them stays on (turn off Appearance/HoverTips to disable all non-essential hover tips)."_s);
     }
 }
 

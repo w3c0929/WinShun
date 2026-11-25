@@ -67,6 +67,10 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool dialogBar READ dialogBar WRITE setDialogBar NOTIFY changed FINAL)
     Q_PROPERTY(QString dialogBarPlace READ dialogBarPlace WRITE setDialogBarPlace NOTIFY changed FINAL)
     Q_PROPERTY(bool dialogBarSuggestions READ dialogBarSuggestions WRITE setDialogBarSuggestions NOTIFY changed FINAL)
+    Q_PROPERTY(bool dialogBarSuggestOpen READ dialogBarSuggestOpen WRITE setDialogBarSuggestOpen NOTIFY changed FINAL)
+    Q_PROPERTY(bool dialogBarSuggestClipboard READ dialogBarSuggestClipboard WRITE setDialogBarSuggestClipboard NOTIFY changed FINAL)
+    Q_PROPERTY(bool dialogBarSuggestFavorites READ dialogBarSuggestFavorites WRITE setDialogBarSuggestFavorites NOTIFY changed FINAL)
+    Q_PROPERTY(bool dialogBarSuggestRecent READ dialogBarSuggestRecent WRITE setDialogBarSuggestRecent NOTIFY changed FINAL)
     Q_PROPERTY(bool dialogAutoJump READ dialogAutoJump WRITE setDialogAutoJump NOTIFY changed FINAL)
     Q_PROPERTY(QString dialogAutoJumpWhen READ dialogAutoJumpWhen WRITE setDialogAutoJumpWhen NOTIFY changed FINAL)
     Q_PROPERTY(QStringList dialogBarExcludedApps READ dialogBarExcludedApps NOTIFY changed FINAL)
@@ -82,6 +86,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(QString fileManagerRevealCommand READ fileManagerRevealCommand WRITE setFileManagerRevealCommand NOTIFY changed FINAL)
     Q_PROPERTY(QString fileManagerProblem READ fileManagerProblem NOTIFY changed FINAL)
     Q_PROPERTY(bool explorerMenu READ explorerMenu WRITE setExplorerMenu NOTIFY changed FINAL)
+    Q_PROPERTY(bool explorerPinPicture READ explorerPinPicture WRITE setExplorerPinPicture NOTIFY changed FINAL)
     Q_PROPERTY(bool uriProtocol READ uriProtocol WRITE setUriProtocol NOTIFY changed FINAL)
     Q_PROPERTY(bool explorerTyping READ explorerTyping WRITE setExplorerTyping NOTIFY changed FINAL)
     Q_PROPERTY(bool desktopTyping READ desktopTyping WRITE setDesktopTyping NOTIFY changed FINAL)
@@ -218,6 +223,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool searchSystem READ searchSystem WRITE setSearchSystem NOTIFY changed FINAL)
     Q_PROPERTY(bool runningTray READ runningTray WRITE setRunningTray NOTIFY changed FINAL)
     Q_PROPERTY(bool regexMode READ regexMode WRITE setRegexMode NOTIFY changed FINAL)
+    Q_PROPERTY(QString fuzzyMode READ fuzzyMode WRITE setFuzzyMode NOTIFY changed FINAL) // off | fallback | on
     Q_PROPERTY(bool thumbnails READ thumbnails WRITE setThumbnails NOTIFY changed FINAL)
     Q_PROPERTY(bool rowDeleteButton READ rowDeleteButton WRITE setRowDeleteButton NOTIFY changed FINAL)
     Q_PROPERTY(bool webSuggestions READ webSuggestions WRITE setWebSuggestions NOTIFY changed FINAL)
@@ -253,8 +259,12 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool openAnimation READ openAnimation WRITE setOpenAnimation NOTIFY changed FINAL)
     Q_PROPERTY(QString searchShadow READ searchShadow WRITE setSearchShadow NOTIFY changed FINAL) // standard | light | none
     Q_PROPERTY(bool rememberWindowSize READ rememberWindowSize WRITE setRememberWindowSize NOTIFY changed FINAL)
+    Q_PROPERTY(QString settingsEdgeScroll READ settingsEdgeScroll WRITE setSettingsEdgeScroll NOTIFY changed FINAL) // off | light | standard | steady
     Q_PROPERTY(bool donateOnGleaningPage READ donateOnGleaningPage WRITE setDonateOnGleaningPage NOTIFY changed FINAL)
     Q_PROPERTY(bool hoverTips READ hoverTips WRITE setHoverTips NOTIFY changed FINAL)
+    Q_PROPERTY(bool hoverTipsInterface READ hoverTipsInterface WRITE setHoverTipsInterface NOTIFY changed FINAL)
+    Q_PROPERTY(bool hoverTipsActions READ hoverTipsActions WRITE setHoverTipsActions NOTIFY changed FINAL)
+    Q_PROPERTY(bool hoverTipsPaths READ hoverTipsPaths WRITE setHoverTipsPaths NOTIFY changed FINAL)
     Q_PROPERTY(QString previewWith READ previewWith WRITE setPreviewWith NOTIFY changed FINAL) // auto | builtin
     Q_PROPERTY(QString previewHotkey READ previewHotkey WRITE setPreviewHotkey NOTIFY changed FINAL)
     Q_PROPERTY(QString previewHotkeyError READ previewHotkeyError NOTIFY changed FINAL)
@@ -286,6 +296,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool clipboardImages READ clipboardImages WRITE setClipboardImages NOTIFY changed FINAL)
     Q_PROPERTY(QString clipboardScreenshots READ clipboardScreenshots WRITE setClipboardScreenshots NOTIFY changed FINAL) // all | copied | off
     Q_PROPERTY(bool clipboardClickToPaste READ clipboardClickToPaste WRITE setClipboardClickToPaste NOTIFY changed FINAL)
+    Q_PROPERTY(bool clipboardPlainByDefault READ clipboardPlainByDefault WRITE setClipboardPlainByDefault NOTIFY changed FINAL)
     Q_PROPERTY(QString clipboardUiSize READ clipboardUiSize WRITE setClipboardUiSize NOTIFY changed FINAL) // follow | dense | compact | standard | roomy
     Q_PROPERTY(QString clipboardPictureSize READ clipboardPictureSize WRITE setClipboardPictureSize NOTIFY changed FINAL)
     Q_PROPERTY(bool clipboardKeepPlace READ clipboardKeepPlace WRITE setClipboardKeepPlace NOTIFY changed FINAL)
@@ -472,6 +483,14 @@ public:
     void setDialogBarPlace(const QString& place);
     bool dialogBarSuggestions() const { return m_settings.dialogBarSuggestions; }
     void setDialogBarSuggestions(bool on);
+    bool dialogBarSuggestOpen() const { return m_settings.dialogBarSuggestOpen; }
+    void setDialogBarSuggestOpen(bool on);
+    bool dialogBarSuggestClipboard() const { return m_settings.dialogBarSuggestClipboard; }
+    void setDialogBarSuggestClipboard(bool on);
+    bool dialogBarSuggestFavorites() const { return m_settings.dialogBarSuggestFavorites; }
+    void setDialogBarSuggestFavorites(bool on);
+    bool dialogBarSuggestRecent() const { return m_settings.dialogBarSuggestRecent; }
+    void setDialogBarSuggestRecent(bool on);
     bool dialogAutoJump() const { return m_settings.dialogAutoJump; }
     void setDialogAutoJump(bool on);
     QString dialogAutoJumpWhen() const { return m_settings.dialogAutoJumpWhen; }
@@ -490,6 +509,8 @@ public:
     Q_INVOKABLE QString pickFileManagerProgram();
     bool explorerMenu() const { return m_settings.explorerMenu; }
     void setExplorerMenu(bool on);
+    bool explorerPinPicture() const { return m_settings.explorerPinPicture; }
+    void setExplorerPinPicture(bool on);
     bool uriProtocol() const { return m_settings.uriProtocol; }
     void setUriProtocol(bool on);
     bool explorerTyping() const { return m_settings.explorerTyping; }
@@ -733,6 +754,10 @@ public:
     bool fontRestartRequired() const;
     void setUiFont(const QString& family);
     void setUiSize(const QString& size);
+    // Ctrl++ / Ctrl+- / Ctrl+0 in SettingsWindow: step 界面大小 larger (+1),
+    // smaller (-1), or back to Standard (0). Returns {size, level, count, changed,
+    // atLimit, message} for immediate on-screen confirmation.
+    Q_INVOKABLE QVariantMap stepUiSize(int delta);
     QString corners() const { return m_settings.corners; }
     void setCorners(const QString& corners);
     QString uiStyle() const { return m_settings.uiStyle; }
@@ -793,6 +818,8 @@ public:
     void setClipboardScreenshots(const QString& mode);
     bool clipboardClickToPaste() const { return m_settings.clipboardClickToPaste; }
     void setClipboardClickToPaste(bool on);
+    bool clipboardPlainByDefault() const { return m_settings.clipboardPlainByDefault; }
+    void setClipboardPlainByDefault(bool on);
     QString clipboardUiSize() const { return m_settings.clipboardUiSize; }
     void setClipboardUiSize(const QString& size);
     QString clipboardPictureSize() const { return m_settings.clipboardPictureSize; }
@@ -858,6 +885,8 @@ public:
     void setRunningTray(bool on);
     bool regexMode() const { return m_settings.regexMode; }
     void setRegexMode(bool on);
+    QString fuzzyMode() const { return m_settings.fuzzyMode; }
+    void setFuzzyMode(const QString& mode);
     bool thumbnails() const { return m_settings.thumbnails; }
     void setThumbnails(bool on);
     bool rowDeleteButton() const { return m_settings.rowDeleteButton; }
@@ -920,10 +949,18 @@ public:
     void setSearchShadow(const QString& shadow);
     bool rememberWindowSize() const { return m_settings.rememberWindowSize; }
     void setRememberWindowSize(bool on);
+    QString settingsEdgeScroll() const { return m_settings.settingsEdgeScroll; }
+    void setSettingsEdgeScroll(const QString& mode);
     bool donateOnGleaningPage() const { return m_settings.donateOnGleaningPage; }
     void setDonateOnGleaningPage(bool on);
     bool hoverTips() const { return m_settings.hoverTips; }
     void setHoverTips(bool on);
+    bool hoverTipsInterface() const { return m_settings.hoverTipsInterface; }
+    void setHoverTipsInterface(bool on);
+    bool hoverTipsActions() const { return m_settings.hoverTipsActions; }
+    void setHoverTipsActions(bool on);
+    bool hoverTipsPaths() const { return m_settings.hoverTipsPaths; }
+    void setHoverTipsPaths(bool on);
     void setPureSearch(bool on);
     bool panelListsAll() const { return m_settings.panelListsAll; }
     void setPanelListsAll(bool on);

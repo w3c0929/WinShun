@@ -427,6 +427,18 @@
 <context>
     <name>AiSettings</name>
     <message>
+        <source>模糊匹配（FZF）</source>
+        <translation>Fuzzy matching (FZF)</translation>
+    </message>
+    <message>
+        <source>无结果时</source>
+        <translation>On no results</translation>
+    </message>
+    <message>
+        <source>始终开启</source>
+        <translation>Always on</translation>
+    </message>
+    <message>
         <source>打开结果的备用键</source>
         <translation>Second key to open a result</translation>
     </message>
@@ -631,6 +643,10 @@
         <translation>“Search here with WinShun” in Explorer’s right-click menu</translation>
     </message>
     <message>
+        <source>资源管理器右键“贴到屏幕（Win顺）”</source>
+        <translation>“Pin to screen (WinShun)” in Explorer’s right-click menu</translation>
+    </message>
+    <message>
         <source>winshun:// 链接</source>
         <translation>winshun:// links</translation>
     </message>
@@ -823,8 +839,36 @@
         <translation>Hover tips</translation>
     </message>
     <message>
+        <source>悬停提示：界面与按钮</source>
+        <translation>Hover tips: interface and buttons</translation>
+    </message>
+    <message>
+        <source>悬停提示：结果行操作</source>
+        <translation>Hover tips: row actions</translation>
+    </message>
+    <message>
+        <source>悬停提示：文件夹菜单路径</source>
+        <translation>Hover tips: folder menu paths</translation>
+    </message>
+    <message>
+        <source>显示哪些悬停提示</source>
+        <translation>Which hover tips to show</translation>
+    </message>
+    <message>
         <source>记住窗口大小</source>
         <translation>Remember window sizes</translation>
+    </message>
+    <message>
+        <source>设置页滚轮触边翻页</source>
+        <translation>Settings wheel edge paging</translation>
+    </message>
+    <message>
+        <source>轻快</source>
+        <translation>Light</translation>
+    </message>
+    <message>
+        <source>稳重</source>
+        <translation>Steady</translation>
     </message>
     <message>
         <source>直角</source>
@@ -873,6 +917,26 @@
     <message>
         <source>点进来就列出常用位置</source>
         <translation>List common places on click</translation>
+    </message>
+    <message>
+        <source>对话框常用位置列出已打开的文件夹</source>
+        <translation>Dialog bar suggestions: open folders</translation>
+    </message>
+    <message>
+        <source>对话框常用位置列出剪贴板路径</source>
+        <translation>Dialog bar suggestions: clipboard path</translation>
+    </message>
+    <message>
+        <source>对话框常用位置列出收藏夹</source>
+        <translation>Dialog bar suggestions: favorites</translation>
+    </message>
+    <message>
+        <source>对话框常用位置列出最近使用的文件夹</source>
+        <translation>Dialog bar suggestions: recent folders</translation>
+    </message>
+    <message>
+        <source>常用位置里列出的内容</source>
+        <translation>What common places to list</translation>
     </message>
     <message>
         <source>宽松</source>
@@ -1209,6 +1273,10 @@
     <message>
         <source>单击粘贴</source>
         <translation>Click to paste</translation>
+    </message>
+    <message>
+        <source>默认粘贴为纯文本</source>
+        <translation>Paste as plain text by default</translation>
     </message>
     <message>
         <source>粘贴后保持位置</source>
@@ -1695,8 +1763,8 @@
         <translation>Loading image…</translation>
     </message>
     <message>
-        <source>滚轮缩放 · 双击看原始大小 · Esc 关闭</source>
-        <translation>Wheel to zoom · Double-click for actual size · Esc to close</translation>
+        <source>滚轮 / Ctrl+± 缩放 · 双击原尺寸 · Esc 关闭</source>
+        <translation>Wheel / Ctrl+± to zoom · Double-click for actual size · Esc to close</translation>
     </message>
     <message>
         <source>关闭</source>
@@ -1791,6 +1859,10 @@
         <translation>Formatted; Shift+Enter pastes plain text</translation>
     </message>
     <message>
+        <source>带格式，Shift+Enter 保留格式粘贴</source>
+        <translation>Formatted; Shift+Enter keeps the formatting</translation>
+    </message>
+    <message>
         <source>在“%1”里，不会过期</source>
         <translation>In “%1”, kept for good</translation>
     </message>
@@ -1836,6 +1908,10 @@
     <message>
         <source>粘贴这一条</source>
         <translation>Paste this item</translation>
+    </message>
+    <message>
+        <source>轻按 %1 后按 %2</source>
+        <translation>Tap %1, then %2</translation>
     </message>
 </context>
 <context>
@@ -2293,6 +2369,10 @@
         <source>转到这一行</source>
         <translation>Go to this row</translation>
     </message>
+    <message>
+        <source>轻按 %1 后按 %2</source>
+        <translation>Tap %1, then %2</translation>
+    </message>
 </context>
 <context>
     <name>DialogBarWindow</name>
@@ -2307,6 +2387,14 @@
     <message>
         <source>Win顺</source>
         <translation>WinShun</translation>
+    </message>
+    <message>
+        <source>路径已复制：文件夹粘贴到 Tessoa 的地址栏，文件粘贴到文件名框</source>
+        <translation>Path copied. Paste a folder into Tessoa’s address bar, a file into the file name box.</translation>
+    </message>
+    <message>
+        <source>Tessoa 的窗口不能自动跳转：搜索后复制路径，或点“改用系统窗口”</source>
+        <translation>Tessoa’s window can’t be moved for you: search and copy the path, or click “Use system dialog”.</translation>
     </message>
     <message>
         <source>管理员窗口：搜索后复制路径再手动粘贴（服务属于另一份 Win顺）</source>
@@ -3774,6 +3862,10 @@
         <translation>Screen capture</translation>
     </message>
     <message>
+        <source>框选截图、标注和贴图。打开即允许它读写剪贴板、保存图片。</source>
+        <translation>Select, annotate and pin screenshots. Turning it on lets it use the clipboard and save pictures.</translation>
+    </message>
+    <message>
         <source>框选截图、标注和贴图。首次开启会下载组件；打开即允许它读写剪贴板、保存图片。</source>
         <translation>Select, annotate and pin screenshots. Turning it on downloads a component and lets it use the clipboard and save pictures.</translation>
     </message>
@@ -4481,9 +4573,33 @@ Installing first renames it to %2, left beside the plugin; no file is deleted.</
         <source>主页：%1</source>
         <translation>Homepage: %1</translation>
     </message>
+    <message>
+        <source>已停用</source>
+        <translation>Disabled</translation>
+    </message>
+    <message>
+        <source>设置</source>
+        <translation>Settings</translation>
+    </message>
+    <message>
+        <source>%1设置</source>
+        <translation>%1 settings</translation>
+    </message>
+    <message>
+        <source>打开设置窗口；点卡片可管理插件</source>
+        <translation>Open settings window; click the card to manage the plugin</translation>
+    </message>
+    <message>
+        <source>设置与管理</source>
+        <translation>Settings and management</translation>
+    </message>
 </context>
 <context>
     <name>PluginGallerySection</name>
+    <message>
+        <source>返回插件库</source>
+        <translation>Back to plugin library</translation>
+    </message>
     <message>
         <source>自己做插件</source>
         <translation>Make your own plugin</translation>
@@ -5296,6 +5412,10 @@ Send suggestions and problems on our website</translation>
         <translation>Open this row</translation>
     </message>
     <message>
+        <source>轻按 %1 后按 %2</source>
+        <translation>Tap %1, then %2</translation>
+    </message>
+    <message>
         <source>确认删除 %1 项</source>
         <translation>Delete %1</translation>
     </message>
@@ -5371,6 +5491,14 @@ Send suggestions and problems on our website</translation>
 </context>
 <context>
     <name>SearchBar</name>
+    <message>
+        <source>模糊匹配</source>
+        <translation>Fuzzy matching</translation>
+    </message>
+    <message>
+        <source>模糊匹配（FZF）已始终开启：常规结果优先，模糊结果排后 · 点击退出始终开启</source>
+        <translation>Fuzzy matching (FZF) is always on: exact matches rank first, fuzzy matches after · Click to exit always-on</translation>
+    </message>
     <message>
         <source>靠上</source>
         <translation>Near top</translation>
@@ -6300,6 +6428,22 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Right-click a folder, a folder’s empty space or a drive to search only in it; on Windows 11 it is under “Show more options”</translation>
     </message>
     <message>
+        <source>资源管理器右键“贴到屏幕（Win顺）”</source>
+        <translation>“Pin to screen (WinShun)” in Explorer’s right-click menu</translation>
+    </message>
+    <message>
+        <source>贴到屏幕;贴图;图片;右键;右键菜单;上下文菜单;资源管理器;截图;pin;picture;context menu</source>
+        <translation>pin to screen;pin;picture;image;right-click;context menu;Explorer;screenshot</translation>
+    </message>
+    <message>
+        <source>右键图片文件（PNG、JPG、WebP 等）直接贴到屏幕上置顶；Windows 11 在“显示更多选项”里</source>
+        <translation>Right-click a picture file (PNG, JPG, WebP, etc.) to pin it on top of the screen; on Windows 11 it is under “Show more options”</translation>
+    </message>
+    <message>
+        <source>右键图片文件直接贴到屏幕上置顶；需先在“插件”里启用“截图”插件才会显示</source>
+        <translation>Right-click a picture file to pin it on top of the screen; enable the “Screenshot” plugin in Plugins for it to appear</translation>
+    </message>
+    <message>
         <source>winshun:// 链接</source>
         <translation>winshun:// links</translation>
     </message>
@@ -6932,8 +7076,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>delete;trash;recycle bin;remove;button;accident</translation>
     </message>
     <message>
-        <source>文件和文件夹的结果行末尾显示删除按钮（点两次，移到回收站）；关闭后可在右键菜单的“更多选项”里删除</source>
-        <translation>Rows of files and folders end with a delete button (click twice; to the Recycle Bin). Off: delete from More options in the right-click menu</translation>
+        <source>文件和文件夹的结果行末尾显示删除按钮（点两次，移到回收站）；关闭后仍可在右键菜单中移到回收站</source>
+        <translation>Rows of files and folders end with a delete button (click twice; to the Recycle Bin). Off: Move to Recycle Bin stays in the right-click menu</translation>
     </message>
     <message>
         <source>缩略图;预览;图片;照片;视频;PDF;thumbnail;preview</source>
@@ -7187,8 +7331,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Size</translation>
     </message>
     <message>
-        <source>缩放;大小;字号;字体大小;行高;密集;紧凑;宽松;一行;小字;scale;size;zoom;font;dense;compact</source>
-        <translation>scale;size;zoom;font;text size;row height;dense;compact;roomy;density;one line</translation>
+        <source>缩放;大小;字号;字体大小;行高;密集;紧凑;宽松;一行;小字;Ctrl++;Ctrl+-;Ctrl+0;scale;size;zoom;font;dense;compact</source>
+        <translation>scale;size;zoom;font;text size;row height;dense;compact;roomy;density;one line;Ctrl++;Ctrl+-;Ctrl+0</translation>
     </message>
     <message>
         <source>紧凑</source>
@@ -7531,6 +7675,30 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Regular expressions</translation>
     </message>
     <message>
+        <source>模糊匹配（FZF）</source>
+        <translation>Fuzzy matching (FZF)</translation>
+    </message>
+    <message>
+        <source>模糊;跳字;fzf;fuzzy;subsequence;缩写;匹配;关闭</source>
+        <translation>fuzzy;fzf;subsequence;abbreviation;match;off</translation>
+    </message>
+    <message>
+        <source>按字符顺序跳字查找（如 nsrch 找 NameSearch.cpp、vcode 找 Visual Studio Code）；与现有搜索语法独立，可随时关闭</source>
+        <translation>Match non-contiguous characters in order (e.g. nsrch for NameSearch.cpp, vcode for Visual Studio Code). Independent of existing search syntax and can be turned off anytime.</translation>
+    </message>
+    <message>
+        <source>无结果时：常规搜索完全不变，仅在无匹配时自动兜底（≥3 字符），零额外开销；始终开启：常规结果优先，模糊结果排后，搜索框旁显示 fz。关闭后仍可用 fz: 前缀按需触发（如 fz:rpt）</source>
+        <translation>On no results: normal search stays unchanged with zero overhead and only falls back to FZF (&gt;=3 chars) when nothing matches. Always on: normal hits rank first, fuzzy hits after, showing an fz badge beside the search box. Even when off, you can opt in per term with fz: (e.g. fz:rpt).</translation>
+    </message>
+    <message>
+        <source>无结果时</source>
+        <translation>On no results</translation>
+    </message>
+    <message>
+        <source>始终开启</source>
+        <translation>Always on</translation>
+    </message>
+    <message>
         <source>预览;快速查看;看一眼;QuickLook;Seer;空格;Alt+P;preview</source>
         <translation>preview;quick look;peek;QuickLook;Seer;space;Alt+P</translation>
     </message>
@@ -7609,6 +7777,22 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>单击粘贴</source>
         <translation>Click to paste</translation>
+    </message>
+    <message>
+        <source>默认粘贴为纯文本</source>
+        <translation>Paste as plain text by default</translation>
+    </message>
+    <message>
+        <source>纯文本;格式;去格式;无格式;去掉格式;富文本;样式;字体;保留格式;Word;WPS</source>
+        <translation>plain text;format;formatting;unformatted;strip formatting;rich text;style;font;keep formatting;Word;WPS</translation>
+    </message>
+    <message>
+        <source>粘贴文字时去掉字体、颜色、链接等格式，贴进 Word、WPS 也和打字一样。要保留格式时按 Shift+Enter，或在右键菜单里选“保留格式粘贴”</source>
+        <translation>Pasted words leave their fonts, colours and links behind, so in Word or WPS they look as if typed. To keep the formatting, press Shift+Enter or choose “Paste with formatting” in the right-click menu</translation>
+    </message>
+    <message>
+        <source>单击、双击、Enter、Alt+数字和快速粘贴快捷键都按纯文本粘贴；文件和图片照常粘贴</source>
+        <translation>A click, a double click, Enter, Alt+number and the quick paste keys all paste plain text; files and pictures paste as they are</translation>
     </message>
     <message>
         <source>单击;点击;点一下;直接粘贴;双击;远程;手机;触屏</source>
@@ -8322,12 +8506,16 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>shortcut;letter;one hand;vim;vi;hint;jump</translation>
     </message>
     <message>
-        <source>启动器、剪贴板和对话框搜索栏共用；隐藏提示不影响数字快捷键</source>
-        <translation>Shared by the launcher, clipboard, and dialog search bar; shortcuts still work when hints are hidden</translation>
+        <source>启动器、剪贴板和对话框搜索栏共用；关闭数字键时提前预览各行字母，轻按直达键后高亮触发</source>
+        <translation>Shared by the launcher, clipboard, and dialog search bar; when number keys are off, previews each row&apos;s letter and highlights them after tapping the jump key</translation>
     </message>
     <message>
-        <source>快捷键;数字键;图标;按住;显示;隐藏</source>
-        <translation>shortcut;number key;icon;hold;show;hide</translation>
+        <source>启动器、剪贴板和对话框搜索栏共用；隐藏提示不影响数字快捷键，关闭数字键时也用于预览字母直达</source>
+        <translation>Shared by the launcher, clipboard, and dialog search bar; number shortcuts still work when hints are hidden, and when number keys are off this also previews letter jump</translation>
+    </message>
+    <message>
+        <source>快捷键;数字键;字母;字母直达;图标;按住;显示;隐藏</source>
+        <translation>shortcut;number key;letter;letter jump;icon;hold;show;hide</translation>
     </message>
     <message>
         <source>按住时显示</source>
@@ -8521,8 +8709,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Needs the “GPU” drawing method under General</translation>
     </message>
     <message>
-        <source>搜索框、剪贴板和对话框旁搜索框的文字和行高；设置窗口不变。密集是每条结果一行的小字</source>
-        <translation>Text size and line height of the search bar, the clipboard and the search bar by file dialogs; the Settings window is unchanged. Dense is one small line per result</translation>
+        <source>搜索框、搜索面板、设置窗口、剪贴板和对话框旁搜索框的文字与行高；也可按 Ctrl++ / Ctrl+- / Ctrl+0 快速切换。密集是每条结果一行的小字</source>
+        <translation>Text size and row height of the search box, search panel, Settings, clipboard and dialog bar; also switchable with Ctrl++ / Ctrl+- / Ctrl+0. Dense is one small line per result</translation>
     </message>
     <message>
         <source>记住窗口大小</source>
@@ -8539,6 +8727,38 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>记住;窗口大小;尺寸;大小;最大化;默认大小;设置窗口;remember;window size;size;maximize</source>
         <translation>remember;window size;size;maximize;default size;settings window;restore</translation>
+    </message>
+    <message>
+        <source>设置页滚轮触边翻页</source>
+        <translation>Settings wheel edge paging</translation>
+    </message>
+    <message>
+        <source>翻页;自动翻页;滚轮;触底;触顶;切页;灵敏度;误触;后退;前进;edge;scroll;page;sensitivity</source>
+        <translation>edge scroll;auto page;wheel;overscroll;switch page;sensitivity;accidental;back;forward</translation>
+    </message>
+    <message>
+        <source>滚到顶部或底部时停在本页，不自动切到上一页或下一页</source>
+        <translation>Stop at the top or bottom of the page without switching to the previous or next page</translation>
+    </message>
+    <message>
+        <source>滚到头略停后继续滚约 2 格即可切页，反应更轻快</source>
+        <translation>After a brief pause at the edge, about 2 more wheel notches switch to the next page</translation>
+    </message>
+    <message>
+        <source>滚到头停顿后继续滚约 3 格切页，快速连滚不会误触发</source>
+        <translation>After pausing at the edge, about 3 more wheel notches switch pages; fast flicks never trigger by mistake</translation>
+    </message>
+    <message>
+        <source>滚到头停顿更久并继续滚约 5 格才切页，最大限度防误触</source>
+        <translation>Requires a longer pause and about 5 more wheel notches to switch, minimising accidental flips</translation>
+    </message>
+    <message>
+        <source>轻快</source>
+        <translation>Light</translation>
+    </message>
+    <message>
+        <source>稳重</source>
+        <translation>Steady</translation>
     </message>
     <message>
         <source>弹出动画</source>
@@ -8593,8 +8813,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Hover tips</translation>
     </message>
     <message>
-        <source>鼠标停在图标或按钮上时，弹出一行说明，比如类型条上各类型的扩展名。熟悉以后可以关掉，图标和功能不变</source>
-        <translation>A line saying what an icon or button is comes up when the mouse rests on it, such as the extensions of each kind of file on the type strip. Once you know them, turn this off; the icons and what they do stay the same</translation>
+        <source>鼠标停在按钮、图标或文件夹菜单上时弹出说明；开启后可在下方按类别细分</source>
+        <translation>Shows a tip when the mouse rests on a button, icon, or folder menu item; when on, choose which categories appear below</translation>
     </message>
     <message>
         <source>关掉后，设置里带“i”的说明照常显示；名字太长被截断时，停在行上仍会显示完整名字</source>
@@ -8603,6 +8823,30 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>悬停;提示;气泡;工具提示;说明;遮挡;tooltip;hover;tip</source>
         <translation>tooltip;hover;tip;bubble;hint;covers</translation>
+    </message>
+    <message>
+        <source>显示哪些悬停提示</source>
+        <translation>Which hover tips to show</translation>
+    </message>
+    <message>
+        <source>至少保留一项；未勾选的不再弹出。截断的完整名称和设置里的“i”说明不受影响</source>
+        <translation>Keep at least one checked; unchecked categories stop popping up. Truncated names and settings &quot;i&quot; notes always show</translation>
+    </message>
+    <message>
+        <source>悬停;提示;分类;界面;按钮;类型条;结果行;操作;剪贴板;文件夹菜单;路径;tooltip;hover;actions;paths</source>
+        <translation>tooltip;hover;tip;category;interface;button;type strip;row;actions;clipboard;folder menu;path</translation>
+    </message>
+    <message>
+        <source>界面与按钮</source>
+        <translation>Interface</translation>
+    </message>
+    <message>
+        <source>结果行操作</source>
+        <translation>Row actions</translation>
+    </message>
+    <message>
+        <source>文件夹菜单路径</source>
+        <translation>Menu paths</translation>
     </message>
     <message>
         <source>索引范围;范围;整个磁盘;选中的文件夹;工作文件夹;普通用户;没有管理员权限;scope</source>
@@ -8796,8 +9040,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>With a Chinese input method in the search box, tapping Shift also switches between Chinese and English</translation>
     </message>
     <message>
-        <source>跟数字键一样：搜索框和剪贴板各用数字键设置里的那个键</source>
-        <translation>Same as number keys: the search box and the clipboard each use the key from their own number key setting</translation>
+        <source>跟数字键一样：搜索框和剪贴板各用数字键设置里的那个键；关闭数字键时默认用 Ctrl</source>
+        <translation>Same as number keys: the search box and the clipboard each use the key from their own number key setting (defaults to Ctrl when number keys are off)</translation>
     </message>
     <message>
         <source>字母直达;修饰键;Ctrl;Alt;Shift</source>
@@ -8856,20 +9100,44 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>recent;common;privacy;suggestions;list;dialog</translation>
     </message>
     <message>
-        <source>文件管理器开着的、收藏的和最近用过的文件夹。关掉后打字才列出，按 ↓ 也能列出</source>
-        <translation>Folders open in file managers, favorites and recently used ones. Off: listed once you type, or with ↓</translation>
+        <source>点进空白搜索框立即列出下方勾选的位置；关掉后打字才出结果，按 ↓ 仍可展开</source>
+        <translation>Lists the sources checked below as soon as you click into the empty bar. Off: results appear once you type, or on ↓</translation>
+    </message>
+    <message>
+        <source>下方未勾选任何常用位置来源；勾选后生效</source>
+        <translation>No suggestion source is checked below; check one to enable</translation>
+    </message>
+    <message>
+        <source>常用位置里列出的内容</source>
+        <translation>What common places to list</translation>
+    </message>
+    <message>
+        <source>常用位置;弹出;已打开;目录;文件夹;剪贴板;收藏夹;最近;隐私;对话框;open;clipboard;favorites;recent;privacy</source>
+        <translation>common places;popup;open;folders;clipboard;favorites;recent;privacy;dialog</translation>
+    </message>
+    <message>
+        <source>未勾选的不会列出，按 ↓ 也不会显示，不影响搜索；全部取消则只保留搜索</source>
+        <translation>Unchecked sources never appear, even on ↓, without affecting search; uncheck all for search only</translation>
+    </message>
+    <message>
+        <source>已打开文件夹</source>
+        <translation>Open folders</translation>
+    </message>
+    <message>
+        <source>最近使用</source>
+        <translation>Recent</translation>
     </message>
     <message>
         <source>剪贴板大小</source>
         <translation>Clipboard size</translation>
     </message>
     <message>
-        <source>字体;字号;文字大小;行高;密集;紧凑;宽松;ditto;font size;dense</source>
-        <translation>font;font size;text size;line height;dense;compact;comfortable;ditto</translation>
+        <source>字体;字号;文字大小;行高;密集;紧凑;宽松;ditto;Ctrl++;Ctrl+-;Ctrl+0;zoom;font size;dense</source>
+        <translation>font;font size;text size;line height;dense;compact;comfortable;ditto;zoom;Ctrl++;Ctrl+-;Ctrl+0</translation>
     </message>
     <message>
-        <source>剪贴板文字和行高，可以和搜索框不同；密集是每条一行的小字</source>
-        <translation>Text size and line height of the clipboard, which can differ from the search bar; Dense is small text, one row per item</translation>
+        <source>剪贴板文字和行高，可以和搜索框不同；在剪贴板里按 Ctrl++ / Ctrl+- 可快速调整，Ctrl+0 恢复跟随。密集是每条一行的小字</source>
+        <translation>Text size and row height of the clipboard, independent of the search box; press Ctrl++ / Ctrl+- in the clipboard to adjust, Ctrl+0 to follow again. Dense is small text, one row per item</translation>
     </message>
     <message>
         <source>跟随界面大小</source>
@@ -8894,6 +9162,10 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>打开剪贴板面板后，按 %1+1 粘贴当前可见的第 1 条，依此类推到第 9 条（随列表滚动更新）；加按 Shift 粘贴为纯文本</source>
         <translation>With the clipboard panel open, press %1+1 to paste the first visible entry, through 9 for the ninth (follows scrolling). Add Shift to paste as plain text.</translation>
+    </message>
+    <message>
+        <source>打开剪贴板面板后，按 %1+1 粘贴当前可见的第 1 条，依此类推到第 9 条（随列表滚动更新）；加按 Shift 保留格式粘贴</source>
+        <translation>With the clipboard panel open, press %1+1 to paste the first visible entry, through 9 for the ninth (follows scrolling). Add Shift to keep the formatting.</translation>
     </message>
     <message>
         <source>不打开面板直接粘贴</source>
@@ -9935,6 +10207,14 @@ Double-click grip: expand/collapse search panel</translation>
 <context>
     <name>Shortcuts</name>
     <message>
+        <source>放大、缩小或恢复界面大小</source>
+        <translation>Enlarge, shrink, or reset interface size</translation>
+    </message>
+    <message>
+        <source>放大、缩小或恢复剪贴板大小（看大图时缩放图片）</source>
+        <translation>Enlarge, shrink, or reset clipboard size (zooms the image while viewing a picture)</translation>
+    </message>
+    <message>
         <source>弹出文件夹快捷菜单</source>
         <translation>Open the folder menu</translation>
     </message>
@@ -10085,6 +10365,14 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>第几条粘贴为纯文本</source>
         <translation>Paste that row as plain text</translation>
+    </message>
+    <message>
+        <source>保留格式粘贴</source>
+        <translation>Paste with formatting</translation>
+    </message>
+    <message>
+        <source>第几条保留格式粘贴</source>
+        <translation>Paste that row with formatting</translation>
     </message>
     <message>
         <source>按住连按往下选，松开粘贴</source>
@@ -10862,6 +11150,18 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>它的对话框 Win顺 转不过去，只能复制路径。以管理员身份运行 Win顺 就能转过去。</source>
         <translation>WinShun cannot take its dialogs to a folder, only copy the path. Run WinShun as administrator and they go straight there.</translation>
+    </message>
+    <message>
+        <source>点 Tessoa 窗口里的“改用系统窗口”，就能转过去。</source>
+        <translation>Click “Use system dialog” in Tessoa’s window, and WinShun takes it there.</translation>
+    </message>
+    <message>
+        <source>点 Tessoa 窗口里的“改用系统窗口”，或在 Tessoa 设置的安装页把 %1 加入“不接管的程序”，就能转过去。</source>
+        <translation>Click “Use system dialog” in Tessoa’s window, or add %1 to the programs Tessoa leaves alone (Tessoa settings, Install page), and WinShun takes it there.</translation>
+    </message>
+    <message>
+        <source>Tessoa 的窗口不能自动跳转</source>
+        <translation>Tessoa’s window can’t jump by itself</translation>
     </message>
     <message>
         <source>正在加载索引…</source>
@@ -11761,6 +12061,14 @@ Double-click grip: expand/collapse search panel</translation>
         <source>%1 · 单击粘贴</source>
         <translation>%1 · click to paste</translation>
     </message>
+    <message>
+        <source>%1 · 单击粘贴纯文本</source>
+        <translation>%1 · click to paste plain text</translation>
+    </message>
+    <message>
+        <source>%1 · 双击粘贴纯文本</source>
+        <translation>%1 · double-click to paste plain text</translation>
+    </message>
     <message numerus="yes">
         <source>%Ln 条</source>
         <translation>
@@ -11948,6 +12256,10 @@ Double-click grip: expand/collapse search panel</translation>
         <source>粘贴为纯文本</source>
         <translation>Paste as plain text</translation>
     </message>
+    <message>
+        <source>保留格式粘贴</source>
+        <translation>Paste with formatting</translation>
+    </message>
     <message numerus="yes">
         <source>复制 %Ln 条</source>
         <translation>
@@ -12046,6 +12358,27 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>移出分组</source>
         <translation>Take out of the group</translation>
+    </message>
+    <message numerus="yes">
+        <source>贴 %Ln 张到屏幕</source>
+        <translation>
+            <numerusform>Pin %Ln picture to screen</numerusform>
+            <numerusform>Pin %Ln pictures to screen</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>贴前 %Ln 张到屏幕</source>
+        <translation>
+            <numerusform>Pin the first %Ln to screen</numerusform>
+            <numerusform>Pin the first %Ln to screen</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>有 %Ln 个文件已经不存在了</source>
+        <translation>
+            <numerusform>%Ln file is gone</numerusform>
+            <numerusform>%Ln files are gone</numerusform>
+        </translation>
     </message>
     <message numerus="yes">
         <source>删除 %Ln 条</source>
@@ -13060,6 +13393,14 @@ Content index: %5</translation>
 <context>
     <name>ws::FolderMenu</name>
     <message>
+        <source>没能执行“%1”：%2</source>
+        <translation>Could not run “%1”: %2</translation>
+    </message>
+    <message>
+        <source>请在搜索框中搜索“%1”并二次确认执行</source>
+        <translation>Search “%1” in WinShun and confirm twice to run it</translation>
+    </message>
+    <message>
         <source>在“%1”里搜索</source>
         <translation>Search in “%1”</translation>
     </message>
@@ -13295,6 +13636,30 @@ Content index: %5</translation>
 </context>
 <context>
     <name>ws::Launcher</name>
+    <message>
+        <source>确认%1</source>
+        <translation>Confirm %1</translation>
+    </message>
+    <message>
+        <source>锁定</source>
+        <translation>Lock</translation>
+    </message>
+    <message>
+        <source>执行</source>
+        <translation>Run</translation>
+    </message>
+    <message>
+        <source>暂不支持“%1”</source>
+        <translation>“%1” is not supported</translation>
+    </message>
+    <message>
+        <source>再按一次 Enter 或再点一次确认%1 · Esc 取消</source>
+        <translation>Press Enter or click again to confirm %1 · Esc to cancel</translation>
+    </message>
+    <message>
+        <source>“%1”没有可复制的命令</source>
+        <translation>“%1” has no command to copy</translation>
+    </message>
     <message>
         <source>搜索应用</source>
         <translation>Search apps</translation>
@@ -13675,6 +14040,22 @@ Content index: %5</translation>
         <source>没有叫“%1”的，按读音找到：</source>
         <translation>Nothing is named “%1”; found by how it sounds:</translation>
     </message>
+    <message>
+        <source>没有直接匹配“%1”的结果，按模糊匹配找到：</source>
+        <translation>No direct match for “%1”; found with fuzzy matching:</translation>
+    </message>
+    <message>
+        <source>已始终开启模糊匹配（常规结果仍排在前面）</source>
+        <translation>Fuzzy matching always on (normal matches still rank first)</translation>
+    </message>
+    <message>
+        <source>已关闭模糊匹配（仍可用 fz: 按需触发）</source>
+        <translation>Fuzzy matching turned off (fz: prefix still works on demand)</translation>
+    </message>
+    <message>
+        <source>已切回无结果时自动模糊兜底</source>
+        <translation>Switched back to fuzzy fallback on no results</translation>
+    </message>
     <message numerus="yes">
         <source>已停止，找到 %Ln 条</source>
         <translation>
@@ -13734,6 +14115,20 @@ Content index: %5</translation>
     <message>
         <source>搜索 %1 里的文字</source>
         <translation>Search text in %1</translation>
+    </message>
+    <message>
+        <source>搜索%1中的文字</source>
+        <comment>kinds of file, as 图片</comment>
+        <translation>Search %1 for text</translation>
+    </message>
+    <message>
+        <source>在 %1 里搜索%2中的文字</source>
+        <comment>a folder, then kinds of file</comment>
+        <translation>Search %2 in %1 for text</translation>
+    </message>
+    <message>
+        <source>只搜%1中的文字，点一下取消</source>
+        <translation>Only %1 is searched; click to remove</translation>
     </message>
     <message>
         <source>搜索 %1 等文件中的文字</source>
@@ -13981,6 +14376,33 @@ Content index: %5</translation>
     <message>
         <source>打开安装文件夹</source>
         <translation>Open install folder</translation>
+    </message>
+    <message numerus="yes">
+        <source>移到回收站（%Ln 项）</source>
+        <translation>
+            <numerusform>Move to Recycle Bin (%Ln item)</numerusform>
+            <numerusform>Move to Recycle Bin (%Ln items)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>移到回收站</source>
+        <translation>Move to Recycle Bin</translation>
+    </message>
+    <message>
+        <source>系统菜单仅支持同目录多选，已复制当前项；跨目录批量操作请用 Win顺 右键菜单</source>
+        <translation>The system menu only supports multi-select within one folder, so only the current item was copied; use WinShun&apos;s right-click menu across folders</translation>
+    </message>
+    <message>
+        <source>系统菜单仅支持同目录多选，已剪切当前项</source>
+        <translation>The system menu only supports multi-select within one folder, so only the current item was cut</translation>
+    </message>
+    <message>
+        <source>系统菜单仅支持同目录多选，已复制当前项路径；跨目录请用 Win顺 右键菜单</source>
+        <translation>The system menu only supports multi-select within one folder, so only the current item&apos;s path was copied; use WinShun&apos;s right-click menu across folders</translation>
+    </message>
+    <message>
+        <source>系统菜单仅支持同目录多选，已仅操作当前项；跨目录批量删除请用 Win顺 右键菜单</source>
+        <translation>The system menu only supports multi-select within one folder, so only the current item was affected; use WinShun&apos;s right-click menu to delete across folders</translation>
     </message>
     <message numerus="yes">
         <source>加入收藏夹（%Ln 项）</source>
@@ -15514,6 +15936,30 @@ Content index: %5</translation>
 </context>
 <context>
     <name>ws::ResultModel</name>
+    <message>
+        <source>关闭电脑 · 需二次确认</source>
+        <translation>Shut down computer · press twice to confirm</translation>
+    </message>
+    <message>
+        <source>重新启动电脑 · 需二次确认</source>
+        <translation>Restart computer · press twice to confirm</translation>
+    </message>
+    <message>
+        <source>进入睡眠状态 · 需二次确认</source>
+        <translation>Put computer to sleep · press twice to confirm</translation>
+    </message>
+    <message>
+        <source>进入休眠状态 · 需二次确认</source>
+        <translation>Hibernate computer · press twice to confirm</translation>
+    </message>
+    <message>
+        <source>退出当前 Windows 账户 · 需二次确认</source>
+        <translation>Sign out of Windows · press twice to confirm</translation>
+    </message>
+    <message>
+        <source>锁定当前 Windows 会话</source>
+        <translation>Lock current Windows session</translation>
+    </message>
     <message numerus="yes">
         <source>%n 分钟</source>
         <translation>
@@ -17157,6 +17603,80 @@ Content index: %5</translation>
     <message>
         <source>无法完成增强识别安装，原来的文件已保留。</source>
         <translation>Installation could not finish. Your existing recognition files have been kept.</translation>
+    </message>
+</context>
+<context>
+    <name>ws::power</name>
+    <message>
+        <source>这台电脑没开休眠</source>
+        <translation>Hibernation is not enabled on this PC</translation>
+    </message>
+    <message>
+        <source>这台电脑不支持睡眠</source>
+        <translation>Sleep is not supported on this PC</translation>
+    </message>
+    <message>
+        <source>执行电源操作时出错</source>
+        <translation>Could not carry out the power action</translation>
+    </message>
+</context>
+<context>
+    <name>UiSize</name>
+    <message>
+        <source>密集</source>
+        <translation>Dense</translation>
+    </message>
+    <message>
+        <source>紧凑</source>
+        <translation>Compact</translation>
+    </message>
+    <message>
+        <source>标准</source>
+        <translation>Standard</translation>
+    </message>
+    <message>
+        <source>宽松</source>
+        <translation>Roomy</translation>
+    </message>
+    <message>
+        <source>界面大小：%1</source>
+        <translation>Interface size: %1</translation>
+    </message>
+    <message>
+        <source>界面大小：%1（已恢复默认）</source>
+        <translation>Interface size: %1 (reset to default)</translation>
+    </message>
+    <message>
+        <source>界面大小：%1（已是默认）</source>
+        <translation>Interface size: %1 (already default)</translation>
+    </message>
+    <message>
+        <source>界面大小：%1（已是最大）</source>
+        <translation>Interface size: %1 (maximum)</translation>
+    </message>
+    <message>
+        <source>界面大小：%1（已是最小）</source>
+        <translation>Interface size: %1 (minimum)</translation>
+    </message>
+    <message>
+        <source>剪贴板大小：%1</source>
+        <translation>Clipboard size: %1</translation>
+    </message>
+    <message>
+        <source>剪贴板大小：跟随界面大小（%1）</source>
+        <translation>Clipboard size: follow interface (%1)</translation>
+    </message>
+    <message>
+        <source>剪贴板大小：已跟随界面大小（%1）</source>
+        <translation>Clipboard size: following interface (%1)</translation>
+    </message>
+    <message>
+        <source>剪贴板大小：%1（已是最大）</source>
+        <translation>Clipboard size: %1 (maximum)</translation>
+    </message>
+    <message>
+        <source>剪贴板大小：%1（已是最小）</source>
+        <translation>Clipboard size: %1 (minimum)</translation>
     </message>
 </context>
 </TS>

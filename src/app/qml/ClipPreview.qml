@@ -12,6 +12,7 @@ Item {
     property UiScale metrics: Theme.metrics
     readonly property real dpr: Screen.devicePixelRatio
     property var info: ({}) // Clipboard.preview(row)
+    property bool plainByDefault: false // Clipboard.pastePlain: Shift+Enter keeps the formatting
     readonly property string entryId: info.id ?? ""
     property bool completed: false
     Component.onCompleted: completed = true
@@ -48,11 +49,14 @@ Item {
                                          : body.visible ? body.selectedText : fileText.selectedText
     readonly property bool masked: info.masked ?? false // kept from view: dots, nothing to select
     // Ctrl+C: what is selected, copied as a new entry; false: nothing is.
+    // Deselected before the copy: the entry it adds moves the rows, which
+    // closes a hover's preview, this one with it (GitHub #439).
     function copySelection(): bool {
-        if (selectedText.length === 0)
+        const text = selectedText
+        if (text.length === 0)
             return false
-        copyRequested(selectedText, true)
         deselect()
+        copyRequested(text, true)
         return true
     }
     function deselect() {
@@ -65,8 +69,9 @@ Item {
     // as a copy of anyone's (into the history too).
     readonly property string selectedWords: kind === 4 ? words.selectedText : ""
     function copyWords() {
-        copyRequested(selectedWords.length > 0 ? selectedWords : words.text, true)
-        words.deselect()
+        const text = selectedWords.length > 0 ? selectedWords : words.text
+        words.deselect() // first, as copySelection
+        copyRequested(text, true)
     }
 
     readonly property int kind: info.kind ?? -1
@@ -301,6 +306,7 @@ Item {
                 }
                 HoverTip {
                     dpr: preview.dpr
+                    kind: "action"
                     target: pictureArea.enabled && pictureArea.containsMouse ? pictureArea : null
                     text: preview.pictureViewed ? qsTr("关闭大图") : qsTr("看大图，滚轮可以放大")
                 }
@@ -677,7 +683,8 @@ Item {
             width: parent.width
             visible: text.length > 0
             text: picked ? qsTr("已选 %Ln 字：Ctrl+C 复制，Enter 粘贴", "", preview.selectedText.length)
-                         : [preview.info.formatted ? qsTr("带格式，Shift+Enter 粘贴为纯文本") : "",
+                         : [!preview.info.formatted ? "" : preview.plainByDefault ? qsTr("带格式，Shift+Enter 保留格式粘贴")
+                                                                  : qsTr("带格式，Shift+Enter 粘贴为纯文本"),
                             (preview.info.group ?? "").length > 0 ? qsTr("在“%1”里，不会过期").arg(preview.info.group) : ""]
                            .filter(s => s.length > 0).join(" · ")
             textFormat: Text.PlainText

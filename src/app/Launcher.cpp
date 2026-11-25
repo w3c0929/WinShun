@@ -19,6 +19,7 @@
 #include "ZeroCode.h"
 #include "OpenPolicy.h"
 #include "PathText.h"
+#include "PictureFile.h"
 #include "Query.h"
 #include "SearchEngine.h"
 #include "ShareLister.h"
@@ -33,6 +34,7 @@
 #include "DragPicture.h"
 #include "platform/DragOut.h"
 #include "platform/FileManagers.h"
+#include "platform/Power.h"
 #include "platform/Shell.h"
 #include "platform/ShellContextMenu.h"
 #include "platform/WindowEffects.h"
@@ -464,14 +466,6 @@ bool isShotHistory(const QString& pluginId, const QString& commandId)
     return pluginId == kShotPlugin && commandId == kShotCommand;
 }
 
-// 贴到屏幕 on a file's row: the pictures Windows Imaging Component reads
-// (WebP with Windows' codec; a GIF's first frame).
-static bool pinnablePicture(const QString& path)
-{
-    static const QStringList kinds {u"png"_s, u"jpg"_s, u"jpeg"_s, u"bmp"_s, u"gif"_s, u"webp"_s};
-    return kinds.contains(QFileInfo(path).suffix().toLower());
-}
-
 // The result model as plugin::Merge writes it: a plugin's whole list goes
 // through showRows (keyword mode); pushed rows go in and out one by one.
 class Launcher::ModelSink : public plugin::RowSink {
@@ -607,6 +601,10 @@ Launcher::Launcher(IndexService* index, AppCatalog* apps, SystemCatalog* places,
         emit statusChanged();
     });
 
+    m_armedPowerTimer.setSingleShot(true);
+    m_armedPowerTimer.setInterval(5s);
+    connect(&m_armedPowerTimer, &QTimer::timeout, this, [this] { disarmPower(); });
+
     m_runningTick.setInterval(1500ms);
     connect(&m_runningTick, &QTimer::timeout, this, &Launcher::runningTicked);
 
@@ -690,7 +688,12 @@ Launcher::Launcher(IndexService* index, AppCatalog* apps, SystemCatalog* places,
     refreshStatus();
 }
 
-Launcher::~Launcher() = default;
+Launcher::~Launcher()
+{
+    m_windowsUsesWorker.request_stop();
+    if (m_windowsUsesWorker.joinable())
+        m_windowsUsesWorker.join();
+}
 
 void Launcher::setPluginHost(plugin::Host* host)
 {
@@ -778,6 +781,8 @@ void Launcher::setFolderKeyword(const QString& keyword)
     updateQueryPrefix();
     if (m_window && m_window->isVisible())
         search();
+    else
+        m_shownStale = true;
 }
 
 void Launcher::setSearchKinds(bool apps, bool places)
@@ -788,6 +793,8 @@ void Launcher::setSearchKinds(bool apps, bool places)
     m_searchPlaces = places;
     if (m_window && m_window->isVisible())
         search();
+    else
+        m_shownStale = true;
 }
 
 void Launcher::setRunningTray(bool on)
@@ -807,6 +814,8 @@ void Launcher::setRegexMode(bool on)
     emit regexModeChanged();
     if (m_window && m_window->isVisible())
         search();
+    else
+        m_shownStale = true;
 }
 
 void Launcher::toggleRegexMode()
@@ -818,10 +827,35 @@ void Launcher::toggleRegexMode()
             : tr("正则模式：每个词都按正则表达式匹配名字"));
 }
 
+void Launcher::setFuzzyMode(const QString& mode)
+{
+    const QString clean = fuzzyModeName(fuzzyModeFromName(mode));
+    if (clean == m_fuzzyMode)
+        return;
+    if (clean != u"on")
+        m_fuzzyBeforeOn = clean;
+    m_fuzzyMode = clean;
+    emit fuzzyModeChanged();
+    if (m_window && m_window->isVisible())
+        search();
+}
+
+void Launcher::toggleFuzzyMode()
+{
+    const bool turningOff = m_fuzzyMode == u"on";
+    setFuzzyMode(turningOff ? m_fuzzyBeforeOn : u"on"_s);
+    if (m_window && m_window->isVisible()) {
+        flash(m_fuzzyMode == u"on" ? tr("已始终开启模糊匹配（常规结果仍排在前面）")
+            : m_fuzzyMode == u"off" ? tr("已关闭模糊匹配（仍可用 fz: 按需触发）")
+            : tr("已切回无结果时自动模糊兜底"));
+    }
+}
+
 void Launcher::setQuery(const QString& query)
 {
     if (query == m_query)
         return;
+    disarmPower();
     m_query = query;
     m_queryRecorded = false;
     if (!m_recallingQuery) m_queryHistory.resetNavigation();
@@ -1162,6 +1196,8 @@ void Launcher::setFolderSearch(bool enabled)
     if (m_folderSearch == enabled)
         return;
     m_folderSearch = enabled;
+    if (!m_window || !m_window->isVisible())
+        m_shownStale = true;
     emit folderSearchChanged();
     appsTabMoved();
 }
@@ -1507,7 +1543,10 @@ QString Launcher::approximateHeading() const
         return {};
     // What was typed, on one line (as Main.qml shows it when nothing is found).
     static const QRegularExpression kSpaces(u"\\s+"_s);
-    return tr("没有叫“%1”的，按读音找到：").arg(QString(m_shownText).replace(kSpaces, u" "_s));
+    const QString shown = QString(m_shownText).replace(kSpaces, u" "_s);
+    return m_approximateFuzzy
+        ? tr("没有直接匹配“%1”的结果，按模糊匹配找到：").arg(shown)
+        : tr("没有叫“%1”的，按读音找到：").arg(shown);
 }
 
 // A hint taken up: the same query over that part alone. The content parts
@@ -1640,6 +1679,7 @@ void Launcher::searchLeftOut(const QString& kind)
         request.limit = kPage;
         request.walkFolder = walkedPath(kind);
         request.regex = regexTerms();
+        request.fuzzyMode = fuzzyModeFromName(m_fuzzyMode);
         m_walkRunning = true;
         m_walkSeen = 0;
     } else {
@@ -1759,6 +1799,14 @@ QString Launcher::placeholder() const
     case Folders:
         return tr("搜索文件夹");
     case Content:
+        if (!m_contentTypes.isEmpty()) { // GitHub #447: the kinds chosen, 图片 or 文档
+            QStringList names;
+            for (int type : m_contentTypes)
+                names.append(m_fileTypes[type].name);
+            return m_contentFolder.isEmpty()
+                ? tr("搜索%1中的文字", "kinds of file, as 图片").arg(names.join(tr("、")))
+                : tr("在 %1 里搜索%2中的文字", "a folder, then kinds of file").arg(folderLabel(m_contentFolder), names.join(tr("、")));
+        }
         if (!m_contentFolder.isEmpty())
             return tr("搜索 %1 里的文字").arg(folderLabel(m_contentFolder));
         if (m_contentDocuments)
@@ -1802,8 +1850,12 @@ void Launcher::setContentOptions(
         return;
     }
     emit scopeChanged(); // placeholder text mentions the extensions
-    if (enabled != wasEnabled && m_scope == All && m_window && m_window->isVisible())
-        search(); // 全部: content matches below the names come or go
+    if (enabled != wasEnabled && m_scope == All) {
+        if (m_window && m_window->isVisible())
+            search(); // 全部: content matches below the names come or go
+        else
+            m_shownStale = true;
+    }
 }
 
 void Launcher::setWebShortcuts(const WebShortcuts& shortcuts)
@@ -1816,8 +1868,12 @@ void Launcher::setWebShortcuts(const WebShortcuts& shortcuts)
     // site may have changed its name or address) wait for the new answer.
     m_suggester.clearCache();
     dropSuggestions();
-    if (m_window && m_window->isVisible() && m_scope == All && !searchText().isEmpty())
-        search();
+    if (m_scope == All && !searchText().isEmpty()) {
+        if (m_window && m_window->isVisible())
+            search();
+        else
+            m_shownStale = true;
+    }
 }
 
 void Launcher::openWebAddress(const QString& url) const
@@ -1833,8 +1889,12 @@ void Launcher::setWebFallback(bool on)
     if (on == m_webFallback)
         return;
     m_webFallback = on;
-    if (m_window && m_window->isVisible() && m_scope == All && !searchText().isEmpty())
-        search();
+    if (m_scope == All && !searchText().isEmpty()) {
+        if (m_window && m_window->isVisible())
+            search();
+        else
+            m_shownStale = true;
+    }
 }
 
 // Nothing found for words typed in 全部: the row that searches the web for
@@ -1909,8 +1969,12 @@ void Launcher::setFavorites(Favorites* favorites)
         connect(favorites, &Favorites::changed, this, [this] {
             emit favoritesChanged();
             emit folderChipsChanged();
-            if (m_window && m_window->isVisible() && !m_keyword && m_scope != Content)
-                searchFor("the favorites changed"); // the rows refreshed in place: 收藏 comes or goes
+            if (!m_keyword && m_scope != Content) {
+                if (m_window && m_window->isVisible())
+                    searchFor("the favorites changed"); // the rows refreshed in place: 收藏 comes or goes
+                else
+                    m_shownStale = true;
+            }
         });
     }
     emit favoritesChanged();
@@ -2051,6 +2115,8 @@ void Launcher::setExcludedFiles(const QStringList& types, const QStringList& nam
     // Files come or go in whatever is listed now: asked again, in place.
     if (m_window && m_window->isVisible())
         search();
+    else
+        m_shownStale = true;
 }
 
 void Launcher::setLetterJump(bool on, const QString& key, const QString& keys)
@@ -2111,8 +2177,12 @@ void Launcher::setPureSearch(bool on)
         return;
     m_pureSearch = on;
     emit resultOptionsChanged();
-    if (m_window && m_window->isVisible() && m_query.trimmed().isEmpty())
-        search();
+    if (m_query.trimmed().isEmpty()) {
+        if (m_window && m_window->isVisible())
+            search();
+        else
+            m_shownStale = true;
+    }
 }
 
 void Launcher::setPanelListsAll(bool on)
@@ -2120,8 +2190,12 @@ void Launcher::setPanelListsAll(bool on)
     if (m_panelListsAll == on)
         return;
     m_panelListsAll = on;
-    if (m_panel && m_window && m_window->isVisible() && m_query.trimmed().isEmpty())
-        search();
+    if (m_panel && m_query.trimmed().isEmpty()) {
+        if (m_window && m_window->isVisible())
+            search();
+        else
+            m_shownStale = true;
+    }
 }
 
 void Launcher::setPreviewHotkey(const QString& shortcut)
@@ -2210,8 +2284,12 @@ void Launcher::setFavoriteTiles(bool on)
     if (m_favoriteTilesOn == on)
         return;
     m_favoriteTilesOn = on;
-    if (m_window && m_window->isVisible() && searchText().isEmpty())
-        search();
+    if (searchText().isEmpty()) {
+        if (m_window && m_window->isVisible())
+            search();
+        else
+            m_shownStale = true;
+    }
 }
 
 void Launcher::moveFavoriteTile(int from, int to)
@@ -2232,8 +2310,12 @@ void Launcher::setStartOptions(int recentItems, bool favorites)
         return;
     m_recentItems = recentItems;
     m_favoritesOnStart = favorites;
-    if (m_window && m_window->isVisible() && searchText().isEmpty())
-        search();
+    if (searchText().isEmpty()) {
+        if (m_window && m_window->isVisible())
+            search();
+        else
+            m_shownStale = true;
+    }
 }
 
 RankBy Launcher::rankBy() const
@@ -2289,6 +2371,8 @@ void Launcher::setInTaskbarBox(bool on)
     if (on == m_inTaskbarBox)
         return;
     m_inTaskbarBox = on;
+    if (!m_window || !m_window->isVisible())
+        m_shownStale = true;
     emit inTaskbarBoxChanged();
 }
 
@@ -2355,15 +2439,11 @@ void Launcher::startOver()
     refreshKeyHints();
 }
 
-void Launcher::handleShown()
+void Launcher::handleShown(bool deferBackgroundWork)
 {
     m_queryHistory.resetNavigation();
     m_index->contentIndexer()->setSearchBoxOpen(true); // the files it searches are read before the indexer's
     m_statusPoll.start();
-    m_apps->refresh(); // reads the list again only if apps were installed or removed
-    m_places->refresh(); // ... if Windows was updated or its language changed
-    if (m_switches)
-        m_switches->refresh(); // the switches' rows show what they are now
     scheduleAwakeTick();
     m_previewResume = m_previewWanted;
     // Up again, it starts on its first row, as ever: the row a step out of a
@@ -2379,19 +2459,55 @@ void Launcher::handleShown()
         m_pages = m_leftPages;
     }
     m_tabHeld = false;
-    search(); // refresh: files may have changed, and "recent" certainly has
+    m_deferredCatalogRefresh = deferBackgroundWork;
+    if (!deferBackgroundWork) {
+        m_apps->refresh(); // reads the list again only if apps were installed or removed
+        m_places->refresh(); // ... if Windows was updated or its language changed
+        if (m_switches)
+            m_switches->refresh(); // the switches' rows show what they are now
+    }
+    // Reopening to the exact list already on screen: reveal immediately and
+    // refresh quietly in place once visible (finishShownRefresh), instead of
+    // holding the window cloaked behind a cold FileIndex scan or disk stat.
+    const bool recentNeedsFresh = searchText().isEmpty() && m_startList == RecentlyOpened && m_historyDirty;
+    const bool deferSearch = deferBackgroundWork && !m_typingAwaited && !m_shownStale && !recentNeedsFresh
+        && m_scope != Apps && matchesShownRows();
+    m_deferredSearchRefresh = deferSearch;
+    if (!deferSearch)
+        search(); // new query, changed settings, or updated recent history
     emit historyChanged(); // things were opened since
-    refreshFrequentApps();
+    refreshFrequentApps(!deferBackgroundWork);
     emit shown();
 }
 
-void Launcher::refreshFrequentApps()
+void Launcher::finishShownRefresh()
+{
+    if (!m_window || !m_window->isVisible()) {
+        m_deferredCatalogRefresh = false;
+        m_deferredSearchRefresh = false;
+        return;
+    }
+    if (std::exchange(m_deferredCatalogRefresh, false)) {
+        m_apps->refresh();
+        m_places->refresh();
+        if (m_switches)
+            m_switches->refresh();
+        refreshFrequentApps(true);
+    }
+    if (std::exchange(m_deferredSearchRefresh, false)) {
+        m_searchWhy = "deferred open refresh";
+        search();
+    }
+}
+
+void Launcher::refreshFrequentApps(bool refreshWindows)
 {
     constexpr std::size_t kFrequentApps = 6; // a row over the taskbar
     std::vector<FrequentApp> picked;
     const std::shared_ptr<const AppList> apps = m_apps->apps();
     if (m_recordHistory && apps) {
-        readWindowsUses();
+        if (refreshWindows)
+            refreshWindowsUsesAsync();
         const bool dark = QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
         const auto indexes
             = ws::frequentApps(*apps, *m_history, m_windowsUses, QDateTime::currentMSecsSinceEpoch(), kFrequentApps);
@@ -2407,12 +2523,29 @@ void Launcher::refreshFrequentApps()
     emit frequentAppsChanged();
 }
 
-void Launcher::readWindowsUses()
+void Launcher::refreshWindowsUsesAsync()
 {
-    if (!m_windowsUsesAge.isValid() || m_windowsUsesAge.hasExpired(60'000)) {
-        m_windowsUses = windowsAppUses(); // some 500 registry values: a few ms
-        m_windowsUsesAge.start();
-    }
+    if (m_windowsUsesLoading.load(std::memory_order_acquire))
+        return;
+    if (m_windowsUsesAge.isValid() && !m_windowsUsesAge.hasExpired(60'000))
+        return;
+    m_windowsUsesLoading.store(true, std::memory_order_release);
+    QPointer<Launcher> self(this);
+    m_windowsUsesWorker = std::jthread([self](std::stop_token stop) {
+        std::vector<AppUse> uses = windowsAppUses(); // some 500+ registry values: keep off the GUI thread
+        if (stop.stop_requested() || !self)
+            return;
+        QMetaObject::invokeMethod(self, [self, uses = std::move(uses)]() mutable {
+            if (!self)
+                return;
+            self->m_windowsUsesLoading.store(false, std::memory_order_release);
+            self->m_windowsUses = std::move(uses);
+            self->m_windowsUsesAge.start();
+            self->refreshFrequentApps(false);
+            if (self->m_scope == Apps && self->m_window && self->m_window->isVisible())
+                self->showApps();
+        }, Qt::QueuedConnection);
+    });
 }
 
 void Launcher::setAppsTab(bool wanted)
@@ -2533,6 +2666,7 @@ void Launcher::showApps()
 
     SearchResults rows;
     QStringList highlights;
+    QStringList fuzzyHighlights;
     QList<int> counts {0, 0, 0, 0};
     const QString text = searchText();
     const SearchResults running = windowsearch::snapshot(windowsearch::Own::Included); // 运行: the windows open on this desktop
@@ -2644,7 +2778,7 @@ void Launcher::showApps()
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         std::vector<std::size_t> frequent;
         if (m_recordHistory) {
-            readWindowsUses();
+            refreshWindowsUsesAsync();
             frequent = ws::frequentApps(*apps, *m_history, m_windowsUses, now, kFrequentShown);
         }
         std::vector<std::size_t> favorites; // in the favorites' own order: each keeps its place
@@ -2683,18 +2817,21 @@ void Launcher::showApps()
                 for (const std::size_t i : chosen)
                     rows.push_back(ws::appResult((*apps)[i]));
             } else if (const ParsedQuery query = parseQuery(text, regexTerms()); query.error.isEmpty()) {
-                const NameMatcher matcher(query);
+                const FuzzyMode appFuzzy = regexTerms() ? FuzzyMode::Off : fuzzyModeFromName(m_fuzzyMode);
+                const NameMatcher matcher(query, appFuzzy == FuzzyMode::On);
                 const QSet<std::size_t> among(chosen.cbegin(), chosen.cend());
                 const QStringList history = m_recordHistory ? m_history->ranked(text, now) : QStringList();
                 const History::Affinities affinities
                     = m_recordHistory ? m_history->affinities(text, now) : History::Affinities();
-                for (const AppHit& hit : searchApps(*apps, query, matcher, history, affinities)) {
+                for (const AppHit& hit : searchApps(*apps, query, matcher, history, affinities, appFuzzy)) {
                     if (!among.contains(hit.index))
                         continue;
                     rows.push_back(ws::appResult((*apps)[hit.index], false, hit.otherName));
                     rows.back().exact = hit.exact;
+                    rows.back().fuzzy = hit.fuzzy;
                 }
                 highlights = query.highlights;
+                fuzzyHighlights = query.fuzzyHighlights;
             }
             if (m_favorites) { // the tiles' stars
                 for (SearchResult& r : rows) {
@@ -2713,7 +2850,7 @@ void Launcher::showApps()
     if (!keepRows) {
         m_totalMatches = rows.size();
         m_shownAppsView = m_appsView;
-        showRows(std::move(rows), std::move(highlights));
+        showRows(std::move(rows), std::move(highlights), std::move(fuzzyHighlights));
         refreshStatus();
     }
     // 运行 follows the windows while it is looked at: one opened, closed or
@@ -3266,6 +3403,8 @@ void Launcher::handleHidden()
     // Opened again, a page, as quick as ever; more as it is scrolled again.
     m_pages = 1;
     m_loadingMore = false;
+    m_deferredCatalogRefresh = false;
+    m_deferredSearchRefresh = false;
 }
 
 void Launcher::searchFor(const char* why)
@@ -3293,12 +3432,32 @@ void Launcher::searchAgainNow()
     search();
 }
 
+bool Launcher::matchesShownRows() const
+{
+    if (!m_haveResults || m_replacePending)
+        return false;
+    const QString text = searchText();
+    const std::optional<KeywordMode> keyword = m_filePrefix || m_scope == Apps ? std::nullopt : matchKeyword(m_query);
+    const QString keywordKey = keyword ? keyword->pluginId + u'/' + keyword->commandId : QString();
+    return text == m_shownText && m_scope == m_shownScope
+        && fileExtensions() == m_shownExtensions && fileTypeFolders() == m_shownTypeFolders
+        && rankBy() == m_shownRankBy && nameOrder() == m_shownOrder && (m_panel || sort() == m_shownSort)
+        && m_kindOrder == m_shownKindOrder
+        && m_preferredTypes == m_shownPreferredTypes && keywordKey == m_shownKeyword
+        && (m_scope != Content || (m_contentFolder == m_shownContentFolder && pickKey(m_contentPick) == m_shownPick
+                                   && contentTypesKey() == m_shownContentTypes))
+        && (!text.isEmpty() || m_startList == m_shownStartList) && panelKey() == m_shownPanelKey
+        && typingKey() == m_shownTyping && regexTerms() == m_shownRegex && m_fuzzyMode == m_shownFuzzyMode
+        && (m_scope != Apps || m_appsView == m_shownAppsView);
+}
+
 // Nothing is cleared up front: the rows on screen stay until results replace
 // them. Searching what is already shown again (the window reopens, the index
 // changes) is a refresh: the rows are updated in place, and content matches
 // from the last scan stay until the new scan has had a chance to find them.
 void Launcher::search(bool more)
 {
+    m_deferredSearchRefresh = false;
     const char* why = std::exchange(m_searchWhy, nullptr);
     const bool wasReplacing = m_replacePending && m_replaceClock.isValid();
     m_flash.clear();
@@ -3317,17 +3476,8 @@ void Launcher::search(bool more)
         m_queryError = error;
         emit queryErrorChanged();
     }
-    const QString keywordKey = keyword ? keyword->pluginId + u'/' + keyword->commandId : QString();
     // The folder typed in, first or alone (typingKey), is a list of its own too.
-    m_refresh = m_haveResults && !m_replacePending && text == m_shownText && m_scope == m_shownScope
-        && fileExtensions() == m_shownExtensions && fileTypeFolders() == m_shownTypeFolders
-        && rankBy() == m_shownRankBy && nameOrder() == m_shownOrder && (m_panel || sort() == m_shownSort)
-        && m_kindOrder == m_shownKindOrder
-        && m_preferredTypes == m_shownPreferredTypes && keywordKey == m_shownKeyword
-        && (m_scope != Content || (m_contentFolder == m_shownContentFolder && pickKey(m_contentPick) == m_shownPick))
-        && (!text.isEmpty() || m_startList == m_shownStartList) && panelKey() == m_shownPanelKey
-        && typingKey() == m_shownTyping && regexTerms() == m_shownRegex
-        && (m_scope != Apps || m_appsView == m_shownAppsView);
+    m_refresh = matchesShownRows();
     m_replacePending = !m_refresh;
     if (m_replacePending) {
         if (!wasReplacing) { // the rows on screen just became another query's
@@ -3360,6 +3510,7 @@ void Launcher::search(bool more)
         m_hintsTaken.clear();
         m_leftOutFound.clear();
         m_approximate = false;
+        m_approximateFuzzy = false;
     }
     if (m_scope == Apps) {
         showApps();
@@ -3415,6 +3566,8 @@ void Launcher::search(bool more)
             m_replacePending = false;
             m_results.clear();
             m_haveResults = false;
+            m_shownStale = false;
+            m_historyDirty = false;
             m_chosenPath.clear(); // nothing listed, nothing chosen (GitHub #361)
             emit resultsReplaced();
         } else if (m_refresh) {
@@ -3508,6 +3661,7 @@ void Launcher::search(bool more)
     request.places = m_searchPlaces;
     request.ownPlaces = true; // carried out here (performPlace)
     request.regex = regexTerms();
+    request.fuzzyMode = fuzzyModeFromName(m_fuzzyMode);
     if (m_favorites)
         request.favorites = m_favorites->items();
     // Keep awake is Win顺's own state: while it is on it is listed first, to be seen and ended.
@@ -3533,7 +3687,7 @@ bool Launcher::byOpenCount() const
     return sort() == MostOpened && !m_panel && !m_keyword && !searchText().isEmpty();
 }
 
-void Launcher::showRows(SearchResults rows, QStringList highlights)
+void Launcher::showRows(SearchResults rows, QStringList highlights, QStringList fuzzyHighlights)
 {
     // 打开最多: the rows opened most often first, each by its own count; a
     // status row and a keyword typed (a site's) stay first, the rest
@@ -3612,7 +3766,7 @@ void Launcher::showRows(SearchResults rows, QStringList highlights)
         m_tileRows = tileRows;
         emit tileRowsChanged(); // before the rows: the list counts them out as it takes these
     }
-    m_results.assign(std::move(rows), std::move(highlights));
+    m_results.assign(std::move(rows), std::move(highlights), std::move(fuzzyHighlights));
     m_shownText = searchText();
     m_shownScope = m_scope;
     m_shownExtensions = fileExtensions();
@@ -3625,11 +3779,15 @@ void Launcher::showRows(SearchResults rows, QStringList highlights)
     m_shownPreferredTypes = m_preferredTypes;
     m_shownKeyword = m_keyword ? m_keyword->pluginId + u'/' + m_keyword->commandId : QString();
     m_shownContentFolder = m_contentFolder;
+    m_shownContentTypes = contentTypesKey();
     m_shownPick = pickKey(m_contentPick);
     m_shownPanelKey = panelKey();
     m_shownTyping = typingKey();
     m_shownRegex = regexTerms();
+    m_shownFuzzyMode = m_fuzzyMode;
     m_haveResults = true;
+    m_shownStale = false;
+    m_historyDirty = false;
     if (m_replacePending) {
         if (m_replaceClock.isValid() && m_replaceClock.elapsed() >= 300) {
             // Dimmed long enough to be seen (after 250 ms): why, in the log.
@@ -3647,6 +3805,11 @@ void Launcher::showRows(SearchResults rows, QStringList highlights)
         // Its first row is the list's choice, not the user's; back out of a
         // folder, the folder's row (GitHub #361), chosen as it was.
         m_chosenPath = m_results.startRow() >= 0 ? m_results.startPath() : QString();
+        if (!m_armedPowerCommand.isEmpty()) {
+            const SearchResult* cur = m_results.at(m_currentRow);
+            if (!cur || !cur->isPlace() || cur->target != m_armedPowerCommand)
+                disarmPower();
+        }
         emit resultsReplaced();
         if (const auto held = std::exchange(m_held, std::nullopt))
             emit heldKey(held->first, held->second); // on the rows it was pressed for
@@ -3705,6 +3868,7 @@ void Launcher::searchSuggestedPaths()
     request.limit = kPage;
     request.order = nameOrder();
     request.regex = regexTerms();
+    request.fuzzyMode = fuzzyModeFromName(m_fuzzyMode);
     if (m_recordHistory) {
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         request.history = m_history->ranked(request.text, now);
@@ -3885,7 +4049,7 @@ QString Launcher::contentNeedle() const
         || typedCommandKeyword(m_favorites->items(), text) >= 0))
         return {};
     const bool nameSyntax = std::ranges::any_of(parts, [](const ParsedQuery& q) { return !q.extensions.empty(); })
-        || anyTerm([](const QueryTerm& t) { return t.negated || t.wildcard; });
+        || anyTerm([](const QueryTerm& t) { return t.negated || t.wildcard || t.fuzzy; });
     if (nameSyntax && !ws::looksLikeCode(text))
         return {};
     return text;
@@ -4141,14 +4305,18 @@ void Launcher::onResults(quint64 id, const SearchResults& results, qint64 total,
         else
             m_contentDebounce.start();
     }
-    // Rows found by how their names read (nothing is named as typed): the
-    // heading says so (approximateHeading), and the names are highlighted by
-    // the pinyin, as the result list reads "bg" back into 报告.
+    // Rows found by how their names read (homophone) or by automatic FZF fuzzy
+    // fallback: the heading says so (approximateHeading). Homophone highlights
+    // are expanded to pinyin; fuzzy fallback keeps the typed query terms for
+    // discrete FZF character highlighting.
     m_approximate = std::ranges::any_of(results, [](const SearchResult& r) { return r.approximate; });
+    m_approximateFuzzy = std::ranges::any_of(results, [](const SearchResult& r) { return r.approximate && r.fuzzy; });
     const ParsedQuery query = ws::parseQuery(nameText(), regexTerms()); // typed in a folder, its words each (GitHub #110)
     QStringList highlights = query.highlights;
-    if (m_approximate) {
+    QStringList fuzzyHighlights = query.fuzzyHighlights;
+    if (m_approximate && !m_approximateFuzzy) {
         highlights.clear();
+        fuzzyHighlights.clear();
         for (const ParsedQuery& reading : ws::homophoneQueries(query)) {
             for (const QString& word : reading.highlights) {
                 if (!highlights.contains(word))
@@ -4156,7 +4324,7 @@ void Launcher::onResults(quint64 id, const SearchResults& results, qint64 total,
             }
         }
     }
-    showRows(std::move(rows), std::move(highlights));
+    showRows(std::move(rows), std::move(highlights), std::move(fuzzyHighlights));
     refreshStatus();
     emit namesShown();
 }
@@ -4666,8 +4834,17 @@ QJsonObject Launcher::pluginFilters() const
         {u"excludedExtensions"_s, QJsonArray::fromStringList(m_excludedTypes)},
         {u"excludedFileNames"_s, QJsonArray::fromStringList(m_excludedFileNames)}};
     if (m_scope == Content) {
-        content.insert(u"folder"_s, m_contentFolder.isEmpty() ? m_folderFilter : m_contentFolder);
+        const QStringList typeFolders = contentTypeFolders();
+        content.insert(u"folder"_s, !m_contentFolder.isEmpty() ? m_contentFolder
+                : !m_folderFilter.isEmpty() || typeFolders.size() != 1 ? m_folderFilter : typeFolders.front());
         content.insert(u"contentPick"_s, m_contentPick.folder);
+        if (!m_contentTypes.isEmpty()) { // the kinds chosen (GitHub #447), as the panel's filters name them
+            QJsonArray kinds;
+            for (int type : m_contentTypes)
+                kinds.append(m_fileTypes[type].id.isEmpty() ? m_fileTypes[type].name : m_fileTypes[type].id);
+            content.insert(u"kinds"_s, kinds);
+            content.insert(u"extensions"_s, QJsonArray::fromStringList(contentTypeExtensions()));
+        }
     }
     if (!m_panel)
         return content;
@@ -4897,6 +5074,7 @@ void Launcher::setCurrentRow(int row)
     if (row == m_currentRow)
         return;
     m_currentRow = row;
+    disarmPower();
     // The keyboard chose another row: that one is meant, unless it changed a
     // moment ago by itself (a number key, an arrow onto a row that just
     // came): then Enter waits a moment as for a row that went. Moving with
@@ -4980,7 +5158,13 @@ void Launcher::refreshKeyHints()
     } else if (r->isWeb()) {
         enter = r->words.isEmpty() ? tr("打开网站") : tr("搜索");
     } else if (r->isPlace()) {
-        enter = ws::isOwnCommand(r->target) ? tr("打开设置") : tr("打开");
+        if (ws::isPowerCommand(r->target)) {
+            enter = isPowerArmed(r->target) ? tr("确认%1").arg(r->name)
+                  : !ws::powerCommandNeedsConfirm(r->target) ? tr("锁定")
+                  : tr("执行");
+        } else {
+            enter = ws::isOwnCommand(r->target) ? tr("打开设置") : tr("打开");
+        }
         if (!r->switchId.isEmpty())
             switchKeyHints(*r, enter, secondKeys, second);
         if (steppable(*r)) {
@@ -5069,6 +5253,26 @@ void Launcher::dropServerWait()
     m_serverWaitFlash.clear();
 }
 
+void Launcher::disarmPower()
+{
+    if (m_armedPowerCommand.isEmpty())
+        return;
+    m_armedPowerCommand.clear();
+    m_armedPowerTimer.stop();
+    if (!m_armedPowerFlash.isEmpty() && m_flash == m_armedPowerFlash) {
+        m_flashTimer.stop();
+        m_flash.clear();
+        emit statusChanged();
+    }
+    m_armedPowerFlash.clear();
+    refreshKeyHints();
+}
+
+bool Launcher::isPowerArmed(QStringView command) const noexcept
+{
+    return !m_armedPowerCommand.isEmpty() && m_armedPowerTimer.isActive() && m_armedPowerCommand == command;
+}
+
 // `r`, which an action needed, is not there (any more): out of the history
 // (and of the list, when it was to be deleted), and said so.
 void Launcher::forgetMissing(const SearchResult& r, Action action)
@@ -5138,12 +5342,61 @@ void Launcher::checkServersThen(const QStringList& paths, std::function<void(con
     }).detach();
 }
 
+// A real disk/share file or folder path (not an app, place, web, plugin,
+// window, custom command, screenshot row, drive root, or bare UNC share root).
+static bool isDeletablePath(const SearchResult& r)
+{
+    if (r.isApp() || r.isCommand() || r.clipId != 0 || r.name.isEmpty())
+        return false;
+    QString path = QDir::toNativeSeparators(r.path);
+    while (path.size() > 3 && path.endsWith(u'\\'))
+        path.chop(1);
+    if (path.size() <= 3 || path.lastIndexOf(u'\\') <= 1)
+        return false;
+    const std::wstring wide = path.toStdWString();
+    if (unc::isUnc(wide)) {
+        const std::wstring_view root = unc::shareRoot(wide);
+        if (root.empty() || wide.size() <= root.size() + 1)
+            return false;
+    }
+    return true;
+}
+
+static bool recyclable(const SearchResult& r)
+{
+    return isDeletablePath(r) && !r.missing && !r.offline;
+}
+
 void Launcher::copyFiles(const QStringList& files)
 {
     if (m_fileCopier)
         m_fileCopier(files);
     else
         shell::copyFiles(files);
+}
+
+void Launcher::recycleFiles(const QStringList& files, std::function<void(bool)> done)
+{
+    const QStringList prepared = shell::prepareRecyclePaths(files);
+    if (prepared.isEmpty()) {
+        done(false);
+        return;
+    }
+    ++m_shellOpsInFlight;
+    auto finish = [self = QPointer(this), done = std::move(done)](bool ok) mutable {
+        QMetaObject::invokeMethod(qApp, [self, done = std::move(done), ok] {
+            if (!self)
+                return;
+            self->m_shellOpsInFlight = std::max(0, self->m_shellOpsInFlight - 1);
+            done(ok);
+        }, Qt::QueuedConnection);
+    };
+    if (m_fileRecycler) {
+        m_fileRecycler(prepared, std::move(finish));
+        return;
+    }
+    const auto owner = m_window ? reinterpret_cast<HWND>(m_window->winId()) : nullptr;
+    shell::recycle(prepared, owner, std::move(finish));
 }
 
 void Launcher::cycleScope(int delta)
@@ -5183,7 +5436,17 @@ void Launcher::setFileTypes(const FileTypes& types)
     const auto oldTypes = selectedFileTypes();
     for (int type : oldTypes)
         chosen.append(fileTypeKey(m_fileTypes[type]));
+    QStringList contentChosen;
+    for (int type : m_contentTypes)
+        contentChosen.append(fileTypeKey(m_fileTypes[type]));
     m_fileTypes = types;
+    QList<int> contentTypes;
+    for (const QString& key : contentChosen) {
+        if (const int type = fileTypeIndex(key); type >= 0)
+            contentTypes.append(type);
+    }
+    const bool contentMoved = contentTypes != m_contentTypes;
+    m_contentTypes = std::move(contentTypes);
     QList<int> selected;
     for (const QString& key : chosen) {
         const int type = fileTypeIndex(key);
@@ -5195,12 +5458,15 @@ void Launcher::setFileTypes(const FileTypes& types)
         m_extraFileTypes = selected;
         emit fileTypeChanged();
         emit fileChoiceChanged();
+    } else if (contentMoved) {
+        emit fileTypeChanged();
     }
     emit fileTypesChanged();
+    emit folderChipsChanged(); // 内容's strip names its kinds
     updateQueryPrefix();
     emit scopeChanged(); // the placeholder names the kind
     // Its extensions changed: listed again (a refresh when they did not).
-    if (m_fileType >= 0 && m_window && m_window->isVisible())
+    if ((m_fileType >= 0 || (m_scope == Content && (contentMoved || !m_contentTypes.isEmpty()))) && m_window && m_window->isVisible())
         search();
 }
 
@@ -5229,6 +5495,45 @@ QStringList Launcher::fileTypeFolders() const
     }
     folders.removeDuplicates();
     return folders;
+}
+
+QStringList Launcher::contentTypeExtensions() const
+{
+    QStringList extensions;
+    for (int type : m_contentTypes)
+        extensions.append(m_fileTypes[type].extensions);
+    extensions.removeDuplicates();
+    return extensions;
+}
+
+QStringList Launcher::contentTypeFolders() const
+{
+    QStringList folders;
+    for (int type : m_contentTypes) {
+        const QString& folder = m_fileTypes[type].folder;
+        if (folder.isEmpty())
+            return {}; // one kind is anywhere: so is the search (as fileTypeFolders)
+        folders.append(folder);
+    }
+    folders.removeDuplicates();
+    return folders;
+}
+
+void Launcher::setContentTypes(QList<int> types)
+{
+    types.removeIf([&](int type) { return type < 0 || type >= m_fileTypes.size(); });
+    if (types == m_contentTypes)
+        return;
+    m_contentTypes = std::move(types);
+    emit fileTypeChanged();
+    emit folderChipsChanged(); // the strip shows them
+    emit scopeChanged(); // the placeholder names them
+    if (m_scope != Content)
+        return; // kept for when 内容 comes back
+    m_results.setSelection({});
+    m_held.reset();
+    refreshKeyHints();
+    search(); // the rows stay until the new ones come (see setScope)
 }
 
 QList<int> Launcher::selectedFileTypes() const
@@ -5267,6 +5572,15 @@ void Launcher::toggleFileType(int type)
         chooseFileType(type);
         return;
     }
+    if (m_scope == Content) { // the words in that kind of file too, or no longer (GitHub #447)
+        QList<int> types = m_contentTypes;
+        if (types.contains(type))
+            types.removeAll(type);
+        else
+            types.append(type);
+        setContentTypes(std::move(types));
+        return;
+    }
     clearQueryPrefix();
     auto types = m_scope == Files ? selectedFileTypes() : QList<int>();
     if (types.contains(type))
@@ -5289,6 +5603,11 @@ void Launcher::toggleFileType(int type)
 
 void Launcher::chooseFileType(int type)
 {
+    // In 内容 a kind narrows the words' search; 文件夹 (no words in a folder) is 文件夹's scope.
+    if (m_scope == Content && type != kFoldersChip) {
+        setContentTypes(type >= 0 && type < m_fileTypes.size() ? QList<int> {type} : QList<int> {});
+        return;
+    }
     const bool hadMultiple = !m_extraFileTypes.isEmpty();
     m_extraFileTypes.clear();
     const bool hadPrefix = clearQueryPrefix();
@@ -5413,6 +5732,7 @@ constexpr QStringView kPinPrefix = u"pin:"; // a folder chosen: m_contentFolder
 constexpr QStringView kPickPrefix = u"pick:"; // one of those the name typed stands for: m_contentPick
 constexpr QStringView kMissingChip = u"missing"; // a place not in the index: nothing to choose
 constexpr QStringView kTypedChip = u"typed"; // a folder typed, not made out yet
+constexpr QStringView kTypePrefix = u"type:"; // a kind of file 内容 is narrowed to (m_contentTypes): taken off when clicked
 constexpr QStringView kFolderDot = u"#E8B84A"; // as the strip's 文件夹 in 文件
 
 // The last few names of each path, as many as tell them apart (up to
@@ -5463,6 +5783,11 @@ void Launcher::setContentPlace(SearchEngine::Request& request) const
     if (!m_contentFolder.isEmpty())
         request.contentFolders = {m_contentFolder}; // the strip's choice, before the panel's folder
     request.contentPick = m_contentPick;
+    // The kinds chosen (GitHub #447), and where they are kept when each is
+    // bound to a folder (as 文件's typeFolders), unless a folder is chosen.
+    request.contentTypes = contentTypeExtensions();
+    if (request.contentFolders.isEmpty())
+        request.contentFolders = contentTypeFolders();
 }
 
 const ContentScope::Place* Launcher::typedPlace() const
@@ -5500,6 +5825,15 @@ QVariantList Launcher::folderChips() const
     };
     if (m_scope != Content)
         return chips;
+    // The kinds of file it is narrowed to (GitHub #447), first and on; a
+    // click takes one off. `kind` its index in fileTypes (its colour), with
+    // its extensions (its icon), as 文件's chips.
+    for (const int type : m_contentTypes) {
+        const FileType& kind = m_fileTypes[type];
+        chips.append(QVariantMap {{u"type"_s, kTypePrefix.toString() + fileTypeKey(kind)}, {u"name"_s, kind.name},
+            {u"tip"_s, tr("只搜%1中的文字，点一下取消").arg(kind.name)}, {u"dot"_s, QString()}, {u"kind"_s, type},
+            {u"extensions"_s, kind.extensions.join(u' ')}});
+    }
     // A folder named among the words: that one, or the ones it stands for.
     const ContentQuery typed = splitContentQuery(searchText(), m_regexMode);
     if (!typed.folders.empty()) {
@@ -5639,6 +5973,21 @@ QString Launcher::whereMissing() const
 
 void Launcher::chooseFolderChip(const QString& key)
 {
+    if (key.startsWith(kTypePrefix)) { // a kind it is narrowed to: off
+        QList<int> types = m_contentTypes;
+        types.removeAll(fileTypeIndex(key.sliced(kTypePrefix.size())));
+        setContentTypes(std::move(types));
+        return;
+    }
+    if (key.isEmpty() && !m_contentTypes.isEmpty()) { // 不限: in all files, of any kind
+        m_contentTypes.clear();
+        emit fileTypeChanged();
+    }
+    chooseFolder(key);
+}
+
+void Launcher::chooseFolder(const QString& key)
+{
     if (key == kAllChip) {
         m_contentPick = {};
     } else if (key.startsWith(kPickPrefix)) {
@@ -5668,14 +6017,14 @@ void Launcher::cycleFolderChip(int delta)
     QStringList keys;
     for (const QVariant& c : folderChips()) {
         const QString key = c.toMap()[u"type"_s].toString();
-        if (key != kMissingChip && key != kTypedChip)
+        if (key != kMissingChip && key != kTypedChip && !key.startsWith(kTypePrefix)) // the folders, not the kinds
             keys.append(key);
     }
     if (keys.size() < 2)
         return; // no folder to go to
     const auto count = keys.size();
     const qsizetype at = std::max<qsizetype>(0, keys.indexOf(folderChip()));
-    chooseFolderChip(keys[((at + delta) % count + count) % count]);
+    chooseFolder(keys[((at + delta) % count + count) % count]);
 }
 
 bool Launcher::clearContentWords()
@@ -5693,6 +6042,7 @@ void Launcher::editFolderChips()
 
 void Launcher::dismiss()
 {
+    disarmPower();
     emit escaped();
     emit dismissRequested();
 }
@@ -6285,6 +6635,13 @@ void Launcher::perform(const SearchResult& result, Action action, bool fileCheck
         }
         return;
     }
+    if (action == EditPicture) {
+        if (!r.isApp() && !r.isDir && m_pictureVerbs.edit && isPinnablePicture(r.path)) {
+            emit dismissRequested(); // first: the editing window takes the front
+            emit editPictureRequested(r.path);
+        }
+        return;
+    }
     if (r.isPlugin()) {
         performPlugin(r, action);
         return;
@@ -6440,14 +6797,9 @@ void Launcher::perform(const SearchResult& result, Action action, bool fileCheck
         forgetRecent({r.path});
         break;
     case Recycle: {
-        const auto owner = m_window ? reinterpret_cast<HWND>(m_window->winId()) : nullptr;
-        // Back on the GUI thread, where `self` can be checked safely.
-        shell::recycle({r.path}, owner, [self = QPointer(this), r](bool ok) {
-            QMetaObject::invokeMethod(qApp, [self, r, ok] {
-                if (self)
-                    self->onRecycled(r, ok);
-            }, Qt::QueuedConnection);
-        });
+        if (!isDeletablePath(r))
+            break;
+        recycleFiles({r.path}, [this, r](bool ok) { onRecycled(r, ok); });
         break;
     }
     case EditWebShortcuts:
@@ -6546,6 +6898,28 @@ void Launcher::performPlace(const SearchResult& place, Action action)
             emit elevatedRestartRequested();
             return;
         }
+        if (ws::isPowerCommand(place.target)) { // Win顺's own power/session commands (GitHub #428)
+            const auto powerAction = power::parseAction(ws::powerCommandAction(place.target).toString());
+            if (!powerAction) {
+                flash(tr("暂不支持“%1”").arg(place.name));
+                return;
+            }
+            if (ws::powerCommandNeedsConfirm(place.target) && !isPowerArmed(place.target)) {
+                m_armedPowerCommand = place.target;
+                m_armedPowerFlash = tr("再按一次 Enter 或再点一次确认%1 · Esc 取消").arg(place.name);
+                m_armedPowerTimer.start(5s);
+                flash(m_armedPowerFlash, 5s);
+                refreshKeyHints();
+                return;
+            }
+            disarmPower();
+            emit dismissRequested();
+            power::execute(*powerAction, [self = QPointer(this), name = place.name](const QString& error) {
+                if (!error.isEmpty() && self)
+                    emit self->openFailed(u"%1（%2）"_s.arg(name, error));
+            });
+            return;
+        }
         remember(place.path, m_shownText); // the next time the same words put it first
         if (own) {
             if (place.target == ws::kSettingsCommand)
@@ -6567,6 +6941,10 @@ void Launcher::performPlace(const SearchResult& place, Action action)
         break;
     case CopyItem:
     case CopyPath:
+        if (place.target == ws::kRestartElevatedCommand || ws::isPowerCommand(place.target)) {
+            flash(tr("“%1”没有可复制的命令").arg(place.name));
+            break;
+        }
         if (own) { // as a winshun:// link opens it (WinShunUri)
             shell::copyText(u"winshun://"_s + place.target.mid(place.target.indexOf(u':') + 1));
             flash(tr("已复制链接"));
@@ -6893,8 +7271,8 @@ void Launcher::performMany(const SearchResults& items, Action action, const Serv
                 continue; // not remembered (see performWeb)
             }
             if (r.isPlace()) {
-                if (admin || drawsSwitch(r)) // a switch is not "opened" with the others
-                    continue;
+                if (admin || drawsSwitch(r) || ws::isPowerCommand(r.target) || r.target == ws::kRestartElevatedCommand)
+                    continue; // switches and power/elevation actions are never batch-opened with others
                 if (r.target == ws::kSettingsCommand) // Win顺's own (GitHub #389, #390): never the shell
                     openSettings();
                 else if (r.target.startsWith(ws::kPluginSettingsCommand))
@@ -6992,9 +7370,14 @@ void Launcher::performMany(const SearchResults& items, Action action, const Serv
     case Recycle: {
         SearchResults files;
         QStringList paths;
+        QSet<QString> seen;
         for (const SearchResult& r : items) {
-            if (r.isApp()) // apps are uninstalled in Windows Settings
+            if (!isDeletablePath(r))
                 continue;
+            const QString key = pathtext::pathKey(r.path);
+            if (seen.contains(key))
+                continue;
+            seen.insert(key);
             if (!exists(r.path)) {
                 // Gone: out of the list. One on a server is not asked again
                 // here (it may hold the window up): out when its server said
@@ -7013,13 +7396,7 @@ void Launcher::performMany(const SearchResults& items, Action action, const Serv
             flash(tr("选中的项目不能删除"));
             return;
         }
-        const auto owner = m_window ? reinterpret_cast<HWND>(m_window->winId()) : nullptr;
-        shell::recycle(paths, owner, [self = QPointer(this), files](bool ok) {
-            QMetaObject::invokeMethod(qApp, [self, files, ok] {
-                if (self)
-                    self->onRecycledMany(files, ok);
-            }, Qt::QueuedConnection);
-        });
+        recycleFiles(paths, [this, files](bool ok) { onRecycledMany(files, ok); });
         break;
     }
     case EditWebShortcuts:
@@ -7040,6 +7417,8 @@ void Launcher::setRecordHistory(bool on)
     refreshFrequentApps();
     if (m_window && m_window->isVisible())
         search(); // "最近" rows come or go
+    else
+        m_shownStale = true;
 }
 
 bool Launcher::canClearHistory() const
@@ -7052,6 +7431,7 @@ void Launcher::clearHistory()
     m_history->clear();
     m_queryHistory.clear();
     m_queryRecorded = true;
+    m_historyDirty = true;
     emit queryHistoryChanged();
     emit historyChanged();
     refreshFrequentApps();
@@ -7063,8 +7443,10 @@ void Launcher::clearHistory()
 void Launcher::remember(const QString& path, const QString& query)
 {
     rememberQuery();
-    if (m_recordHistory)
+    if (m_recordHistory) {
         m_history->record(path, query, QDateTime::currentMSecsSinceEpoch());
+        m_historyDirty = true;
+    }
     if (m_recordHistory && m_adminNote)
         m_history->setAdmin(path, *m_adminNote);
     m_adminNote.reset();
@@ -7077,6 +7459,8 @@ void Launcher::setRememberAdmin(bool on)
     m_rememberAdmin = on;
     if (m_window && m_window->isVisible())
         search(); // 管理员 comes or goes
+    else
+        m_shownStale = true;
 }
 
 bool Launcher::canRememberAdmin(const SearchResult& r) const
@@ -7166,8 +7550,7 @@ void Launcher::onRecycledMany(const SearchResults& items, bool ok)
 // web page, a plugin's or the clipboard's row, nor a drive or a share itself.
 static bool renamable(const SearchResult& r)
 {
-    return !r.isApp() && !r.isPlugin() && r.clipId == 0 && !r.missing && !r.offline && r.path.size() > 3
-        && r.path.lastIndexOf(u'\\') > 1 && !r.name.isEmpty();
+    return recyclable(r);
 }
 
 bool Launcher::beginRename(int row)
@@ -7221,10 +7604,13 @@ bool Launcher::finishRename(const QString& typed)
     }
     m_renaming.reset();
     const auto owner = m_window ? reinterpret_cast<HWND>(m_window->winId()) : nullptr;
+    ++m_shellOpsInFlight;
     shell::rename(was.path, name, owner, [self = QPointer(this), was, name](bool ok) {
         QMetaObject::invokeMethod(qApp, [self, was, name, ok] {
-            if (self)
+            if (self) {
+                self->m_shellOpsInFlight = std::max(0, self->m_shellOpsInFlight - 1);
                 self->onRenamed(was, name, ok);
+            }
         }, Qt::QueuedConnection);
     });
     return true;
@@ -7264,13 +7650,16 @@ void Launcher::forgetRow(const SearchResult& result)
 {
     m_history->remove(result.path);
     emit historyChanged();
-    const SearchResult* row = m_results.at(m_results.indexOf(result.path));
-    const bool contentRow = row && row->line > 0;
-    if (m_results.remove(result.path) && m_scope != Content) {
-        if (contentRow)
-            --m_contentHits;
-        else if (m_totalMatches > 0)
-            --m_totalMatches;
+    // Content search can list multiple line matches for the same file path.
+    for (int rowIndex = m_results.indexOf(result.path); rowIndex >= 0; rowIndex = m_results.indexOf(result.path)) {
+        const SearchResult* row = m_results.at(rowIndex);
+        const bool contentRow = row && row->line > 0;
+        if (m_results.remove(result.path) && m_scope != Content) {
+            if (contentRow)
+                --m_contentHits;
+            else if (m_totalMatches > 0)
+                --m_totalMatches;
+        }
     }
 }
 
@@ -7280,13 +7669,17 @@ QVariantList Launcher::menuItems(int row) const
     const SearchResult* r = m_results.at(row);
     if (!r)
         return {};
-    const auto entry = [](Action action, const QString& text, const QString& shortcut, const QString& glyph) {
-        return QVariantMap {
+    const auto entry = [](Action action, const QString& text, const QString& shortcut, const QString& glyph,
+                           bool danger = false) {
+        QVariantMap map {
             {u"action"_s, static_cast<int>(action)},
             {u"text"_s, text},
             {u"shortcut"_s, shortcut},
             {u"glyph"_s, glyph},
         };
+        if (danger)
+            map.insert(u"danger"_s, true);
+        return map;
     };
     if (r->trayApp) {
         // The tray icon's own menu: switch, its place on disk, and the words.
@@ -7369,6 +7762,16 @@ QVariantList Launcher::menuItems(int row) const
             else if (kept > 0)
                 items.append(entry(RemoveFavorite, tr("从收藏夹移除（%Ln 项）", nullptr, kept), QString(), u"\uE8D9"_s));
         }
+        QSet<QString> deletablePaths;
+        for (const SearchResult& s : selection) {
+            if (recyclable(s))
+                deletablePaths.insert(pathtext::pathKey(s.path));
+        }
+        if (!deletablePaths.isEmpty()) {
+            items.append(separator);
+            items.append(entry(Recycle, tr("移到回收站（%Ln 项）", nullptr, static_cast<int>(deletablePaths.size())),
+                QString(), u"\uE74D"_s, true)); // Delete
+        }
         if (any([](const SearchResult& r) { return !r.isApp() && !r.missing && !r.offline; })) {
             items.append(separator);
             items.append(entry(SystemMenu, tr("更多选项"), m_defaultSystemMenu ? tr("右键") : tr("Shift+右键"), u"\uE712"_s)); // More
@@ -7413,7 +7816,7 @@ QVariantList Launcher::menuItems(int row) const
         if (r->plugin && !r->plugin->copy.isEmpty())
             items.append(entry(CopyName, tr("复制识别出的文字"), QString(), u"\uE8AC"_s));
         items.append(separator);
-        items.append(entry(RemoveScreenshot, tr("从历史删除"), tr("Delete"), u"\uE74D"_s)); // Delete
+        items.append(entry(RemoveScreenshot, tr("从历史删除"), tr("Delete"), u"\uE74D"_s, true)); // Delete
         return items;
     }
     if (r->isPlugin()) {
@@ -7490,6 +7893,15 @@ QVariantList Launcher::menuItems(int row) const
         }
         return items;
     }
+    if (r->isPlace() && ws::isPowerCommand(r->target)) { // Win顺's own power/session actions (GitHub #428)
+        const QString label = isPowerArmed(r->target) ? tr("确认%1").arg(r->name)
+                            : !ws::powerCommandNeedsConfirm(r->target) ? tr("锁定")
+                            : tr("执行");
+        items.append(entry(Open, label, u"Enter"_s, u"\uE7E8"_s)); // Power
+        items.append(separator);
+        items.append(entry(CopyName, tr("复制名称"), QString(), u"\uE8AC"_s));
+        return items;
+    }
     if (r->isPlace()) {
         items.append(entry(Open, tr("打开"), u"Enter"_s, u"\uE8A7"_s)); // OpenInNewWindow
         items.append(separator);
@@ -7534,8 +7946,12 @@ QVariantList Launcher::menuItems(int row) const
         items.append(entry(BrowseFolder, tr("进入此文件夹搜索"), QString(), u"\uE721"_s));
     if (!r->missing && !r->offline)
         items.append(entry(Preview, tr("预览"), m_previewHotkey, u"\uE890"_s)); // View
-    if (!r->isDir && !r->missing && !r->offline && m_pictureVerbs.pin && pinnablePicture(r->path))
+    // A picture file: on the screen, or in the editing window (as the clipboard history's).
+    const bool picture = !r->isDir && !r->missing && !r->offline && isPinnablePicture(r->path);
+    if (picture && m_pictureVerbs.pin)
         items.append(entry(PinPicture, tr("贴到屏幕"), QString(), u"\uE718"_s)); // Pin
+    if (picture && m_pictureVerbs.edit)
+        items.append(entry(EditPicture, tr("编辑"), QString(), u"\uE70F"_s)); // Edit
     items.append(entry(OpenTerminal, tr("在终端中打开"), QString(), u"\uE756"_s)); // CommandPrompt
     if (!r->missing && !r->offline)
         items.append(entry(OpenTerminalAdmin, tr("以管理员身份在终端中打开"), QString(), u"\uE7EF"_s)); // Admin shield
@@ -7556,6 +7972,10 @@ QVariantList Launcher::menuItems(int row) const
     if (r->recent) {
         items.append(separator);
         items.append(entry(ForgetRecent, tr("从最近使用中移除"), QString(), u"\uE711"_s));
+    }
+    if (recyclable(*r)) {
+        items.append(separator);
+        items.append(entry(Recycle, tr("移到回收站"), QString(), u"\uE74D"_s, true)); // Delete
     }
     if (!r->missing && !r->offline) { // the shell's menu for it, for whom Shift+right-click is news
         items.append(separator);
@@ -7671,8 +8091,12 @@ void Launcher::runSystemMenu(const QStringList& paths, std::optional<QPointF> gl
             return;
         }
         if (c.verb == L"open" || c.verb == L"edit" || c.verb == L"runas") {
-            for (const QString& path : paths)
-                remember(path, m_shownText);
+            if (c.singleFallback && !paths.isEmpty()) {
+                remember(paths.first(), m_shownText);
+            } else {
+                for (const QString& path : paths)
+                    remember(path, m_shownText);
+            }
         }
         emit dismissRequested();
     });
@@ -7704,15 +8128,26 @@ void Launcher::runSystemMenu(const QStringList& paths, std::optional<QPointF> gl
             }
         });
     }
-    // What Win顺's own menu says for the like of it.
-    if (choice.verb == L"copy")
+    // What Win顺's own menu says for the like of it; when the shell fell back to
+    // the clicked item alone (multi-select across folders), tell the user honestly.
+    if (choice.singleFallback && paths.size() > 1) {
+        if (choice.verb == L"copy")
+            flash(tr("系统菜单仅支持同目录多选，已复制当前项；跨目录批量操作请用 Win顺 右键菜单"), std::chrono::seconds(4));
+        else if (choice.verb == L"cut")
+            flash(tr("系统菜单仅支持同目录多选，已剪切当前项"), std::chrono::seconds(4));
+        else if (choice.verb == L"copyaspath")
+            flash(tr("系统菜单仅支持同目录多选，已复制当前项路径；跨目录请用 Win顺 右键菜单"), std::chrono::seconds(4));
+        else if (choice.verb == L"delete")
+            flash(tr("系统菜单仅支持同目录多选，已仅操作当前项；跨目录批量删除请用 Win顺 右键菜单"), std::chrono::seconds(4));
+    } else if (choice.verb == L"copy") {
         flash(paths.size() == 1 ? tr("已复制，可在资源管理器中粘贴")
                                 : tr("已复制 %Ln 项，可在资源管理器中粘贴", nullptr, static_cast<int>(paths.size())));
-    else if (choice.verb == L"cut")
+    } else if (choice.verb == L"cut") {
         flash(tr("已剪切，可在资源管理器中粘贴"));
-    else if (choice.verb == L"copyaspath")
+    } else if (choice.verb == L"copyaspath") {
         flash(paths.size() == 1 ? tr("已复制路径") : tr("已复制 %Ln 个路径", nullptr, static_cast<int>(paths.size())));
-    forgetGone(paths, 0);
+    }
+    forgetGone(choice.singleFallback && !paths.isEmpty() ? QStringList {paths.first()} : paths, 0);
 }
 
 void Launcher::forgetGone(const QStringList& paths, int attempt)
@@ -7831,23 +8266,29 @@ navigation::TabAction Launcher::tabAction(int row) const
 // GitHub #361: a folder the user chose in this list (chooseRow), or the one
 // that completes the path being typed ("D:\Wo" on D:\Work, as a shell
 // completes it). Not where the words are no names or no path: a plugin's
-// keyword, regex mode, typed in a folder's window (whose folder would go).
+// keyword, regex mode. Typed in a folder's window (GitHub #454), the words
+// are a path from that folder: "合" there is completed by its folder 合同.
 bool Launcher::stepsInto(const SearchResult& r) const
 {
-    if (m_keyword || regexTerms() || typedInFolder() || !navigation::canBrowseFolder(r))
+    if (m_keyword || regexTerms() || !navigation::canBrowseFolder(r))
         return false;
     if (!m_chosenPath.isEmpty() && pathtext::samePath(r.path, m_chosenPath))
         return true;
     // A moment after typing, the rows on screen are the last query's: none
     // of them completes what is typed now (autocomplete waits for this one's).
-    return !rowsComing() && navigation::completesPath(pathtext::splitTyped(m_query), r.path);
+    return !rowsComing() && navigation::completesPath(typedPath(), r.path);
+}
+
+pathtext::TypedPath Launcher::typedPath() const
+{
+    return typedInFolder() ? navigation::typedIn(m_typingFolder, typingWords()) : pathtext::splitTyped(m_query);
 }
 
 bool Launcher::completingPath() const
 {
-    if (m_keyword || regexTerms() || typedInFolder() || m_scope == Content || m_scope == Apps)
+    if (m_keyword || regexTerms() || m_scope == Content || m_scope == Apps)
         return false;
-    const pathtext::TypedPath typed = pathtext::splitTyped(m_query);
+    const pathtext::TypedPath typed = typedPath();
     return !typed.folder.isEmpty() && !typed.name.isEmpty() && !typed.name.front().isSpace();
 }
 
@@ -7868,7 +8309,12 @@ void Launcher::browseFolder(const SearchResult& folder)
     const QString query = navigation::browseQuery(folder.path);
     // Where Ctrl+Backspace comes back to (stepOut, GitHub #361): these words,
     // in the scope under them (a prefix such as ":folder" sets its own again).
-    const FolderStep step {m_query, m_filePrefix ? m_filePrefix->scope : m_scope, folder.path};
+    // Typed in a folder's window (GitHub #454), the box goes on as a path
+    // typed in full (setQuery drops the folder typed in); back out, it is
+    // that window's folder again, searched as it was.
+    const bool typedIn = typedInFolder();
+    const FolderStep step {m_query, m_filePrefix ? m_filePrefix->scope : m_scope, folder.path,
+        typedIn ? m_typingPrefix : QString(), typedIn && m_typingOnly, typedIn && m_typingLevel};
     const bool moved = query != m_query;
     if (m_scope != All)
         setScope(All);
@@ -7888,8 +8334,7 @@ std::optional<Launcher::StepBack> Launcher::stepBack() const
     if (typed.name.isEmpty() && !m_folderSteps.isEmpty() && pathtext::sameFolder(m_folderSteps.last().folder, typed.folder)) {
         const FolderStep& step = m_folderSteps.last();
         return StepBack {step.from, step.folder, step.scope != m_scope ? std::optional(step.scope) : std::nullopt, true};
-    }
-    const std::optional<navigation::Up> up = navigation::upFrom(typed);
+    }    const std::optional<navigation::Up> up = navigation::upFrom(typed);
     if (!up)
         return std::nullopt;
     return StepBack {up->query, up->row, std::nullopt, false};
@@ -7900,8 +8345,16 @@ bool Launcher::stepOut()
     const std::optional<StepBack> out = stepBack();
     if (!out)
         return false;
-    if (out->back)
-        m_folderSteps.removeLast();
+    if (out->back) {
+        const FolderStep step = m_folderSteps.takeLast();
+        if (!step.typingPrefix.isEmpty()) { // back in the folder's window it was typed in (GitHub #454)
+            m_typingPrefix = step.typingPrefix;
+            m_typingFolder = pathtext::pathFromText(step.typingPrefix);
+            m_typingOnly = step.typingOnly;
+            m_typingLevel = step.typingLevel;
+            emit typingFolderChanged();
+        }
+    }
     if (out->scope)
         setScope(*out->scope); // as it was, not remembered as chosen (chooseScope, GitHub #263)
     returnTo(out->query, out->row);
@@ -8183,6 +8636,10 @@ void Launcher::startPluginQuery(const QString& text, std::optional<KeywordMode> 
     const auto scope = keyword && m_panel ? ws::Scope::All : static_cast<ws::Scope>(m_scope);
     const std::uint64_t id = ++m_pluginQueryId;
     m_keyword = std::move(keyword);
+    // 内容 narrowed to kinds of file: the providers' rows too (GitHub #447), as the scan's (setContentPlace).
+    const bool kinds = m_scope == Content && !m_keyword;
+    m_merge->setContentKinds(kinds ? contentTypeExtensions() : QStringList(),
+        kinds && m_contentFolder.isEmpty() && m_folderFilter.isEmpty() ? contentTypeFolders() : QStringList());
     // The keywords offered as rows are 全部's (matchKeyword): in 文件 and 文件夹 they could not be run.
     m_merge->begin(id, text, m_keyword ? m_keyword->pluginId : QString(), m_keyword ? m_keyword->commandId : QString(),
         m_scope == Content, m_scope == All || m_panel);

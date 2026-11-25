@@ -150,6 +150,9 @@ class App : public QObject {
 public:
     struct StartOptions {
         bool background = false; // start in the tray without showing the window
+        // Started by Setup while its last page is up (--setup-page): the
+        // welcome guide, if it is still to come, waits for Finish to ask for it.
+        bool setupPage = false;
         QString query;
         bool settings = false; // open the settings window
         QString settingsAt; // there (SettingsWindow.showPlace), after a restart from the settings
@@ -260,6 +263,7 @@ private:
     bool settingsShown() const; // the settings window on show (it is kept, hidden, once made)
     void settingsFirstFrame(int opening); // after the first frame of an opening: what waited for it
     bool showOnboarding(const StartOptions& options);
+    void revealOnboarding(); // the guide's window up and in front
     void finishOnboarding(const StartOptions& options);
     bool createWindow();
     bool createClipWindow();
@@ -280,8 +284,9 @@ private:
     QString picturePlugin(const QString& verb) const;
     void pluginPicturesChanged(); // which of them are on offer: to the launcher and the clipboard
     // 贴到屏幕 / 编辑: an entry of the clipboard history (`clipId`; its
-    // picture's file and project) or a picture file (`clipId` 0).
-    void pictureAction(const QString& verb, qint64 clipId, const QString& path, bool screenshot);
+    // picture's file and project) or a picture file (`clipId` 0); `slot`:
+    // its place among several pinned at once.
+    void pictureAction(const QString& verb, qint64 clipId, const QString& path, bool screenshot, int slot = 0);
     void prefetchTrayMenus();
     QJsonObject pluginLook() const; // the look plugin::Host::setAppearance passes on
     void setUpAppTools(); // plugin::Host::setAppTools: what the screenshot plugin asks of Win顺
@@ -302,8 +307,9 @@ private:
     // (the diagnostics journal's "trigger", TriggerJournal); a double tap's
     // also says which listener told of it, and when.
     void beginTrigger(TriggerSource source, std::uint64_t pressedAt, std::optional<TriggerJournal::Told> told = {});
-    void openingSeen(TriggerWindow window, bool deferWarmup = false); // m_triggers->seen; warmup runs now or after slideIn
+    void openingSeen(TriggerWindow window, bool deferWarmup = false, bool timedOut = false); // m_triggers->seen; warmup runs now or after slideIn
     void finishOpeningWarmup(TriggerWindow window); // IdleTrim index warm + HotPages learning, deferred past slideIn
+    void finishDeferredLauncherRefresh(); // deferred catalog/search/share refreshes after reveal
     void journalTapNote(const KeyListener::Note& note);
     // win::bringToFront for a window a press asked for: how, and how long, to the journal.
     win::Front toFront(QWindow* window);
@@ -315,7 +321,16 @@ private:
     const char* rawInputState() const; // the keyboard's Raw Input registration, for the journal
     // `launcherToo`: and the launcher, when the clipboard was under its
     // search box and the keyboard went elsewhere.
-    void hideClipboard(bool launcherToo = true);
+    // `why`: for the diagnostics ("clipboard-hidden"), in a word.
+    void hideClipboard(bool launcherToo = true, const char* why = "asked");
+    // What the clipboard opened over, and when (GetTickCount64): told with
+    // why it went (GitHub #452).
+    struct ClipOver {
+        std::uint64_t at = 0;
+        bool fullScreen = false; // a window covering its monitor in front
+        bool exclusive = false; // Direct3D's own full screen
+    };
+    ClipOver m_clipOver;
     bool clipboardUnderLauncher() const; // opened from the launcher's search box
     bool clipboardInCharge() const; // shown, the keys its own or through KeyRouter
     // Over another program the clipboard leaves it the focus, its keys come
@@ -400,6 +415,8 @@ private:
     // Win顺's windows too, and those rows show the chord struck through.
     unsigned ownNumberDigits(const QString& keys) const;
     void applySettings(bool initial);
+    void stepUiSize(int delta, bool fromDialogBar = false);
+    void stepClipboardUiSize(int delta);
     void applyKeyListener(bool force = false);
     // GitHub #243: Win顺's plain hotkeys (F1, PrintScreen alone) as the
     // service's UIAccess listener tells of them over an administrator's
@@ -466,9 +483,16 @@ private:
     // the focus object, revealLauncher) and at the cap.
     void deliverTyping();
     // The launcher just opened, its field focused: the input method into its
-    // English mode (Settings::englishOnOpen), once an opening; put back as it
-    // was on hiding unless the user changed it meanwhile (GitHub #201).
+    // English mode (Settings::englishOnOpen), once an opening, with a brief
+    // post-open guard that catches cold-boot async TSF resets until the first
+    // user key press; put back as it was on hiding unless the user changed it
+    // meanwhile (GitHub #201).
+    void armLettersOnOpen();
+    void disarmLettersGuard();
     void lettersOnOpen();
+    void applyLettersOnOpen(bool forceRecheck);
+    void recheckLettersOnOpen();
+    void advanceLettersGuard();
     void restoreLauncherInputMode();
     void beginHandoff(const QString& surface); // typed in "start", "explorer", "opus", "onecommander" or "desktop": the launcher comes for the keys
     void endHandoff(); // its diagnostics recorded (one entry each, times alone), its watch over
@@ -770,12 +794,14 @@ private:
     // front a moment (kAdminTapDwell), so that Alt+Tab past it says nothing.
     void adminTapFront(HWND window);
     void adminDialogFront(HWND dialog); // a file dialog of a program run as administrator came up (GitHub #216)
+    void tessoaPickerFront(HWND dialog); // Tessoa's own Open or Save window came up (filedialog::isTessoaPicker)
     void adminTapCheck();
     QTimer m_adminTapDwell;
     HWND m_adminTapWindow = nullptr; // what came to the front last
     bool m_adminTapShownThisRun = false;
     bool m_adminDialogShownThisRun = false;
     QStringList m_adminDialogLogged; // "program verdict", as m_adminTapLogged
+    QStringList m_tessoaPickerLogged; // the programs whose Tessoa window was logged this run, lower case
     QStringList m_adminTapLogged; // "program verdict": each in the log and the journal once a run
     QElapsedTimer m_keyListenerMade; // the service's listener answers within this of the key listener's start
     bool m_hotkeyOverAdmin = false; // the hotkey is registered and has a modifier: it comes over administrator windows too
@@ -807,6 +833,13 @@ private:
     std::optional<std::function<void(QQuickWindow*)>> m_pendingSettings;
     bool m_launcherOpening = false; // query/focus/caret still being prepared; no typing replay yet (#140)
     bool m_lettersPending = false; // opened with englishOnOpen, its field not yet switched (lettersOnOpen)
+    bool m_lettersGuard = false; // post-open guard catching cold-boot async TSF resets until first user key
+    bool m_lettersFirstActivation = true; // true until the launcher's first activation after startup settles
+    bool m_switchingLetters = false; // re-entrancy guard while switchToLetters writes IMM32/TSF
+    int m_lettersGuardStep = 0;
+    int m_lettersGuardRetries = 0;
+    QTimer m_lettersSettleTimer;
+    std::unique_ptr<win::InputModeWatch> m_inputModeWatch;
     // 打开时填入刚复制的文字 (Settings::clipboardFillSeconds): since another
     // program last put something on the clipboard; watched only while the
     // setting is on, invalid once the copy was taken (or before any).
@@ -899,6 +932,10 @@ private:
     std::shared_ptr<HotPages> m_clipPages;
     std::shared_ptr<HotPages> m_recordPages; // of the opening under way, told what it used once it is seen
     std::array<qint64, 2> m_openingSeenMs {}; // by TriggerWindow, when each was last seen; ms since 1970, as IdleTrim::LastTrim
+    std::array<std::uint64_t, 2> m_lastActivityMs {}; // by TriggerWindow, GetTickCount64() when last shown or hidden
+    bool m_launcherWasLongIdle = false; // idle >= 5 min before this opening: warm FileIndex after reveal
+    bool m_deferredSharesLook = false; // shares().lookedAt() deferred past reveal
+    QTimer m_namesRevealWait; // caps waiting for Launcher::namesShown before arming reveal
     std::unique_ptr<BackgroundStatus> m_background; // what runs in the background, in words (after m_index, m_updater)
     std::unique_ptr<HealthMonitor> m_health; // the 运行状况 page's readings (after m_background, m_idleTrim)
     std::vector<std::wstring> m_sharesBuilding; // being read for the first time: told when done
@@ -980,6 +1017,9 @@ private:
     std::unique_ptr<SettingsEditor> m_onboardingEditor;
     std::unique_ptr<QQmlApplicationEngine> m_onboardingQml;
     QPointer<QQuickWindow> m_onboardingWindow;
+    // While the guide is up and the runtime (with m_messages) is not: what a
+    // second start of Win顺 asks for, Setup's Finish among them, comes here.
+    std::unique_ptr<MessageWindow> m_guideMessages;
     // The plugins' tray submenus as they last answered trayMenu (prefetchTrayMenus): plugin id -> entries.
     std::map<QString, QJsonArray> m_trayMenus;
     std::map<QString, QStringList> m_pluginHotkeys; // the shortcuts plugins register themselves (winshun/hotkeys)

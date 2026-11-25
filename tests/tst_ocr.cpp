@@ -159,6 +159,10 @@ private slots:
         answer(CaptureOcr::Translated::NoService, {});
         QCOMPARE(reader.translationNeeds(), u"service"_s);
         QVERIFY(reader.translationShown() && !reader.translationNote().isEmpty());
+        // The translate plugin said what to set (a key the service refused: #444).
+        answer(CaptureOcr::Translated::NoService, u"翻译服务的密钥不对或没有权限（接口返回 401）"_s);
+        QCOMPARE(reader.translationNeeds(), u"service"_s);
+        QVERIFY2(reader.translationNote().startsWith(u"翻译服务的密钥不对或没有权限（接口返回 401）"_s), qPrintable(reader.translationNote()));
         answer(CaptureOcr::Translated::NoPlugin, {});
         QCOMPARE(reader.translationNeeds(), u"plugin"_s);
         answer(CaptureOcr::Translated::PluginOff, {}); // installed but off (#340): turn it on, not install it again
@@ -714,6 +718,22 @@ private slots:
         QVERIFY2(ocr->read(image, &lines, &error, &table), qPrintable(error));
         QCOMPARE(lines.size(), cells.size());
         QCOMPARE(table, cells);
+    }
+
+    // 合并换行: joins soft-wrapped lines inside paragraphs while preserving
+    // blank-line paragraph breaks, sentence boundaries, and list items.
+    void mergeLines()
+    {
+        using ws::capture::CaptureOcr;
+        QCOMPARE(CaptureOcr::mergeLines(u"这是一段中文\n被截断了。\n第二段还没\n说完。"_s),
+            u"这是一段中文被截断了。\n第二段还没说完。"_s);
+        QCOMPARE(CaptureOcr::mergeLines(u"The quick brown fox\njumps over the lazy dog.\n\nNext para\ncontinues."_s),
+            u"The quick brown fox jumps over the lazy dog.\n\nNext para continues."_s);
+        QCOMPARE(CaptureOcr::mergeLines(u"The trans-\nlation works."_s), u"The translation works."_s);
+        QCOMPARE(CaptureOcr::mergeLines(u"先用 Win\nShun 处理"_s), u"先用 Win Shun 处理"_s);
+        QCOMPARE(CaptureOcr::mergeLines(u"清单：\n- 第一项\n1. 第二项\n2、第三项"_s),
+            u"清单：\n- 第一项\n1. 第二项\n2、第三项"_s);
+        QVERIFY(CaptureOcr::mergeLines(u" \n\t "_s).isEmpty());
     }
 };
 

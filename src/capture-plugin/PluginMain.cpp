@@ -97,11 +97,40 @@ private:
     const QString m_exe;
 };
 
+// Qt's D3D11 swap chain waits up to a second at the start of every frame
+// for DWM to take one of the last two (main.cpp), which it does as it
+// composes the screen: a cloaked window's frames give it nothing to compose
+// (the pin editor draws up to four cloaked before it shows, the presenter's
+// ink one, an editor or overlay two as it closes), nor do those of one off
+// every screen. The GUI thread waits with the render thread.
+void dontWaitForDwm()
+{
+    if (!qEnvironmentVariableIsSet("QT_D3D_MAX_FRAME_LATENCY"))
+        qputenv("QT_D3D_MAX_FRAME_LATENCY", "0");
+}
+
+// Qt's messages to stderr, in UTF-8: without a console Qt gives them to
+// OutputDebugString, and none reached the log. Win顺 logs the plugin's
+// stderr (plugins.log), the plugin its recording worker's (RecordingWorker).
+// Debug messages stay out.
+void logToStderrAsUtf8(QtMsgType type, const QMessageLogContext& context, const QString& text)
+{
+    if (type == QtDebugMsg)
+        return;
+    const HANDLE err = ::GetStdHandle(STD_ERROR_HANDLE);
+    if (!err || err == INVALID_HANDLE_VALUE)
+        return;
+    const QByteArray line = qFormatLogMessage(type, context, text).toUtf8() + '\n';
+    DWORD put = 0;
+    ::WriteFile(err, line.constData(), static_cast<DWORD>(line.size()), &put, nullptr);
+}
+
 } // namespace
 
 extern "C" __declspec(dllexport) int winshunCaptureWorker(const wchar_t* appDirName)
 {
     const QString appDir = QString::fromWCharArray(appDirName);
+    qInstallMessageHandler(logToStderrAsUtf8);
     ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
     QCoreApplication::setLibraryPaths({appDir});
     int argc = 1;
@@ -120,6 +149,7 @@ extern "C" __declspec(dllexport) int winshunCaptureWorker(const wchar_t* appDirN
 extern "C" __declspec(dllexport) int winshunCaptureMain(const wchar_t* appDirName)
 {
     const QString appDir = QString::fromWCharArray(appDirName);
+    qInstallMessageHandler(logToStderrAsUtf8);
     _setmaxstdio(8192); // FreeType's font faces, one C runtime stream each (main.cpp, raiseStreamLimit)
     ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
     // High QoS, as TypeToSearch's hook thread: what the plugin does is asked
@@ -151,6 +181,7 @@ extern "C" __declspec(dllexport) int winshunCaptureMain(const wchar_t* appDirNam
     // The font engine as Win顺 has it (main.cpp): FreeType, GDI for the software renderer.
     qputenv("QT_QPA_PLATFORM", software ? "windows:fontengine=gdi" : "windows:fontengine=freetype");
     qputenv("QT_D3D_NO_VBLANK_THREAD", "1");
+    dontWaitForDwm();
     QCoreApplication::setOrganizationName(u"WinShun"_s);
     QCoreApplication::setApplicationName(u"WinShun"_s);
     int argc = 1;
@@ -208,6 +239,7 @@ extern "C" __declspec(dllexport) int winshunCapturePreview(const wchar_t* appDir
     if (::_wputenv_s(L"QML_IMPORT_PATH", (appDir + u"/qml"_s).toStdWString().c_str()) != 0)
         return 3;
     QCoreApplication::setLibraryPaths({appDir});
+    dontWaitForDwm(); // as the capture runs
     QCoreApplication::setOrganizationName(u"WinShun"_s);
     QCoreApplication::setApplicationName(u"WinShun"_s);
     int argc = 1;

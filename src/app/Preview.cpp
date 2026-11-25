@@ -101,6 +101,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQmlExpression>
+#include <QQmlProperty>
 #include <QAbstractEventDispatcher>
 #include <QAbstractNativeEventFilter>
 #include <QEventLoop>
@@ -144,6 +145,19 @@
 using namespace Qt::StringLiterals;
 
 namespace ws::preview {
+
+// Clipboard's paste as far as what it would put on the clipboard
+// (Clipboard::startPaste), let go before its timer could write it or press
+// a key: the native clipboard untouched.
+struct PasteWriteProbe {
+    static ClipWrite takeWrite(Clipboard& clipboard)
+    {
+        clipboard.m_keysTimer.stop();
+        clipboard.m_pasting = false;
+        clipboard.m_pasteGuard.reset();
+        return std::exchange(clipboard.m_write, {});
+    }
+};
 
 namespace {
 
@@ -1755,7 +1769,8 @@ int runSettings(const QStringList& args)
     auto* frame = new WindowFrame(true, editor);
     auto* updater = new Updater(editor); // never setAutomatic() or check(): no network
     editor->plugins()->setLocale(u"zh"_s);
-    editor->plugins()->loadPreview(); // a plugin::Host would start WinShunPluginHost.exe: made-up cards instead
+    if (!args.contains(u"--plugin-gallery-settings"_s))
+        editor->plugins()->loadPreview(); // a plugin::Host would start WinShunPluginHost.exe: made-up cards instead
     editor->setMcpStatus(u"已连接：Claude Desktop（12 次调用）"_s);
     if (!args.contains(u"--no-cli-tally"_s)) // (the row's text before any run)
         editor->setCliTally(u"38 次调用，最近 14:32（search_files）"_s);
@@ -2227,6 +2242,8 @@ int runSettings(const QStringList& args)
         return finish(window, checkNavigationSettings(window, editor, out));
     if (args.contains(u"--plugin-review-settings"_s))
         return finish(window, checkPluginReviewSettings(window, editor, out));
+    if (args.contains(u"--plugin-gallery-settings"_s))
+        return finish(window, checkPluginGallerySettings(window, editor, out));
     if (args.contains(u"--double-tap-settings"_s))
         return finish(window, checkDoubleTapSettings(window, editor, out));
     if (args.contains(u"--search-experience-settings"_s))
@@ -3709,6 +3726,37 @@ int runSettings(const QStringList& args)
         editor->setClipboardWinV(winVBefore);
         editor->setTaskbarWinS(winSBefore);
         editor->setFolderMenuHotkey(fmKeyBefore);
+        // 序号提示 stays accessible whenever either number keys or 字母直达 is enabled.
+        {
+            const QString numKeysBefore = editor->numberKeys();
+            const QString clipNumKeysBefore = editor->clipboardNumberKeys();
+            const bool jumpBefore = editor->letterJump();
+            editor->setNumberKeys(u"off"_s);
+            editor->setClipboardNumberKeys(u"off"_s);
+            editor->setLetterJump(true);
+            QMetaObject::invokeMethod(window, "showPage", Q_ARG(QVariant, QVariant(resultsPage)), Q_ARG(QVariant, QVariant(2)));
+            settle(window, 2);
+            QQuickItem* resultHintsRow = visualNamed(window->contentItem(), u"resultNumberHintsRow"_s);
+            if (!resultHintsRow || !resultHintsRow->property("shown").toBool())
+                qWarning("preview: resultNumberHintsRow hidden when numberKeys=off and letterJump=true");
+            QMetaObject::invokeMethod(window, "showPage", Q_ARG(QVariant, QVariant(clipboardPage)), Q_ARG(QVariant, QVariant(1)));
+            settle(window, 2);
+            QQuickItem* clipHintsRow = visualNamed(window->contentItem(), u"clipNumberHintsRow"_s);
+            if (!clipHintsRow || !clipHintsRow->property("shown").toBool())
+                qWarning("preview: clipNumberHintsRow hidden when clipboardNumberKeys=off and letterJump=true");
+            editor->setLetterJump(false);
+            settle(window, 2);
+            if (clipHintsRow && clipHintsRow->property("shown").toBool())
+                qWarning("preview: clipNumberHintsRow still shown when both clipboardNumberKeys=off and letterJump=false");
+            QMetaObject::invokeMethod(window, "showPage", Q_ARG(QVariant, QVariant(resultsPage)), Q_ARG(QVariant, QVariant(2)));
+            settle(window, 2);
+            if (resultHintsRow && resultHintsRow->property("shown").toBool())
+                qWarning("preview: resultNumberHintsRow still shown when both numberKeys=off and letterJump=false");
+            editor->setNumberKeys(numKeysBefore);
+            editor->setClipboardNumberKeys(clipNumKeysBefore);
+            editor->setLetterJump(jumpBefore);
+            settle(window, 2);
+        }
         say(u"cross-page settings links & global shortcuts list checked"_s);
     }
     return finish(window, saved);
@@ -4481,6 +4529,26 @@ void checkDialogSearchKeys(IndexService& index, QQmlEngine* engine, const QDir& 
             hints->setProperty("jumping", true);
             key(Qt::Key_X);
             check(!hints->property("jumping").toBool() && bar.query() == query, u"dialog letter past the rows shown does nothing"_s);
+            // With number keys off and numberHints = always, passive letters preview
+            // calmly (editable box, no keycap) and pop into keycaps once armed.
+            bar.setResultOptions(true, true, u"off"_s);
+            bar.setNumberHints(u"always"_s);
+            settle(window);
+            auto* slot0 = visualNamed(list, u"dialogResultNumber"_s);
+            auto* cap0 = slot0 ? visualNamed(slot0, u"hintKeyCap"_s) : nullptr;
+            auto* hl = list->property("highlightItem").value<QQuickItem*>();
+            check(!hl || !slot0 || !slot0->parentItem() || slot0->parentItem()->z() > hl->z(),
+                u"dialog delegate stays above ListView highlightItem"_s);
+            check(letterOf(0) == u"A" && letterOf(1) == u"S" && !field->property("readOnly").toBool()
+                    && cap0 && !cap0->isVisible(),
+                u"dialog passive letter preview shows calm letters without arming the box"_s);
+            hints->setProperty("jumping", true);
+            settle(window);
+            check(letterOf(0) == u"A" && field->property("readOnly").toBool() && cap0 && cap0->isVisible(),
+                u"arming dialog letter jump switches passive preview into accent keycaps"_s);
+            hints->setProperty("jumping", false);
+            bar.setResultOptions(true, true, u"ctrl"_s);
+            settle(window);
         }
         bar.setLetterJump(false, u"auto"_s, u"ASDFGHJKLQWERTYUIOPZXCVBNM"_s);
         list->setProperty("currentIndex", 2);
@@ -4826,22 +4894,103 @@ bool checkShortcutPanels(QQmlEngine* engine, const QDir& output)
                 QQuickItem* action = row ? visualNamed(row, name) : nullptr;
                 return action && action->isVisible();
             };
-            const auto menuHasMore = [&] {
-                bool found = false;
-                for (const QVariant& item : launcher.menuItems(0))
-                    found = found || item.toMap().value(u"action"_s).toInt() == Launcher::SystemMenu; // Windows' menu, which deletes
-                return found;
+            const auto menuHasAction = [&](int row, Launcher::Action action, bool* danger = nullptr) {
+                for (const QVariant& item : launcher.menuItems(row)) {
+                    const QVariantMap map = item.toMap();
+                    if (map.value(u"action"_s, -1).toInt() == action) {
+                        if (danger)
+                            *danger = map.value(u"danger"_s).toBool();
+                        return true;
+                    }
+                }
+                return false;
             };
             check(shown(u"deleteAction"_s) && shown(u"copyPathAction"_s), u"launcher: a file's row has its delete button"_s);
             launcher.setRowDeleteButton(false);
             settle(window);
             check(!shown(u"deleteAction"_s) && shown(u"copyPathAction"_s),
                 u"launcher: the delete button goes with its setting, the other buttons stay"_s);
-            check(menuHasMore(), u"launcher: the row's menu still leads to Windows' own, which deletes"_s);
+            bool singleRecycleDanger = false;
+            check(menuHasAction(0, Launcher::Recycle, &singleRecycleDanger) && singleRecycleDanger,
+                u"launcher: quick context menu directly offers Move to Recycle Bin with danger styling"_s);
+            check(menuHasAction(0, Launcher::SystemMenu), u"launcher: the row's menu still leads to Windows' own"_s);
             saveGrab(window, output.filePath(u"row-without-delete.png"_s));
             launcher.setRowDeleteButton(true);
             settle(window);
             check(shown(u"deleteAction"_s), u"launcher: the delete button is back with its setting"_s);
+
+            // Cross-folder multi-select delete in quick context menu (#434):
+            // supports files across distinct folders, prunes nested children, skips apps/drive roots,
+            // keeps systemCommandRunning true while in flight, and removes deleted rows.
+            QDir().mkpath(temporary.filePath(u"dirA/nested"_s));
+            QDir().mkpath(temporary.filePath(u"dirB"_s));
+            const QString fileA = QDir::toNativeSeparators(temporary.filePath(u"dirA/alpha.txt"_s));
+            const QString dirNested = QDir::toNativeSeparators(temporary.filePath(u"dirA/nested"_s));
+            const QString fileNested = QDir::toNativeSeparators(temporary.filePath(u"dirA/nested/inner.txt"_s));
+            const QString fileB = QDir::toNativeSeparators(temporary.filePath(u"dirB/beta.txt"_s));
+            for (const QString& p : {fileA, fileNested, fileB}) {
+                QFile f(p);
+                check(f.open(QIODevice::WriteOnly), u"launcher: create temp file for recycle check"_s);
+                f.write("data");
+            }
+            SearchResult rA; rA.name = u"alpha.txt"_s; rA.path = fileA;
+            SearchResult rNestedDir; rNestedDir.name = u"nested"_s; rNestedDir.path = dirNested; rNestedDir.isDir = true;
+            SearchResult rNestedFile; rNestedFile.name = u"inner.txt"_s; rNestedFile.path = fileNested;
+            SearchResult rB; rB.name = u"beta.txt"_s; rB.path = fileB;
+            SearchResult rApp; rApp.name = u"FakeApp"_s; rApp.path = u"shell:AppsFolder\\Fake"_s; rApp.app = AppKind::Desktop;
+            SearchResult rRoot; rRoot.name = u"C:\\"_s; rRoot.path = u"C:\\"_s; rRoot.isDir = true;
+            launcher.results()->assign({rA, rNestedDir, rNestedFile, rB, rApp, rRoot}, {});
+            check(!menuHasAction(4, Launcher::Recycle), u"launcher: app row does not offer Move to Recycle Bin"_s);
+            check(!menuHasAction(5, Launcher::Recycle), u"launcher: drive root does not offer Move to Recycle Bin"_s);
+            launcher.results()->setSelection({fileA, dirNested, fileNested, fileB, rApp.path, rRoot.path});
+            bool multiRecycleDanger = false;
+            check(menuHasAction(0, Launcher::Recycle, &multiRecycleDanger) && multiRecycleDanger,
+                u"launcher: cross-folder multi-select menu offers Move to Recycle Bin with danger styling"_s);
+            // Open the actual QML ContextMenu window for the multi-selection and grab it for visual inspection.
+            QMetaObject::invokeMethod(window, "openContextMenu", Q_ARG(QVariant, 0), Q_ARG(QVariant, QVariant()));
+            settle(window);
+            if (auto* ctxMenu = qobject_cast<QQuickWindow*>(window->property("contextMenu").value<QObject*>())) {
+                check(ctxMenu->isVisible(), u"launcher: multi-select context menu opens"_s);
+                settle(ctxMenu);
+                saveGrab(ctxMenu, output.filePath(u"context-menu-multi-recycle.png"_s));
+                QMetaObject::invokeMethod(window, "closeContextMenu");
+                settle(window);
+            }
+            // Footer's clear-history button uses Phosphor's broom at the same 16 px icon size
+            // as the neighbouring ShortcutsButton (info) and other footer icons.
+            history.record(fileA, u"alpha"_s, QDateTime::currentMSecsSinceEpoch());
+            emit launcher.historyChanged();
+            settle(window);
+            if (QQuickItem* clearBtn = visualNamed(window->contentItem(), u"clearHistoryButton"_s)) {
+                check(clearBtn->isVisible(), u"footer: clearHistory shows when history is non-empty"_s);
+                check(clearBtn->property("iconName").toString() == u"broom"_s, u"footer: clearHistory uses broom icon"_s);
+                check(qFuzzyCompare(clearBtn->property("iconSize").toReal(), 16.0),
+                    u"footer: clearHistory iconSize matches info button (16 px)"_s);
+                saveGrab(window, output.filePath(u"footer-clear-history.png"_s));
+            }
+            QStringList recycledBatch;
+            bool runningDuringRecycle = false;
+            launcher.setFileRecycler([&](const QStringList& batch, std::function<void(bool)> done) {
+                recycledBatch = batch;
+                runningDuringRecycle = launcher.systemCommandRunning();
+                for (const QString& p : batch) {
+                    QFileInfo info(p);
+                    if (info.isDir())
+                        QDir(p).removeRecursively();
+                    else
+                        QFile::remove(p);
+                }
+                done(true);
+            });
+            launcher.trigger(0, Launcher::Recycle);
+            settle(window);
+            launcher.setFileRecycler({});
+            check(runningDuringRecycle, u"launcher: systemCommandRunning stays true while recycle runs"_s);
+            check(!launcher.systemCommandRunning(), u"launcher: systemCommandRunning clears after recycle completes"_s);
+            check(recycledBatch == QStringList({fileA, dirNested, fileB}),
+                u"launcher: cross-folder multi-select recycle deduplicates and prunes nested descendants"_s);
+            check(launcher.results()->count() == 2,
+                u"launcher: deleted files and nested child rows are removed while non-deletable rows remain"_s);
         }
         window->hide();
     }
@@ -6766,6 +6915,40 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
         launcher.setCurrentRow(-1);
         launcher.setCurrentRow(0);
     };
+    // A picture file's row: 贴到屏幕 and 编辑 by the screenshot plugin, only
+    // while one does them; 编辑 hands the file over, the launcher going first.
+    {
+        const QString picturePath = QDir::toNativeSeparators(temporary.filePath(u"图表.png"_s));
+        QImage picture(32, 24, QImage::Format_RGB32);
+        picture.fill(Qt::darkCyan);
+        check(picture.save(picturePath), "the picture file could not be written");
+        const auto offers = [&](int action) {
+            return std::ranges::any_of(launcher.menuItems(0), [action](const QVariant& entry) {
+                const QVariantMap item = entry.toMap();
+                return item.contains(u"action"_s) && item.value(u"action"_s).toInt() == action;
+            });
+        };
+        const SearchResult pictureRow {.name = u"图表.png"_s, .path = picturePath};
+        showRow(pictureRow);
+        check(!offers(Launcher::PinPicture) && !offers(Launcher::EditPicture),
+            "a picture file's row offered the screenshot plugin's verbs without the plugin");
+        launcher.setPictureVerbs(true, true);
+        showRow(pictureRow);
+        check(offers(Launcher::PinPicture) && offers(Launcher::EditPicture), "a picture file's row lacks 贴到屏幕 or 编辑");
+        QString edited;
+        int dismissedFirst = 0;
+        const auto editing = QObject::connect(&launcher, &Launcher::editPictureRequested, &launcher,
+            [&](const QString& path) { edited = path; });
+        const auto dismissing = QObject::connect(&launcher, &Launcher::dismissRequested, &launcher,
+            [&] { dismissedFirst += edited.isEmpty(); });
+        launcher.trigger(0, Launcher::EditPicture);
+        QObject::disconnect(editing);
+        QObject::disconnect(dismissing);
+        check(edited == picturePath && dismissedFirst == 1, "编辑 did not hand the picture file over after the launcher went");
+        showRow(SearchResult {.name = u"说明.txt"_s, .path = QDir::toNativeSeparators(temporary.filePath(u"说明.txt"_s))});
+        check(!offers(Launcher::PinPicture) && !offers(Launcher::EditPicture), "a text file's row offered the picture verbs");
+        launcher.setPictureVerbs(false, false);
+    }
     const auto tabHint = [&] { return launcher.keyHints().value(u"tab"_s).toString(); };
     const QString folderHint = QCoreApplication::translate("ws::Launcher", "进入文件夹");
     const auto hasBrowseAction = [&] {
@@ -6907,6 +7090,45 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
         launcher.chooseRow(row);
         check(row >= 0 && !launcher.autocomplete(row) && launcher.query() == u"报告", "#361 Tab stepped into a folder in regex mode");
         launcher.setRegexMode(false);
+        query({});
+        // GitHub #454, typed in a folder's window: the words are a path from
+        // that folder. A part of a name is completed by its folder there, the
+        // box going on as the path in full; stepOut brings the window's folder
+        // back with the words, searched as it was. A folder found elsewhere,
+        // chosen by nobody, keeps Tab for the scopes.
+        const QString prefix = base + u"\\ "_s;
+        const auto typeIn = [&](const QString& words) {
+            launcher.setTypingFolder(prefix);
+            query(prefix + words);
+            settled();
+        };
+        typeIn(u"ordin"_s);
+        check(startRow() == ordinaryPath && tabHint() == folderHint && launcher.autocomplete(0)
+                && launcher.query() == ordinaryPath + u'\\' && launcher.typingFolder().isEmpty(),
+            "#454 Tab did not complete the folder typed in part in a folder's window");
+        settled();
+        check(launcher.stepOut() && launcher.query() == prefix + u"ordin"_s && !launcher.typingFolder().isEmpty(),
+            "#454 stepOut did not come back to the folder's window and its words");
+        settled();
+        check(startRow() == ordinaryPath && tabHint() == folderHint, "#454 back out, the folder left was not chosen again");
+        typeIn(u"ordinary\\内"_s);
+        row = rowOf(inner);
+        launcher.setCurrentRow(row);
+        check(row >= 0 && launcher.autocomplete(row) && launcher.query() == inner + u'\\',
+            "#454 Tab did not complete a path typed from the window's folder");
+        settled();
+        check(launcher.stepOut() && launcher.query() == prefix + u"ordinary\\内"_s, "#454 stepOut lost the path typed from the window's folder");
+        typeIn(u"报告"_s);
+        row = rowOf(u"T:\\报告资料"_s);
+        launcher.setCurrentRow(row);
+        check(row >= 0 && !launcher.autocomplete(row) && launcher.query() == prefix + u"报告"_s,
+            "#454 Tab took a folder found elsewhere that nobody chose");
+        launcher.chooseRow(row);
+        check(launcher.autocomplete(row) && launcher.query() == u"T:\\报告资料\\", "#454 Tab did not step into the folder chosen");
+        settled();
+        check(launcher.stepOut() && launcher.query() == prefix + u"报告"_s && !launcher.typingFolder().isEmpty(),
+            "#454 stepOut from a folder chosen did not come back to the folder's window");
+        launcher.setTypingFolder({});
         query({});
     }
     SearchResult suggestion {.name = u"Search suggestion"_s, .app = AppKind::Web,
@@ -7369,6 +7591,24 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
         .openKind = PluginRow::OpenKind::Path, .openTarget = u"C:\\发票\\2026 年项目发票.pdf"_s});
     SearchResult legacy {.name = u"未提供文件信息的插件条目"_s, .path = u"plugin:fixture:legacy"_s, .app = AppKind::Plugin};
     legacy.plugin.row = std::make_shared<PluginRow>(PluginRow {.source = u"旧版插件"_s, .icon = u"glyph:U+EA86"_s});
+    {
+        // GitHub #448: 大图 of a plugin's row that opens a picture (图片文字搜索's)
+        // is that picture, as the file's own row's; with no file, the icon.
+        SearchResult picture {.name = u"牛蛙.jpg"_s, .path = u"plugin:fixture:ocr"_s, .modified = 1792857600, .app = AppKind::Plugin};
+        picture.plugin.row = std::make_shared<PluginRow>(PluginRow {.source = u"图片文字搜索"_s, .icon = u"glyph:U+EB9F"_s,
+            .openKind = PluginRow::OpenKind::Path, .openTarget = u"C:/图片/牛蛙.jpg"_s});
+        SearchResult mail = legacy;
+        mail.path = u"plugin:fixture:mail"_s;
+        mail.plugin.row = std::make_shared<PluginRow>(PluginRow {.source = u"邮件"_s, .openKind = PluginRow::OpenKind::Path,
+            .openTarget = u"C:\\邮件\\牛蛙.jpg"_s, .item = QJsonObject {{u"details"_s, true}}});
+        launcher.results()->assign({picture, legacy, mail}, {});
+        const auto bigPicture = [&](int row) {
+            return launcher.results()->data(launcher.results()->index(row), ResultModel::GalleryThumbnailRole).toString();
+        };
+        check(bigPicture(0) == ThumbnailProvider::url(u"C:\\图片\\牛蛙.jpg"_s, 1792857600),
+            "大图 of a plugin's picture row is not that picture (GitHub #448)");
+        check(bigPicture(1).isEmpty() && bigPicture(2).isEmpty(), "大图 of a plugin's row with no file of its own is not its icon");
+    }
     launcher.results()->assign({plugin, legacy}, {});
     settle(panelWindow);
     check(saveGrab(panelWindow, output.filePath(u"panel-plugin-metadata.png"_s)), "could not render plugin metadata columns");
@@ -7526,6 +7766,23 @@ bool checkClipboardSizing(QQuickWindow* window, Clipboard& clipboard, Placement&
         && numberedRow->property("hintModifier").toString() == u"Ctrl"
         && number->property("font").value<QFont>().strikeOut());
     clipboard.setNumberKeysLeft(0);
+    // With clipboard number keys off and 字母直达 on, passive letters preview calmly and arm into keycaps.
+    clipboard.setNumberKeys(u"off"_s);
+    clipboard.setLetterJump(true, u"auto"_s, u"ASDFGHJKLQWERTYUIOPZXCVBNM"_s);
+    settle(window);
+    auto* clipHints = visualNamed(page, u"clipboardNumberHints"_s);
+    auto* clipCap = numberSlot ? visualNamed(numberSlot, u"hintKeyCap"_s) : nullptr;
+    check("clipboard_passive_letter_preview", number && numberSlot && clipCap
+        && numberSlot->isVisible() && number->property("text").toString() == u"A" && !clipCap->isVisible());
+    if (clipHints) {
+        clipHints->setProperty("jumping", true);
+        settle(window);
+        check("clipboard_armed_letter_keycap", number && clipCap
+            && number->property("text").toString() == u"A" && clipCap->isVisible());
+        clipHints->setProperty("jumping", false);
+        settle(window);
+    }
+    clipboard.setLetterJump(false, u"auto"_s, u"ASDFGHJKLQWERTYUIOPZXCVBNM"_s);
     clipboard.setNumberKeys(u"alt"_s);
     settle(window);
     const auto resize = [&](int edge, int dw, int dh, bool cancel = false) {
@@ -8321,6 +8578,398 @@ bool checkClipboardFilePreview(QQmlEngine* engine, const QDir& output)
     return ok;
 }
 
+// --clipboard-pin-files: pictures copied as files (微信, QQ, Explorer) go on
+// the screen and into the editing window as the history's own pictures do:
+// 贴到屏幕 (F3) and 编辑 (Ctrl+E) in a 文件 entry's menu when every file is
+// a picture Windows reads; several at once, each in a slot of its own, at
+// most Clipboard::kPinAtOnce; picked entries together; files gone said so.
+// A temporary history; the native clipboard untouched; nothing is pinned
+// (the requests are caught where App would hand them to the plugin).
+bool checkClipboardPinFiles(QQmlEngine* engine, const QDir& output)
+{
+    QTemporaryDir temporary;
+    ClipStore store(temporary.filePath(u"history"_s));
+    bool ok = true;
+    const auto check = [&](bool condition, const char* reason) {
+        ok = condition && ok;
+        if (!condition) qWarning("clipboard pin files regression: %s", reason);
+    };
+    if (!store.open(QDateTime::currentMSecsSinceEpoch())) { check(false, "temporary history could not open"); return false; }
+    const auto pictureFile = [&](const QString& name, const QColor& color) {
+        const QString path = QDir::toNativeSeparators(temporary.filePath(name));
+        QImage picture(160, 120, QImage::Format_RGB32);
+        picture.fill(color);
+        check(picture.save(path), "a picture file could not be written");
+        return path;
+    };
+    const QString chat = pictureFile(u"微信图片_20261124.png"_s, QColor(0x2f, 0x7d, 0xd8));
+    const QString second = pictureFile(u"截图 2.bmp"_s, QColor(0x3c, 0xa0, 0x5a));
+    const QString notes = QDir::toNativeSeparators(temporary.filePath(u"说明.txt"_s));
+    {
+        QFile file(notes);
+        check(file.open(QIODevice::WriteOnly) && file.write("notes") > 0, "the text file could not be written");
+    }
+    const QString cleared = QDir::toNativeSeparators(temporary.filePath(u"已清理的缓存.jpg"_s)); // never written
+    QStringList dozen;
+    for (int i = 1; i <= Clipboard::kPinAtOnce + 2; ++i)
+        dozen.append(pictureFile(u"照片 %1.png"_s.arg(i), QColor::fromHsv(i * 25, 160, 220)));
+    QByteArray png;
+    {
+        QBuffer buffer(&png);
+        QImage picture(200, 140, QImage::Format_RGB32);
+        picture.fill(QColor(0xd8, 0x6a, 0x2f));
+        check(buffer.open(QIODevice::WriteOnly) && picture.save(&buffer, "PNG"), "the picture could not be made");
+    }
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    // Newest first: rows 0 (one picture from 微信) to 6 (a dozen photos).
+    store.add(ClipCapture {.kind = ClipKind::Files, .text = dozen.join(u'\n'), .source = u"资源管理器"_s}, now - 6000);
+    store.add(ClipCapture {.kind = ClipKind::Files, .text = cleared, .source = u"微信"_s}, now - 5000);
+    store.add(ClipCapture {.kind = ClipKind::Files, .text = chat + u'\n' + notes, .source = u"资源管理器"_s}, now - 4000);
+    ClipCapture copied;
+    copied.kind = ClipKind::Image;
+    copied.imageData = png;
+    copied.hash = "pin-files";
+    copied.width = 200;
+    copied.height = 140;
+    copied.source = u"QQ"_s;
+    const qint64 pictureId = store.add(copied, now - 3000);
+    store.add(ClipCapture {.kind = ClipKind::Text, .text = u"一段文字"_s, .source = u"记事本"_s}, now - 2000);
+    store.add(ClipCapture {.kind = ClipKind::Files, .text = chat + u'\n' + second, .source = u"资源管理器"_s}, now - 1000);
+    store.add(ClipCapture {.kind = ClipKind::Files, .text = chat, .source = u"微信"_s}, now);
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    engine->addImageProvider(u"clippreview"_s, clipboard.filePreview()->imageProvider());
+    clipboard.setRowOptions(false, u"standard"_s, SystemTheme::uiSize());
+    clipboard.setActive(true);
+    clipboard.handleShown();
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Clipboard"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(engine, u"WinShun"_s, u"ClipboardWindow"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({{u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"placement"_s, QVariant::fromValue(&placement)}, {u"frame"_s, QVariant::fromValue(&frame)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { qWarning().noquote() << "clipboard pin files regression:" << component.errorString(); return false; }
+    window->create();
+    frame.setWindow(window);
+    placement.setWindow(window);
+    placement.enableWindowSizing();
+    showOffScreen(window);
+    clipboard.handlePlaced();
+    clipboard.setSeen(true);
+    settle(window);
+    auto* page = visualNamed(window->contentItem(), u"clipboardPage"_s);
+    auto* entries = visualNamed(window->contentItem(), u"clipboardEntries"_s);
+    if (!page || !entries) { check(false, "production clipboard page missing"); return false; }
+
+    struct Asked {
+        qint64 id = 0;
+        QString file;
+        int slot = -1;
+        bool operator==(const Asked&) const = default;
+    };
+    std::vector<Asked> pinned;
+    std::vector<Asked> edited;
+    int dismissed = 0;
+    QObject::connect(&clipboard, &Clipboard::pinRequested, &clipboard,
+        [&](qint64 id, const QString& file, int slot) { pinned.push_back({id, file, slot}); });
+    QObject::connect(&clipboard, &Clipboard::editRequested, &clipboard,
+        [&](qint64 id, const QString& file) { edited.push_back({id, file}); });
+    QObject::connect(&clipboard, &Clipboard::dismissRequested, &clipboard, [&] { dismissed += edited.empty(); });
+    const auto item = [&](int row, int action) {
+        for (const QVariant& entry : clipboard.menuItems(row)) {
+            const QVariantMap map = entry.toMap();
+            if (map.contains(u"action"_s) && map.value(u"action"_s).toInt() == action)
+                return map;
+        }
+        return QVariantMap();
+    };
+    const auto title = [&](int row, int action) { return item(row, action).value(u"text"_s).toString(); };
+    const auto shortcut = [&](int row, int action) { return item(row, action).value(u"shortcut"_s).toString(); };
+    const QString pinOne = Clipboard::tr("贴到屏幕");
+
+    // No plugin that pins: nothing new in the menu.
+    check(item(0, Clipboard::PinImage).isEmpty() && item(0, Clipboard::EditImage).isEmpty(),
+        "a picture file offered 贴到屏幕 or 编辑 without the screenshot plugin");
+    clipboard.setPictureVerbs(true, true);
+    // One picture copied in 微信: as a picture of the history.
+    check(title(0, Clipboard::PinImage) == pinOne && shortcut(0, Clipboard::PinImage) == u"F3"_s,
+        "one copied picture file has no 贴到屏幕 (F3)");
+    check(title(0, Clipboard::EditImage) == Clipboard::tr("编辑") && shortcut(0, Clipboard::EditImage) == u"Ctrl+E"_s,
+        "one copied picture file has no 编辑 (Ctrl+E)");
+    check(!item(0, Clipboard::Reveal).isEmpty() && item(0, Clipboard::OpenImage).isEmpty(),
+        "a copied file's own entries changed");
+    // Two: both go, the editing window takes one only.
+    check(title(1, Clipboard::PinImage) == Clipboard::tr("贴 %Ln 张到屏幕", nullptr, 2) && item(1, Clipboard::EditImage).isEmpty(),
+        "two copied picture files are not offered together");
+    // Words and the history's own picture: as before.
+    check(title(2, Clipboard::PinImage) == pinOne && item(2, Clipboard::EditImage).isEmpty(), "words lost their 贴到屏幕");
+    check(title(3, Clipboard::PinImage) == pinOne && !item(3, Clipboard::EditImage).isEmpty()
+            && !item(3, Clipboard::OpenImage).isEmpty(),
+        "a copied picture lost its own entries");
+    // A picture with a text file: not pictures.
+    check(item(4, Clipboard::PinImage).isEmpty() && item(4, Clipboard::EditImage).isEmpty(),
+        "a picture copied with a text file was offered as pictures");
+    // A dozen: the first ten.
+    check(title(6, Clipboard::PinImage) == Clipboard::tr("贴前 %Ln 张到屏幕", nullptr, Clipboard::kPinAtOnce),
+        "a dozen copied pictures do not say only the first go");
+
+    clipboard.trigger(1, Clipboard::PinImage);
+    check(pinned == std::vector<Asked> {{0, chat, 0}, {0, second, 1}}, "two picture files were not pinned in order, a slot each");
+    pinned.clear();
+    clipboard.trigger(6, Clipboard::PinImage);
+    check(std::ssize(pinned) == Clipboard::kPinAtOnce && pinned.front() == Asked {0, dozen.front(), 0}
+            && pinned.back() == Asked {0, dozen[Clipboard::kPinAtOnce - 1], Clipboard::kPinAtOnce - 1},
+        "a dozen pictures did not pin the first ten in their slots");
+    pinned.clear();
+    // 微信 cleared its cache since: said, nothing asked of the plugin.
+    clipboard.trigger(5, Clipboard::PinImage);
+    check(pinned.empty() && clipboard.statusText() == Clipboard::tr("这些文件已经不存在了"), "a file gone was not said");
+    clipboard.trigger(5, Clipboard::EditImage);
+    check(edited.empty() && dismissed == 0, "a file gone was handed to the editing window");
+    // Picked together: the history's picture and the file's, in the list's order.
+    clipboard.toggleSelected(0);
+    clipboard.toggleSelected(3);
+    check(title(0, Clipboard::PinImage) == Clipboard::tr("贴 %Ln 张到屏幕", nullptr, 2) && item(0, Clipboard::EditImage).isEmpty(),
+        "a picture file and a picture picked together are not offered together");
+    clipboard.trigger(0, Clipboard::PinImage);
+    const auto pinnedOnce = [&](qint64 id, const QString& file) {
+        return std::ranges::count_if(pinned, [&](const Asked& a) { return a.id == id && a.file == file; }) == 1;
+    };
+    check(pinned.size() == 2 && pinned[0].slot == 0 && pinned[1].slot == 1 && pinnedOnce(0, chat) && pinnedOnce(pictureId, {}),
+        "picked pictures were not pinned together");
+    pinned.clear();
+    clipboard.toggleSelected(2); // words among them: no 贴到屏幕 for all
+    check(item(0, Clipboard::PinImage).isEmpty(), "words picked with pictures were offered as pictures");
+    clipboard.clearSelection();
+    settle(window);
+
+    // The menu as shown (the screenshot plugin's entries under 打开所在位置).
+    entries->setProperty("currentIndex", 0);
+    settle(window);
+    check(QMetaObject::invokeMethod(page, "openContextMenu", Q_ARG(QVariant, QVariant(0)), Q_ARG(QVariant, QVariant())),
+        "clipboard context menu did not open");
+    if (auto* menu = qobject_cast<QQuickWindow*>(page->property("contextMenu").value<QObject*>())) {
+        settle(menu);
+        check(saveGrab(menu, output.filePath(u"clipboard-pin-files-menu.png"_s)), "the menu did not render");
+        QMetaObject::invokeMethod(menu, "dismiss");
+        settle(window);
+    } else {
+        check(false, "production clipboard menu is missing");
+    }
+    check(saveGrab(window, output.filePath(u"clipboard-pin-files.png"_s)), "the clipboard window did not render");
+
+    // Its keys with the menu closed (GitHub #379): F3 pins, Ctrl+E edits, the window going first.
+    const auto key = [&](int code, Qt::KeyboardModifiers modifiers) {
+        QKeyEvent press(QEvent::KeyPress, code, modifiers), release(QEvent::KeyRelease, code, modifiers);
+        QCoreApplication::sendEvent(window, &press);
+        QCoreApplication::sendEvent(window, &release);
+        settle(window);
+    };
+    if (QQuickItem* field = visualNamed(window->contentItem(), u"clipboardSearchField"_s))
+        field->forceActiveFocus(Qt::OtherFocusReason);
+    key(Qt::Key_F3, Qt::NoModifier);
+    check(pinned == std::vector<Asked> {{0, chat, 0}}, "F3 did not pin the copied picture file");
+    key(Qt::Key_E, Qt::ControlModifier);
+    check(edited == std::vector<Asked> {{0, chat}} && dismissed == 1, "Ctrl+E did not hand the picture file to the editing window");
+    // The plugin turned off: gone again.
+    clipboard.setPictureVerbs(false, false);
+    check(item(0, Clipboard::PinImage).isEmpty() && item(0, Clipboard::EditImage).isEmpty(),
+        "the picture verbs stayed with the plugin off");
+    check(!watcher.running(), "fixture must never start the native clipboard writer");
+    window->hide();
+    say(u"clipboard pin files: picture files copied in 微信/QQ/Explorer pin (F3, a slot each, ten at most) and edit (Ctrl+E); native clipboard untouched"_s);
+    return ok;
+}
+
+// --clipboard-paste-plain: 默认粘贴为纯文本 (Settings::clipboardPlainByDefault).
+// Off, as ever: a paste keeps the words' formatting, Shift drops it. On: the
+// usual paste (Enter, a click, Alt+1…9) drops it, Shift+Enter and the menu's
+// 保留格式粘贴 keep it; files and pictures paste as they are either way, a
+// copy keeps every format. The status line, the shortcut list and the
+// preview's hint say which. A temporary history; what each paste would
+// write is caught before the native clipboard (PasteWriteProbe).
+bool checkClipboardPastePlain(QQmlEngine* engine, const QDir& output)
+{
+    QTemporaryDir temporary;
+    ClipStore store(temporary.filePath(u"history"_s));
+    bool ok = true;
+    const auto check = [&](bool condition, const char* reason) {
+        ok = condition && ok;
+        if (!condition) qWarning("clipboard paste plain regression: %s", reason);
+    };
+    if (!store.open(QDateTime::currentMSecsSinceEpoch())) { check(false, "temporary history could not open"); return false; }
+    const QString notes = QDir::toNativeSeparators(temporary.filePath(u"会议纪要.docx"_s));
+    {
+        QFile file(notes);
+        check(file.open(QIODevice::WriteOnly) && file.write("notes") > 0, "the file could not be written");
+    }
+    QByteArray png;
+    {
+        QBuffer buffer(&png);
+        QImage picture(200, 140, QImage::Format_RGB32);
+        picture.fill(QColor(0x2f, 0x7d, 0xd8));
+        check(buffer.open(QIODevice::WriteOnly) && picture.save(&buffer, "PNG"), "the picture could not be made");
+    }
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    // Newest first: rows 0 (words from Word, formatted) to 3 (a picture).
+    const qint64 pictureId = store.add(ClipCapture {.kind = ClipKind::Image, .imageData = png, .hash = "paste-plain",
+        .width = 200, .height = 140, .source = u"QQ"_s}, now - 3000);
+    const qint64 fileId = store.add(ClipCapture {.kind = ClipKind::Files, .text = notes, .source = u"资源管理器"_s}, now - 2000);
+    const qint64 plainId = store.add(ClipCapture {.kind = ClipKind::Text, .text = u"记事本里的一行字"_s, .source = u"记事本"_s}, now - 1000);
+    const QString words = u"季度总结：收入增长 12%"_s;
+    const qint64 wordId = store.add(ClipCapture {.kind = ClipKind::Text, .text = words,
+        .html = "Version:0.9 <html><body><!--StartFragment--><b>季度总结</b>：收入增长 <span style=\"color:red\">12%</span><!--EndFragment--></body></html>",
+        .rtf = "{\\rtf1\\ansi {\\b Q}}", .source = u"Microsoft Word"_s}, now);
+    const Clip* word = store.clip(wordId);
+    const Clip* plain = store.clip(plainId);
+    const Clip* file = store.clip(fileId);
+    const Clip* image = store.clip(pictureId);
+    if (!word || !plain || !file || !image) { check(false, "the entries were not kept"); return false; }
+    check(word->html && word->rtf && !plain->html && !plain->rtf, "the fixture's formatting is not as meant");
+
+    // Which paste drops the formatting: words by the setting, Shift the other; the rest only by Shift.
+    using Clips = std::vector<const Clip*>;
+    check(!Clipboard::pastesPlain(Clips {word}, false, false) && Clipboard::pastesPlain(Clips {word}, false, true),
+        "off: the usual paste of words is not the formatted one");
+    check(Clipboard::pastesPlain(Clips {word}, true, false) && !Clipboard::pastesPlain(Clips {word}, true, true),
+        "on: the usual paste of words kept the formatting");
+    check(!Clipboard::pastesPlain(Clips {file}, true, false) && Clipboard::pastesPlain(Clips {file}, true, true)
+            && !Clipboard::pastesPlain(Clips {image}, true, false) && !Clipboard::pastesPlain(Clips {word, file}, true, false)
+            && !Clipboard::pastesPlain({}, true, false),
+        "on: files or a picture went as plain text the usual way");
+
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    engine->addImageProvider(u"clippreview"_s, clipboard.filePreview()->imageProvider());
+    clipboard.setRowOptions(false, u"standard"_s, SystemTheme::uiSize());
+    clipboard.setActive(true);
+    clipboard.handleShown();
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Clipboard"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(engine, u"WinShun"_s, u"ClipboardWindow"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({{u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"placement"_s, QVariant::fromValue(&placement)}, {u"frame"_s, QVariant::fromValue(&frame)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { qWarning().noquote() << "clipboard paste plain regression:" << component.errorString(); return false; }
+    window->create();
+    frame.setWindow(window);
+    placement.setWindow(window);
+    placement.enableWindowSizing();
+    showOffScreen(window);
+    clipboard.handlePlaced();
+    clipboard.setSeen(true);
+    settle(window);
+    auto* page = visualNamed(window->contentItem(), u"clipboardPage"_s);
+    auto* entries = visualNamed(window->contentItem(), u"clipboardEntries"_s);
+    if (!page || !entries) { check(false, "production clipboard page missing"); return false; }
+
+    const auto pasted = [&](int row, bool shift, bool quick = false) {
+        if (quick)
+            clipboard.quickPaste(row, shift);
+        else
+            clipboard.paste(row, shift);
+        return PasteWriteProbe::takeWrite(clipboard);
+    };
+    const auto formatted = [](const ClipWrite& w) { return !w.html.isEmpty() && !w.rtf.isEmpty(); };
+    const auto bare = [&](const ClipWrite& w) { return w.html.isEmpty() && w.rtf.isEmpty() && w.text == words; };
+    const auto item = [&](int row, int action) {
+        for (const QVariant& entry : clipboard.menuItems(row)) {
+            const QVariantMap map = entry.toMap();
+            if (map.contains(u"action"_s) && map.value(u"action"_s).toInt() == action)
+                return map;
+        }
+        return QVariantMap();
+    };
+    const auto title = [&](int row, int action) { return item(row, action).value(u"text"_s).toString(); };
+    const auto shortcut = [&](int row, int action) { return item(row, action).value(u"shortcut"_s).toString(); };
+    const QString asPlain = Clipboard::tr("粘贴为纯文本");
+    const QString keepFormat = Clipboard::tr("保留格式粘贴");
+    // The shortcut list as the footer's info button gives it this window.
+    const auto shortcutTexts = [&] {
+        QQmlExpression list(qmlContext(page), page,
+            u"Shortcuts.entries('clipboard', {numberModifier: 'Alt', intoField: false, holdKey: '', "
+            u"plainByDefault: clipboard.pastePlain}, false).map(e => e.text).join('|')"_s);
+        return list.evaluate().toString().split(u'|');
+    };
+    entries->setProperty("currentIndex", 0);
+    QMetaObject::invokeMethod(page, "togglePreview", Q_ARG(QVariant, QVariant(0)));
+    settle(window);
+    auto* hint = visualNamed(window->contentItem(), u"clipboardPreviewHint"_s);
+    check(hint && hint->isVisible(), "the preview of formatted words has no hint");
+    const auto hintText = [&] {
+        settle(window);
+        return hint ? hint->property("text").toString() : QString();
+    };
+
+    // Off, as ever.
+    check(!clipboard.pastePlain(), "默认粘贴为纯文本 is on before it was asked for");
+    check(formatted(pasted(0, false)) && bare(pasted(0, true)), "off: Enter dropped or Shift+Enter kept the formatting");
+    check(title(0, Clipboard::PasteOther) == asPlain && shortcut(0, Clipboard::PasteOther) == u"Shift+Enter"_s,
+        "off: the menu lost 粘贴为纯文本 (Shift+Enter)");
+    check(item(1, Clipboard::PasteOther).value(u"text"_s) == asPlain, "off: words without formatting lost 粘贴为纯文本");
+    QStringList texts = shortcutTexts();
+    check(texts.contains(u"粘贴为纯文本"_s) && texts.contains(u"第几条粘贴为纯文本"_s) && !texts.contains(u"保留格式粘贴"_s),
+        "off: the shortcut list changed");
+    check(hintText().contains(u"Shift+Enter 粘贴为纯文本"_s), "off: the preview's hint changed");
+
+    // On.
+    int optionsChanged = 0;
+    QObject::connect(&clipboard, &Clipboard::rowOptionsChanged, &clipboard, [&] { ++optionsChanged; });
+    clipboard.setPastePlain(true);
+    check(clipboard.pastePlain() && optionsChanged == 1, "默认粘贴为纯文本 was not taken");
+    clipboard.setPastePlain(true);
+    check(optionsChanged == 1, "the same setting again was said as a change");
+    check(bare(pasted(0, false)) && bare(pasted(0, false, true)), "on: Enter or Alt+1 kept the formatting");
+    check(formatted(pasted(0, true)) && formatted(pasted(0, true, true)), "on: Shift+Enter or Alt+Shift+1 dropped the formatting");
+    check(title(0, Clipboard::PasteOther) == keepFormat && shortcut(0, Clipboard::PasteOther) == u"Shift+Enter"_s,
+        "on: formatted words have no 保留格式粘贴 (Shift+Enter)");
+    check(item(1, Clipboard::PasteOther).isEmpty(), "on: words without formatting offer a second paste that is the same");
+    check(pasted(1, false).text == u"记事本里的一行字"_s, "on: words without formatting did not paste");
+    // Files as files, their paths by Shift; the picture as itself.
+    const ClipWrite files = pasted(2, false);
+    check(files.files == QStringList {notes} && files.text.isEmpty() && pasted(2, true).text == notes,
+        "on: a copied file went as its path, or Shift+Enter lost the path");
+    check(title(2, Clipboard::PasteOther) == asPlain, "on: a copied file lost 粘贴为纯文本");
+    check(!pasted(3, false).imagePath.isEmpty() && item(3, Clipboard::PasteOther).isEmpty(),
+        "on: the picture did not paste as a picture");
+    // Several picked go as their joined words either way: nothing to keep.
+    clipboard.toggleSelected(0);
+    clipboard.toggleSelected(1);
+    check(item(0, Clipboard::PasteOther).isEmpty(), "on: several picked offer 保留格式粘贴, which keeps nothing");
+    clipboard.clearSelection();
+    // A copy keeps every format.
+    check(clipboard.pasteEntry(wordId, nullptr) && formatted(PasteWriteProbe::takeWrite(clipboard)),
+        "on: 复制 dropped the formatting");
+    // What the window says.
+    clipboard.setPinned(true);
+    check(clipboard.statusText().endsWith(u"双击粘贴纯文本"_s), "on: the pinned status line does not say a double click pastes plain text");
+    clipboard.setRowOptions(true, u"standard"_s, SystemTheme::uiSize());
+    check(clipboard.statusText().endsWith(u"单击粘贴纯文本"_s), "on: the pinned status line does not say a click pastes plain text");
+    clipboard.setRowOptions(false, u"standard"_s, SystemTheme::uiSize());
+    clipboard.setPinned(false);
+    texts = shortcutTexts();
+    check(texts.contains(u"保留格式粘贴"_s) && texts.contains(u"第几条保留格式粘贴"_s) && !texts.contains(u"粘贴为纯文本"_s),
+        "on: the shortcut list still says Shift pastes plain text");
+    check(hintText().contains(u"Shift+Enter 保留格式粘贴"_s), "on: the preview's hint still says Shift+Enter pastes plain text");
+
+    // The menu as shown.
+    check(QMetaObject::invokeMethod(page, "openContextMenu", Q_ARG(QVariant, QVariant(0)), Q_ARG(QVariant, QVariant())),
+        "clipboard context menu did not open");
+    if (auto* menu = qobject_cast<QQuickWindow*>(page->property("contextMenu").value<QObject*>())) {
+        settle(menu);
+        check(saveGrab(menu, output.filePath(u"clipboard-paste-plain-menu.png"_s)), "the menu did not render");
+        QMetaObject::invokeMethod(menu, "dismiss");
+        settle(window);
+    } else {
+        check(false, "production clipboard menu is missing");
+    }
+    check(saveGrab(window, output.filePath(u"clipboard-paste-plain.png"_s)), "the clipboard window did not render");
+    check(!watcher.running(), "fixture must never start the native clipboard writer");
+    window->hide();
+    say(u"clipboard paste plain: 默认粘贴为纯文本 drops the words' formatting on Enter/click/Alt+1, Shift+Enter keeps it; files, pictures and copies as ever; native clipboard untouched"_s);
+    return ok;
+}
+
 // --clipboard-picture-view (GitHub #414): a copied picture's words folded
 // under their heading until asked for (remembered); a click on the picture,
 // or Space with nothing typed, shows it large beside the window
@@ -8718,6 +9367,396 @@ bool checkClipboardTextSelection(QQmlEngine* engine, const QDir& output)
     check(clipboard.pinned() == pinned, "Ctrl+T again did not unpin it");
     window->hide();
     say(u"clipboard text selection and menu keys: real QML, temporary history; native clipboard untouched"_s);
+    return ok;
+}
+
+// --clipboard-hover-copy (GitHub #439): text selected with the mouse in the
+// preview that resting on a row brings up (a window that never takes the
+// keys) is what the page's Ctrl+C copies and Enter pastes, not the row the
+// keyboard is on, as in the preview beside the list (#375). Real QML and a
+// temporary history. Ctrl+C is the last step: its copy is read back from
+// the history, which it goes into at once, and the check returns before the
+// clipboard would be written (the copies marked as a test's meanwhile, so
+// that no history would record them even so).
+bool checkClipboardHoverCopy(QQmlEngine* engine, const QDir& output)
+{
+    qputenv("WINSHUN_TEST_NO_CLIP_HISTORY", "1");
+    QTemporaryDir temporary;
+    ClipStore store(temporary.filePath(u"history"_s));
+    bool ok = true;
+    const auto check = [&](bool condition, const char* reason) {
+        ok = condition && ok;
+        if (!condition) qWarning("clipboard hover copy regression: %s", reason);
+    };
+    if (!store.open(QDateTime::currentMSecsSinceEpoch())) { check(false, "temporary history could not open"); return false; }
+    const QString text = u"账号：lingcore\n密码：在密码管理器里\n备注：周五前把年度报告发给财务"_s;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    store.add(ClipCapture {.kind = ClipKind::Text, .text = text, .source = u"记事本"_s}, now - 1000);
+    store.add(ClipCapture {.kind = ClipKind::Text, .text = u"另一段文字"_s, .source = u"记事本"_s}, now);
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    clipboard.setRowOptions(false, u"standard"_s, SystemTheme::uiSize());
+    clipboard.setPreviewOpen(false);
+    clipboard.setActive(true);
+    clipboard.handleShown();
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Clipboard"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(engine, u"WinShun"_s, u"ClipboardWindow"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({{u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"placement"_s, QVariant::fromValue(&placement)}, {u"frame"_s, QVariant::fromValue(&frame)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { qWarning().noquote() << "clipboard hover copy regression:" << component.errorString(); return false; }
+    window->create();
+    frame.setWindow(window);
+    placement.setWindow(window);
+    placement.enableWindowSizing();
+    showOffScreen(window);
+    clipboard.handlePlaced();
+    clipboard.setSeen(true);
+    settle(window);
+    auto* page = visualNamed(window->contentItem(), u"clipboardPage"_s);
+    auto* entries = visualNamed(window->contentItem(), u"clipboardEntries"_s);
+    auto* field = visualNamed(window->contentItem(), u"clipboardSearchField"_s);
+    auto* row = visualNamed(window->contentItem(), u"clipboardRow-1"_s);
+    if (!page || !entries || !field || !row) { check(false, "production clipboard page missing"); return false; }
+    check(entries->property("currentIndex").toInt() == 0, "the newest entry is not the keyboard's row");
+    // The pointer rests on the second row: its preview comes up beside the
+    // list, as page.hoverTimer brings it.
+    const QPointF corner = row->mapToGlobal(QPointF(0, 0));
+    page->setProperty("hoverIndex", 1);
+    page->setProperty("hoverRect", QRectF(corner.x(), corner.y(), row->width(), row->height()));
+    page->setProperty("hoverShown", true);
+    QQuickWindow* hover = nullptr;
+    for (QWindow* w : QGuiApplication::topLevelWindows()) {
+        if (w->objectName() == u"clipboardHoverPreview" && w->isVisible())
+            hover = qobject_cast<QQuickWindow*>(w);
+    }
+    if (!hover) { check(false, "resting on a row brought up no preview"); return false; }
+    // It keeps to the screen; moved off it at once (before any event), its
+    // place no longer bound, beside its host.
+    QQmlProperty::write(hover, u"x"_s, window->x() + window->width() + 8);
+    QQmlProperty::write(hover, u"y"_s, window->y());
+    settle(hover);
+    check(hover->x() > window->x(), "the preview could not be kept off the screen");
+    auto* body = visualNamed(hover->contentItem(), u"clipboardPreviewText"_s);
+    auto* hint = visualNamed(hover->contentItem(), u"clipboardPreviewHint"_s);
+    if (!body || !hint) { check(false, "the preview's text missing"); return false; }
+    check(body->property("text").toString() == text, "the preview does not show the row under the pointer");
+    // Dragged across its second line: that part selected, the page's field keeping the keys.
+    const int lines = body->property("lineCount").toInt();
+    const double perLine = lines > 0 ? body->property("contentHeight").toDouble() / lines : 0;
+    const QFontMetricsF metrics(body->property("font").value<QFont>());
+    const auto mouse = [&](QEvent::Type type, const QPointF& at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+        QMouseEvent event(type, at, hover->mapToGlobal(at), button, buttons, {});
+        QCoreApplication::sendEvent(hover, &event);
+        settle(hover);
+    };
+    const QPointF from = body->mapToScene({1, perLine * 1.5});
+    const QPointF to = body->mapToScene({metrics.horizontalAdvance(u"密码：在密码"_s), perLine * 1.5});
+    mouse(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+    mouse(QEvent::MouseMove, (from + to) / 2, Qt::NoButton, Qt::LeftButton);
+    mouse(QEvent::MouseMove, to, Qt::NoButton, Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease, to, Qt::LeftButton, {});
+    const QString part = body->property("selectedText").toString();
+    check(part.startsWith(u"密码"_s) && part.size() >= 4 && part.size() < 12 && !part.contains(u'\n'),
+        "a drag in the preview did not select part of a line");
+    check(hover->isVisible(), "selecting closed the preview");
+    check(page->property("previewSelection").toString() == part, "Enter would not paste the part selected in the preview");
+    check(hint->property("text").toString().contains(u"Ctrl+C"_s), "the preview does not say that Ctrl+C copies the part");
+    check(saveGrab(hover, output.filePath(u"clipboard-hover-selected.png"_s)), "the preview did not render");
+    // Ctrl+C in the page, whose field has the keys: the part, on top of the
+    // history as a new entry; not the row the keyboard is on.
+    field->forceActiveFocus(Qt::OtherFocusReason);
+    const std::size_t before = store.clips().size();
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
+    QCoreApplication::sendEvent(window, &press);
+    check(store.clips().size() == before + 1 && store.clips().front().text == part,
+        "Ctrl+C did not copy the part selected in the preview the pointer brought up");
+    // The new entry moved the rows: that preview closed, nothing left selected.
+    check(!page->property("hoverShown").toBool() && page->property("previewSelection").toString().isEmpty(),
+        "the preview stayed over rows that moved once the part was copied");
+    say(u"clipboard hover preview: a part selected there is what Ctrl+C copies and Enter pastes (real QML, temporary history)"_s);
+    return ok; // no event loop from here on: the clipboard is never written
+}
+
+// --content-kinds (GitHub #447): 内容 narrowed to kinds of file with 文件's
+// chips (the panel's 筛选): it stays 内容 and reads only those kinds, nor
+// counts other kinds of text as passed over; the placeholder and its strip
+// name them, the strip's chip takes one off, 文件's own kind is untouched,
+// and the choice outlives a trip to 文件. Real files read by the production
+// launcher and search workers, Main.qml shown.
+bool checkContentKinds(QQmlEngine* qml, const QDir& output)
+{
+    QTemporaryDir temporary;
+    IndexService index(temporary.filePath(u"index"_s), IndexService::Options{});
+    AppCatalog apps;
+    SystemCatalog places;
+    apps.setApps(std::make_shared<const AppList>());
+    places.setPlaces(std::make_shared<const PlaceList>());
+    History history(temporary.filePath(u"history.tsv"_s));
+    SearchEngine search(&index, &apps, &places);
+    Launcher launcher(&index, &apps, &places, &search, &history);
+    launcher.setContentOptions(true, {u"txt"_s, u"md"_s}, ContentSizeLimits{}, false, false);
+    launcher.setFileTypes({FileType {u"文本"_s, {u"txt"_s}, u"text"_s}, FileType {u"笔记"_s, {u"md"_s}, u"notes"_s},
+        FileType {u"图片"_s, {u"jpg"_s, u"png"_s}, u"pictures"_s}});
+    ClipStore store(temporary.filePath(u"clipboard"_s));
+    if (!store.open(QDateTime::currentMSecsSinceEpoch())) return false;
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Launcher"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(qml, u"WinShun"_s, u"Main"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {u"launcher"_s, QVariant::fromValue(&launcher)}, {u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"frame"_s, QVariant::fromValue(&frame)}, {u"placement"_s, QVariant::fromValue(&placement)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { say(component.errorString()); return false; }
+    window->create();
+    launcher.setWindow(window);
+    frame.setWindow(window);
+    placement.setWindow(window);
+    showOffScreen(window);
+    bool ok = true;
+    const auto check = [&](bool condition, const char* reason) {
+        ok = condition && ok;
+        if (!condition) qWarning("content kinds regression: %s", reason);
+    };
+    const auto files = index.index();
+    // Indexed as a drive is, from "C:" down, so that the folder is one a chip can choose.
+    EntryId root = kNoEntry;
+    {
+        const auto lock = files->writeLock();
+        const QStringList parts = QDir::toNativeSeparators(temporary.path()).split(u'\\', Qt::SkipEmptyParts);
+        for (const QString& part : parts) {
+            const std::string name = part.toUtf8().toStdString();
+            root = root == kNoEntry ? files->addRoot(name) : files->add(root, name, EntryFlag::Directory);
+        }
+    }
+    const auto write = [&](const QString& name, const QByteArray& bytes) {
+        {
+            QFile file(temporary.filePath(name));
+            if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) return false;
+        }
+        // Read back once: the antivirus's first look at a new file (up to
+        // a second) taken here, not in the first search's time.
+        QFile back(temporary.filePath(name));
+        if (!back.open(QIODevice::ReadOnly) || back.readAll() != bytes) return false;
+        const auto lock = files->writeLock();
+        return files->add(root, name.toUtf8().toStdString(), 0) != kNoEntry;
+    };
+    check(write(u"牛蛙.txt"_s, "关于牛蛙的笔记\n") && write(u"牛蛙.md"_s, "# 牛蛙\n") && write(u"牛蛙.py"_s, "# 牛蛙\n"),
+        "the files could not be written");
+    int finishes = 0;
+    QObject::connect(&search, &SearchEngine::contentProgress, &launcher,
+        [&](quint64, int, int, bool finished) { if (finished) ++finishes; });
+    // A change, then the content search it starts until it is over.
+    const auto run = [&](const auto& change) {
+        const int before = finishes;
+        change();
+        QElapsedTimer timer;
+        timer.start();
+        while (!(finishes > before && !launcher.searching()) && timer.elapsed() < 20000)
+            pump(10);
+        settle(window);
+        return finishes > before;
+    };
+    const auto names = [&] {
+        QStringList listed;
+        for (int i = 0; i < launcher.results()->count(); ++i)
+            listed.append(launcher.results()->at(i)->name);
+        listed.sort();
+        return listed;
+    };
+    const auto otherTypesOffered = [&] {
+        return std::ranges::any_of(launcher.leftOutHints(), [](const QVariant& h) { return h.toMap().value(u"kind"_s) == u"types"_s; });
+    };
+    const auto firstChip = [&] { return launcher.folderChips().value(0).toMap(); };
+
+    launcher.setScope(Launcher::Content);
+    check(run([&] { launcher.setQuery(u"牛蛙"_s); }), "the content search did not run");
+    check(names() == (QStringList {u"牛蛙.md"_s, u"牛蛙.txt"_s}), "内容 did not find the words in both kinds");
+    check(otherTypesOffered(), "the .py file passed over was not offered");
+
+    // 文本 from the panel's 筛选 (as Panel.chooseType): still 内容, the .txt alone.
+    check(run([&] { launcher.toggleFileType(0); }), "choosing a kind did not search again");
+    check(launcher.scope() == Launcher::Content && launcher.contentFileTypes() == QList<int> {0},
+        "choosing a kind in 内容 left 内容 (GitHub #447)");
+    check(names() == QStringList {u"牛蛙.txt"_s}, "内容 was not narrowed to 文本");
+    check(launcher.placeholder() == u"搜索文本中的文字", "the placeholder does not name the kind");
+    check(firstChip().value(u"kind"_s).toInt() == 0 && firstChip().value(u"type"_s).toString().startsWith(u"type:"),
+        "the strip does not show the kind first");
+    check(launcher.selectedFileTypes().isEmpty() && launcher.fileType() == -1, "文件's own kind was changed");
+
+    // 图片: no file of it has the words, and the .py is not of it either.
+    check(run([&] { launcher.chooseFileType(2); }), "another kind did not search again");
+    check(launcher.contentFileTypes() == QList<int> {2} && names().isEmpty(), "图片 did not narrow 内容 to pictures");
+    check(!otherTypesOffered(), "text of another kind was offered while narrowed to pictures");
+
+    // Two kinds; then the strip's chip of one takes it off.
+    check(run([&] { launcher.toggleFileType(1); }), "a second kind did not search again");
+    check(launcher.contentFileTypes() == (QList<int> {2, 1}) && names() == QStringList {u"牛蛙.md"_s},
+        "two kinds were not both looked in");
+    auto* strip = visualNamed(window->contentItem(), u"searchTypeStrip"_s);
+    auto* chip = visualNamed(window->contentItem(), u"searchTypeChiptype:pictures"_s);
+    check(strip && strip->property("shown").toBool() && chip && chip->property("active").toBool()
+            && chip->property("glyph").toString().size() > 0,
+        "the strip does not show 图片 on, with its icon");
+    check(saveGrab(window, output.filePath(u"content-kinds.png"_s)), "the window did not render");
+    check(run([&] { launcher.chooseFolderChip(firstChip().value(u"type"_s).toString()); }), "the chip did not search again");
+    check(launcher.contentFileTypes() == QList<int> {1} && names() == QStringList {u"牛蛙.md"_s}, "the chip did not take 图片 off");
+    check(launcher.placeholder() == u"搜索笔记中的文字", "the placeholder does not name what is left");
+
+    // Kept through 文件 and back; 不限 clears it; 文件夹 is 文件夹's scope.
+    launcher.setScope(Launcher::Files);
+    check(launcher.selectedFileTypes().isEmpty(), "文件 took 内容's kind");
+    check(run([&] { launcher.setScope(Launcher::Content); }) && launcher.contentFileTypes() == QList<int> {1}
+            && names() == QStringList {u"牛蛙.md"_s},
+        "内容's kind was lost on the way through 文件");
+    // The strip's 不限 (在所有文件里搜) is off while kinds are on; a click takes them off.
+    const auto anyChip = [&] { return visualNamed(window->contentItem(), u"searchTypeChip"_s); }; // its key ""
+    check(anyChip() && !anyChip()->property("active").toBool(), "the strip's 不限 shows on while 内容 is narrowed");
+    check(run([&] { launcher.chooseFolderChip(QString()); }) && launcher.contentFileTypes().isEmpty()
+            && names() == (QStringList {u"牛蛙.md"_s, u"牛蛙.txt"_s}) && anyChip() && anyChip()->property("active").toBool(),
+        "the strip's 不限 did not give every kind back");
+    // Ctrl+Tab goes round the folders only: the kinds stay.
+    check(run([&] { launcher.toggleFileType(0); }) && launcher.contentFileTypes() == QList<int> {0}, "文本 again did not narrow");
+    const QString folder = QDir::toNativeSeparators(temporary.path());
+    const bool searchedThere = run([&] { launcher.chooseFolderChip(u"pin:"_s + folder); });
+    check(searchedThere && launcher.folderChip() == u"pin:"_s + folder
+            && launcher.contentFileTypes() == QList<int> {0} && names() == QStringList {u"牛蛙.txt"_s},
+        "a folder with a kind did not search the kind there");
+    check(launcher.placeholder().contains(u"文本中的文字"_s), "the placeholder does not name the kind in a folder");
+    check(run([&] { launcher.cycleFolderChip(1); }) && launcher.folderChip().isEmpty(), "Ctrl+Tab did not go to 不限");
+    check(launcher.contentFileTypes() == QList<int> {0} && names() == QStringList {u"牛蛙.txt"_s},
+        "Ctrl+Tab over the folders took the kind off");
+    // And the panel's 不限.
+    check(run([&] { launcher.chooseFileType(-1); }), "不限 did not search again");
+    check(launcher.contentFileTypes().isEmpty() && names() == (QStringList {u"牛蛙.md"_s, u"牛蛙.txt"_s}),
+        "不限 did not give every kind back");
+    launcher.chooseFileType(Launcher::kFoldersChip);
+    check(launcher.scope() == Launcher::Folders, "文件夹 in 内容 is not 文件夹's scope");
+    window->hide();
+    say(u"content kinds: 内容 narrowed by 文件's chips, real files and search workers"_s);
+    return ok;
+}
+
+// --type-strip-scroll: more kinds than the strip has room for, all chosen,
+// in the 界面风格 --style names. A chip cut off at either end is hidden and
+// takes no clicks through its MouseArea alone: the chip itself stays enabled,
+// since a style's key may change with that (tactile's chosen key turns bold,
+// wider), and `whole` reads the chip's width (a binding loop, 2026-11-24).
+bool checkTypeStripScroll(QQmlEngine* qml, const QDir& output)
+{
+    static QtMessageHandler counted = nullptr;
+    static int loops = 0;
+    loops = 0;
+    counted = qInstallMessageHandler([](QtMsgType type, const QMessageLogContext& context, const QString& message) {
+        if (message.contains(u"Binding loop detected"_s))
+            ++loops;
+        counted(type, context, message);
+    });
+    const auto restore = qScopeGuard([] { qInstallMessageHandler(counted); });
+    QTemporaryDir temporary;
+    IndexService index(temporary.filePath(u"index"_s), IndexService::Options{});
+    AppCatalog apps;
+    SystemCatalog places;
+    apps.setApps(std::make_shared<const AppList>());
+    places.setPlaces(std::make_shared<const PlaceList>());
+    History history(temporary.filePath(u"history.tsv"_s));
+    SearchEngine search(&index, &apps, &places);
+    Launcher launcher(&index, &apps, &places, &search, &history);
+    FileTypes types;
+    for (const auto& [name, extension] : {std::pair {u"图片"_s, u"jpg"_s}, {u"文档"_s, u"docx"_s}, {u"表格"_s, u"xlsx"_s},
+             {u"演示"_s, u"pptx"_s}, {u"PDF"_s, u"pdf"_s}, {u"音乐"_s, u"mp3"_s}, {u"视频"_s, u"mp4"_s},
+             {u"压缩包"_s, u"zip"_s}, {u"程序"_s, u"exe"_s}, {u"代码"_s, u"cpp"_s}, {u"文本"_s, u"txt"_s},
+             {u"电子书"_s, u"epub"_s}, {u"设计稿"_s, u"psd"_s}, {u"字体"_s, u"ttf"_s}})
+        types.append(FileType {name, {extension}});
+    launcher.setFileTypes(types);
+    ClipStore store(temporary.filePath(u"clipboard"_s));
+    if (!store.open(QDateTime::currentMSecsSinceEpoch())) return false;
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Launcher"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(qml, u"WinShun"_s, u"Main"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {u"launcher"_s, QVariant::fromValue(&launcher)}, {u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"frame"_s, QVariant::fromValue(&frame)}, {u"placement"_s, QVariant::fromValue(&placement)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { say(component.errorString()); return false; }
+    window->create();
+    launcher.setWindow(window);
+    frame.setWindow(window);
+    placement.setWindow(window);
+    showOffScreen(window);
+    bool ok = true;
+    const auto check = [&](bool condition, const char* reason) {
+        ok = condition && ok;
+        if (!condition) qWarning("type strip scroll regression: %s", reason);
+    };
+    launcher.setScope(Launcher::Files);
+    for (int i = 0; i < types.size(); ++i)
+        launcher.toggleFileType(i);
+    settle(window);
+    auto* strip = visualNamed(window->contentItem(), u"searchTypeStrip"_s);
+    check(strip && strip->property("shown").toBool() && strip->property("scrolls").toBool()
+            && launcher.selectedFileTypes().size() == types.size(),
+        "the strip does not scroll with every kind chosen");
+    if (!strip) return false;
+    const auto chipOf = [&](int type) { return visualNamed(window->contentItem(), u"searchTypeChip%1"_s.arg(type)); };
+    const auto areaOf = [](QQuickItem* chip) { return visualNamed(chip, u"searchTypeChipArea"_s); };
+    // Each kind's chip: shown whole and clickable, or cut off, hidden and
+    // not; enabled either way, as wide wherever it is.
+    QList<qreal> widths;
+    const auto agree = [&](const char* where) {
+        int shown = 0;
+        int cut = 0;
+        QList<qreal> now;
+        for (int type = 0; type < types.size(); ++type) {
+            QQuickItem* chip = chipOf(type);
+            QQuickItem* area = chip ? areaOf(chip) : nullptr;
+            if (!chip || !area) { check(false, "a kind's chip or its MouseArea is missing"); return; }
+            const bool whole = chip->property("whole").toBool();
+            (whole ? shown : cut) += 1;
+            now.append(chip->width());
+            // MouseArea.enabled is its own (mouse events only), not Item's isEnabled().
+            const bool clickable = area->property("enabled").toBool();
+            if (!chip->isEnabled() || clickable != whole || (chip->opacity() > 0.5) != whole) {
+                qWarning("type strip scroll regression: %s: chip %d whole %d enabled %d clickable %d opacity %.2f", where, type,
+                    whole, chip->isEnabled(), clickable, chip->opacity());
+                ok = false;
+            }
+        }
+        check(shown > 1 && cut > 0, "the strip does not show some chips whole and cut others off");
+        check(widths.isEmpty() || widths == now, "a chip's width changed with where it is");
+        widths = now;
+    };
+    agree("at the start");
+    check(saveGrab(window, output.filePath(u"type-strip-start.png"_s)), "the window did not render");
+    // Scrolled to the end, as Ctrl+Tab past the last chip shows it: the first ones cut off now.
+    QQmlExpression toEnd(qmlContext(strip), strip, u"scrollTo(lastFirst(), false)"_s);
+    toEnd.evaluate();
+    check(!toEnd.hasError(), "the strip could not be scrolled");
+    settle(window);
+    check(strip->property("firstChip").toInt() > 0 && !chipOf(0)->property("whole").toBool()
+            && chipOf(types.size() - 1)->property("whole").toBool(),
+        "the strip did not scroll to its last chip");
+    agree("at the end");
+    check(saveGrab(window, output.filePath(u"type-strip-end.png"_s)), "the window did not render");
+    // A whole chip still takes its click: the last kind off.
+    QQuickItem* last = chipOf(types.size() - 1);
+    const QPointF at = last->mapToScene(QPointF(last->width() / 2, last->height() / 2));
+    for (const auto& [type, buttons] : {std::pair {QEvent::MouseButtonPress, Qt::MouseButtons(Qt::LeftButton)},
+             {QEvent::MouseButtonRelease, Qt::MouseButtons()}}) {
+        QMouseEvent event(type, at, window->mapToGlobal(at), Qt::LeftButton, buttons, {});
+        QCoreApplication::sendEvent(window, &event);
+    }
+    settle(window);
+    check(!launcher.selectedFileTypes().contains(int(types.size() - 1)) && launcher.selectedFileTypes().size() == types.size() - 1,
+        "a click on a whole chip did not take its kind off");
+    check(loops == 0, "a binding loop while the chips scroll");
+    window->hide();
+    say(u"type strip scroll: cut-off chips hidden and not clickable, enabled and as wide (%1)"_s.arg(SystemTheme::uiStyle()));
     return ok;
 }
 
@@ -9212,6 +10251,87 @@ bool checkNumberColumn(QQmlEngine* qmlEngine, const QDir& output, int width)
         }
         launcher.setScope(Launcher::Folders);
         query(u"编号"_s);
+    }
+    // 字母直达 with number keys off: passive preview follows numberHints ("always" | "held" | "off"),
+    // stays distinct from armed mode (no keycap, editable search box), and pops into accent keycaps on tap.
+    {
+        auto* hints = visualNamed(window->contentItem(), u"launcherNumberHints"_s);
+        auto* bar = window->property("searchBar").value<QObject*>();
+        check(hints && bar, "launcher numberHints or searchBar missing");
+        if (hints && bar) {
+            launcher.setResultOptions(KindOrder::FilesFirst, true, false, false, u"off"_s);
+            launcher.setNumberHints(u"always"_s);
+            launcher.setLetterJump(true, u"auto"_s, u"ASDFGHJKLQWERTYUIOPZXCVBNM"_s);
+            settle(window, 2);
+            auto* row0 = visualNamed(window->contentItem(), u"resultRow-0"_s);
+            auto* row1 = visualNamed(window->contentItem(), u"resultRow-1"_s);
+            auto* slot0 = row0 ? visualNamed(row0, u"resultNumberSlot"_s) : nullptr;
+            auto* num0 = row0 ? visualNamed(row0, u"resultNumber"_s) : nullptr;
+            auto* num1 = row1 ? visualNamed(row1, u"resultNumber"_s) : nullptr;
+            auto* cap0 = slot0 ? visualNamed(slot0, u"hintKeyCap"_s) : nullptr;
+            auto* row0Icon = row0 ? visualNamed(row0, u"resultIcon"_s) : nullptr;
+            auto* tip0 = row0 ? row0->findChild<QObject*>(u"resultRowTip"_s) : nullptr;
+            check(slot0 && num0 && num1 && cap0 && row0Icon && tip0,
+                "letter preview row slot/cap/tip missing");
+            if (auto* hl = view->property("highlightItem").value<QQuickItem*>())
+                check(row0 && row0->z() > hl->z(), "result delegate fell behind ListView highlightItem");
+            if (slot0 && num0 && num1 && cap0 && row0Icon && tip0) {
+                check(slot0->isVisible() && slot0->opacity() > 0.99
+                        && num0->property("text").toString() == u"A"
+                        && num1->property("text").toString() == u"S"
+                        && !cap0->isVisible()
+                        && !bar->property("keysOnly").toBool(),
+                    "passive letter preview shows calm letters without arming search box");
+                const QPointF at = slot0->mapToScene(QPointF(slot0->width() / 2, slot0->height() / 2));
+                QMouseEvent move(QEvent::MouseMove, at, window->mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &move);
+                settle(window);
+                check(tip0->property("target").value<QObject*>() == slot0
+                        && tip0->property("shortcut").toString().contains(u"Ctrl"_s)
+                        && tip0->property("shortcut").toString().contains(u"A"_s),
+                    "hovering passive letter explains how to tap jump key then letter");
+                QMouseEvent away(QEvent::MouseMove, QPointF(window->width() - 4, 4),
+                    window->mapToGlobal(QPointF(window->width() - 4, 4)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &away);
+                settle(window);
+                check(saveGrab(window, output.filePath(u"number-column-letter-preview.png"_s)),
+                    "passive letter preview did not render");
+
+                // Arm letter jump: accent keycaps appear, search box becomes read-only, letter opens row.
+                hints->setProperty("jumping", true);
+                settle(window, 2);
+                check(cap0->isVisible() && bar->property("keysOnly").toBool()
+                        && num0->property("text").toString() == u"A",
+                    "arming letter jump switches passive letters into accent keycaps");
+                check(saveGrab(window, output.filePath(u"number-column-letter-armed.png"_s)),
+                    "armed letter jump did not render");
+                opened.clear();
+                const QString expectedD = launcher.results()->at(2)->path;
+                QMetaObject::invokeMethod(bar, "focusAtEnd");
+                QKeyEvent pressD(QEvent::KeyPress, Qt::Key_D, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &pressD);
+                settle(window, 2);
+                check(opened == expectedD && !hints->property("jumping").toBool()
+                        && !cap0->isVisible() && num0->property("text").toString() == u"A",
+                    "pressing D while armed opens row 3 and returns to calm passive preview");
+
+                // With numberHints = off: passive letters hide, gutter stays reserved, arming still shows keycaps.
+                launcher.setNumberHints(u"off"_s);
+                settle(window, 2);
+                check(!slot0->isVisible() && row0Icon->x() == iconX,
+                    "numberHints=off hides passive letters while keeping letter-jump gutter");
+                hints->setProperty("jumping", true);
+                settle(window, 2);
+                check(slot0->isVisible() && cap0->isVisible() && num0->property("text").toString() == u"A",
+                    "arming letter jump still shows accent keycaps when numberHints=off");
+                hints->setProperty("jumping", false);
+                settle(window);
+            }
+            launcher.setLetterJump(false, u"auto"_s, u"ASDFGHJKLQWERTYUIOPZXCVBNM"_s);
+            launcher.setNumberHints(u"always"_s);
+            launcher.setResultOptions(KindOrder::FilesFirst, true, false, false, u"alt"_s);
+            settle(window, 2);
+        }
     }
     launcher.setMaxRows(5);
     query(u"编号_0"_s);
@@ -10258,10 +11378,20 @@ int runResults(const QStringList& args)
         return checkClipboardInteractions(&engine, out, {}, true) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--clipboard-file"_s))
         return checkClipboardFilePreview(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--clipboard-pin-files"_s))
+        return checkClipboardPinFiles(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--clipboard-paste-plain"_s))
+        return checkClipboardPastePlain(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--clipboard-picture-view"_s))
         return checkClipboardPictureView(&engine, out, valueAfter(args, u"--gallery-image")) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--clipboard-select"_s))
         return checkClipboardTextSelection(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--clipboard-hover-copy"_s))
+        return checkClipboardHoverCopy(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--content-kinds"_s))
+        return checkContentKinds(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--type-strip-scroll"_s))
+        return checkTypeStripScroll(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--clipboard-crashed-reading"_s)) // its warning when it gives up is expected
         return checkClipboardCrashedReading() ? 0 : 4;
     if (const qsizetype at = args.indexOf(u"--terminal-launch"_s); at >= 0 && at + 2 < args.size()) {
@@ -13513,6 +14643,7 @@ int runRuntime(const QStringList& args)
     settings.dialogBarPlace = u"below"_s;
     settings.dialogAutoJump = false;
     settings.explorerMenu = false;
+    settings.explorerPinPicture = false;
     settings.uriProtocol = false;
     settings.explorerTyping = false;
     settings.opusTyping = false;
@@ -13663,7 +14794,20 @@ int runRuntime(const QStringList& args)
         }
         settings.pastePlainHotkey = QString(kPastePlainProbeChord);
     }
+    const bool activationPaste = args.contains(u"--activation-paste-check"_s);
+    if (activationPaste) { // GitHub #432: the clipboard's own chord, nobody else's
+        if (!activationPasteChordFree()) {
+            qWarning("activation paste: %s is someone else's already", qPrintable(QString(kActivationPasteProbeChord)));
+            return 4;
+        }
+        settings.clipboard = true;
+        settings.clipboardHotkey = QString(kActivationPasteProbeChord);
+    }
     settings.save(); // prepared profiles normally skip onboarding
+    if (activationPaste
+        && !seedActivationPastePicture(Settings::dataDir() + u"/clipboard"_s,
+            std::clamp(valueAfter(args, u"--picture-width", u"240"_s).toInt(), 16, 6000)))
+        return 4;
     if (!scopeLeft.isEmpty()) {
         QSettings state(Settings::dataDir() + u"/state.ini"_s, QSettings::IniFormat);
         state.setValue(u"Search/Scope"_s, scopeLeft);
@@ -13714,15 +14858,20 @@ int runRuntime(const QStringList& args)
             report.insert(u"error"_s, QString::fromUtf8(error.what()));
             say(u"onboarding probe aborted: "_s + QString::fromUtf8(error.what()));
         }
-        int expectedWarnings = 0;
-        if (onboardingAction == u"offline" || onboardingAction == u"retry") {
-            QFile log(g_logPath);
-            if (log.open(QIODevice::ReadOnly))
-                expectedWarnings = static_cast<int>(log.readAll().count("WARNING: Plugin library: no list from http://127.0.0.1:1/unreachable.json"));
-        }
+        QByteArray logged;
+        if (QFile log(g_logPath); log.open(QIODevice::ReadOnly))
+            logged = log.readAll();
+        // The probe's own: showOffScreen gives the guide, shown already, new
+        // window flags, and Qt a new native handle for them (WindowFrame says so).
+        qsizetype expectedWarnings = logged.count("WARNING: Window frame: the window has a new native handle (onboardingWindow), hooked again");
+        if (onboardingAction == u"offline" || onboardingAction == u"retry")
+            expectedWarnings += logged.count("WARNING: Plugin library: no list from http://127.0.0.1:1/unreachable.json");
+        // The screenshot's copy made unreadable on purpose (verify-onboarding.ps1, included-broken): the library instead.
+        if (args.contains(u"--copy-fallback"_s))
+            expectedWarnings += logged.count("WARNING: Onboarding: screenshot not installed from");
         report.insert(u"warnings"_s, g_warnings);
-        report.insert(u"expected_network_diagnostics"_s, expectedWarnings);
-        const int unexpected = std::max(0, g_warnings - expectedWarnings);
+        report.insert(u"expected_warnings"_s, static_cast<int>(expectedWarnings));
+        const int unexpected = std::max(0, g_warnings - static_cast<int>(expectedWarnings));
         report.insert(u"unexpected_warnings"_s, unexpected);
         report.insert(u"passed"_s, passed);
         QFile json(out.filePath(u"onboarding.json"_s));
@@ -13758,6 +14907,7 @@ int runRuntime(const QStringList& args)
             if ((args.contains(u"--idle-open-check"_s) || args.contains(u"--foreground-use-check"_s) || args.contains(u"--live"_s)
                     || args.contains(u"--clipboard-animation-check"_s) || args.contains(u"--settings-motion-check"_s)
                     || args.contains(u"--search-shadow-check"_s) || args.contains(u"--paste-plain-check"_s)
+                    || args.contains(u"--activation-paste-check"_s)
                     || args.contains(u"--launcher-settings-check"_s) || args.contains(u"--launcher-open-check"_s))
                 && profile.fileName().startsWith(u"WinShun-preview-")
                 && QDir::cleanPath(profile.absolutePath()).compare(QDir::cleanPath(QDir::tempPath()), Qt::CaseInsensitive) == 0)
@@ -13828,6 +14978,8 @@ int runRuntime(const QStringList& args)
             return checkSearchShadow(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--paste-plain-check"_s))
             return checkPastePlain(app, args, out) ? 0 : 4; // its profile likewise
+        if (args.contains(u"--activation-paste-check"_s))
+            return checkActivationPaste(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--settings-reopen-check"_s))
             return probeSettingsReopen(app, args, out, report) ? 0 : 4;
         if (args.contains(u"--settings-motion-check"_s))

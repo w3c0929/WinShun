@@ -21,9 +21,9 @@ set(capture_qml)
 foreach(name IN LISTS shared_qml)
     list(APPEND capture_qml "${app_dir}/qml/${name}")
 endforeach()
-foreach(name IN ITEMS CaptureOverlay AnnotateToolbar AnnotateStylePanel AnnotateSmartHint AnnotateLayer AnnotateObjects
+foreach(name IN ITEMS CaptureOverlay AnnotateToolbar AnnotateToolIcon AnnotateStylePanel AnnotateSmartHint AnnotateLayer AnnotateObjects
                       EditWindow OcrPanel OcrBubble LongCapturePanel RecordingPanel RecordingButton RecordingOptions CaptureOptions CaptureSettingsWindow CaptureSaveButton
-                      SettingsSearch CaptureKeyHints CaptureKeyList CaptureSizeBox PresenterOverlay PresenterToolbar)
+                      SettingsSearch CaptureKeyHints CaptureKeyList CaptureSizeBox PresenterOverlay PresenterToolbar PinGroupPrompt)
     list(APPEND capture_qml "${CMAKE_CURRENT_SOURCE_DIR}/qml/${name}.qml")
 endforeach()
 set_source_files_properties("${app_dir}/qml/Theme.qml" PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
@@ -126,6 +126,8 @@ qt_add_lupdate(WinShunCaptureApp LUPDATE_TARGET capture_lupdate
             ${PROJECT_SOURCE_DIR}/src/capture/AnnotationStyles.cpp
             ${PROJECT_SOURCE_DIR}/src/capture/CaptureKeys.h
             ${PROJECT_SOURCE_DIR}/src/capture/CountdownWindow.cpp
+            ${PROJECT_SOURCE_DIR}/src/capture/PictureWrite.cpp
+            ${PROJECT_SOURCE_DIR}/src/capture/PinGroups.cpp
             ${PROJECT_SOURCE_DIR}/src/capture/PinKeyCard.cpp
             ${PROJECT_SOURCE_DIR}/src/capture/Recording.cpp
             ${PROJECT_SOURCE_DIR}/src/capture/RecordingWorker.cpp

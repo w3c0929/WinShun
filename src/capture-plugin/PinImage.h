@@ -37,6 +37,9 @@ struct ClipboardPicture {
     ClipboardStatus status = ClipboardStatus::Empty;
     QImage image;
     QString text; // Text: what was copied, at most kPinTextChars
+    QString sourcePath; // Image from CF_HDROP: original file path (#427)
+    bool downscaled = false; // true when a >60 MP source file was shrunk while decoding
+    quint32 clipboardSequence = 0; // GetClipboardSequenceNumber() observed under the lock (#446)
 };
 
 // The most of copied words a pin keeps to copy again (UTF-16 units); the
@@ -69,6 +72,13 @@ RenderedText renderTextWithLines(const QString& text, int dpi, const TextLook& l
 // Snapshot on invocation; decoding must not move a pin to wherever the mouse
 // happens to be when a large picture finishes loading. Coordinates are physical.
 std::optional<Placement> cursorPlacement();
+// Where the `slot`-th of several pictures pinned at once goes (0: the
+// first, at the cursor): each kCascadeStep logical pixels on from the one
+// before, down and right, or up or left where the work area has more room
+// that way, so an edge of each shows from under the next. Kept within the
+// work area (on the same monitor).
+inline constexpr int kCascadeStep = 32;
+Placement cascaded(Placement placement, int slot);
 // Its own pixels, the whole picture's middle at the cursor: the pin fits a
 // picture larger than the screen (PinManager::pinFitted), it is not stored
 // fitted.
@@ -77,6 +87,6 @@ Prepared prepare(QImage image, const Placement& placement);
 // Worker-thread operations: copy clipboard bytes/paths under a short lock,
 // release it before decoding, then use the same WIC reader as file pinning.
 ClipboardPicture readClipboard(const LastCapture& last);
-QImage readFile(const QString& path);
+QImage readFile(const QString& path, bool* downscaled = nullptr);
 
 } // namespace ws::captureplugin::pinimage

@@ -326,7 +326,7 @@ Column {
         group: 0
         content: Component {
             GroupPage {
-                recordingHotkey: hotkeyRecorder.recording || ocrHotkeyRow.recording || translateHotkeyRow.recording
+                recordingHotkey: hotkeyRecorder.recording || pinCaptureHotkeyRow.recording || ocrHotkeyRow.recording || translateHotkeyRow.recording
 
                 SettingsSection {
                     page: 0
@@ -360,6 +360,16 @@ Column {
                             font.pixelSize: Theme.fontCaption
                             wrapMode: Text.Wrap
                         }
+                    }
+
+                    HotkeyRow {
+                        id: pinCaptureHotkeyRow
+                        objectName: "capturePinCaptureHotkey"
+                        title: qsTr("截图并直接贴图")
+                        description: qsTr("按下后直接拖选区域或单击窗口，松开鼠标就贴到原位置，没有截图工具条。Esc 或右键取消；普通截图选好区域后按它也能直接贴图")
+                        hotkey: card.editor.capturePinCaptureHotkey
+                        error: card.editor.capturePinCaptureHotkeyError
+                        onRecorded: (hotkey) => card.editor.capturePinCaptureHotkey = hotkey
                     }
 
                     SettingRow {
@@ -763,7 +773,7 @@ Column {
         group: 4
         content: Component {
             GroupPage {
-                recordingHotkey: lastPinHotkeyRow.recording || pinsHotkeyRow.recording || restoreHotkeyRow.recording || presentHotkeyRow.recording
+                recordingHotkey: lastPinHotkeyRow.recording || pinsHotkeyRow.recording || pinGroupHotkeyRow.recording || restoreHotkeyRow.recording || presentHotkeyRow.recording
 
                 SettingsSection {
                     page: 0
@@ -791,6 +801,183 @@ Column {
                         title: qsTr("贴图后自动识别文字")
                         description: qsTr("贴图出现后在后台识别图里的文字，鼠标移到文字上可直接拖选，按复制键复制选中文字；拖空白处或按住 Alt 仍可移动贴图。关闭后仍可按选取文字键或从右键菜单开启")
                     }
+
+                    SettingRow { // #446: recall previous captures/pins on repeated pin hotkey presses
+                        title: qsTr("连按贴图键贴出历史记录")
+                        description: qsTr("剪贴板没变化时，继续按贴图快捷键按顺序把之前截过或关掉的图贴回来，并保留标注；选“关闭”则只贴当前剪贴板或最近一张")
+
+                        ScopeTabs {
+                            objectName: "capturePinHistoryTabs"
+                            readonly property var counts: [0, 10, 20, 50]
+                            labels: counts.map(n => n === 0 ? qsTr("关闭", "pin history") : qsTr("%1 张").arg(n))
+                            current: counts.indexOf(card.editor.capturePinHistoryCount)
+                            onActivated: (index) => card.editor.capturePinHistoryCount = counts[index]
+                        }
+                    }
+
+                    SettingRow { // #446: order for recalling pin history
+                        enabled: card.editor.capturePinHistoryCount > 0
+                        title: qsTr("历史贴图恢复顺序")
+                        description: qsTr("最近关闭优先：优先找回刚关掉的贴图和最新截图；按截图时间：严格按截图先后依次贴出")
+
+                        ScopeTabs {
+                            objectName: "capturePinHistoryOrderTabs"
+                            readonly property var values: ["closed", "created"]
+                            labels: [qsTr("最近关闭优先"), qsTr("按截图时间")]
+                            current: values.indexOf(card.editor.capturePinHistoryOrder)
+                            onActivated: (index) => card.editor.capturePinHistoryOrder = values[index]
+                        }
+                    }
+                }
+
+                SettingsSection { // #451: pin groups by work context
+                    page: 0
+                    tab: 4
+                    width: parent.width
+                    title: qsTr("贴图分组")
+                    glyph: "" // Folder
+
+                    SettingRow {
+                        id: pinGroupsRow
+                        property string groupError: ""
+                        title: qsTr("分组管理")
+                        description: qsTr("为不同工作场景建立贴图分组，切换分组时只显示当前组的贴图；删除分组后，里面的贴图会安全回到“默认”分组。也可从贴图右键菜单、托盘菜单或 cap 搜索里操作")
+
+                        InputBox {
+                            id: newPinGroupInput
+                            objectName: "capturePinGroupInput"
+                            dpr: card.dpr
+                            implicitWidth: 168
+                            maximumLength: 32
+                            placeholder: qsTr("新分组名称")
+                            error: pinGroupsRow.groupError.length > 0
+                            onTextChanged: if (pinGroupsRow.groupError.length > 0) pinGroupsRow.groupError = ""
+                            onAccepted: {
+                                const err = card.editor.addPinGroup(text)
+                                pinGroupsRow.groupError = err
+                                if (err.length === 0)
+                                    text = ""
+                            }
+                        }
+                        FlatButton {
+                            objectName: "capturePinGroupAddButton"
+                            dpr: card.dpr
+                            text: qsTr("新建")
+                            enabled: newPinGroupInput.text.trim().length > 0
+                            onClicked: {
+                                const err = card.editor.addPinGroup(newPinGroupInput.text)
+                                pinGroupsRow.groupError = err
+                                if (err.length === 0)
+                                    newPinGroupInput.text = ""
+                            }
+                        }
+
+                        body: [
+                            Text {
+                                width: parent ? parent.width : 0
+                                visible: pinGroupsRow.groupError.length > 0
+                                text: pinGroupsRow.groupError
+                                color: Theme.danger
+                                font.pixelSize: Theme.fontCaption
+                                wrapMode: Text.WordWrap
+                            },
+                            Flow {
+                                width: parent ? parent.width : 0
+                                spacing: 8
+
+                                Repeater {
+                                    model: card.editor.capturePinGroups
+
+                                    Rectangle {
+                                        id: groupChip
+                                        required property var modelData
+                                        readonly property bool active: modelData.active === true
+                                        readonly property bool builtin: modelData.builtin === true
+                                        height: 28
+                                        width: chipRow.implicitWidth + 16
+                                        radius: Theme.controlRadius
+                                        color: active ? Theme.accentFill : chipArea.containsMouse ? Theme.hover : Theme.card
+                                        border.width: active ? 0 : Theme.edge(card.dpr)
+                                        border.color: Theme.cardBorder
+
+                                        MouseArea {
+                                            id: chipArea
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: card.editor.selectPinGroup(groupChip.modelData.id)
+                                        }
+
+                                        Row {
+                                            id: chipRow
+                                            anchors.centerIn: parent
+                                            spacing: 6
+
+                                            Text {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: groupChip.modelData.name
+                                                color: groupChip.active ? Theme.accentText : Theme.text
+                                                font.pixelSize: Theme.fontCaption
+                                                font.weight: groupChip.active ? Font.DemiBold : Font.Normal
+                                            }
+                                            Item {
+                                                visible: !groupChip.builtin
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                width: 16
+                                                height: 16
+
+                                                Glyph {
+                                                    anchors.centerIn: parent
+                                                    glyph: "" // Cancel
+                                                    size: 10
+                                                    color: groupChip.active ? Theme.accentText
+                                                         : removeArea.containsMouse ? Theme.danger : Theme.subtext
+                                                }
+                                                MouseArea {
+                                                    id: removeArea
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: (mouse) => {
+                                                        mouse.accepted = true
+                                                        card.editor.removePinGroup(groupChip.modelData.id)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    id: allGroupsChip
+                                    visible: card.editor.capturePinGroups.length > 1
+                                    readonly property bool active: card.editor.capturePinGroupsShowAll
+                                    height: 28
+                                    width: allChipText.implicitWidth + 20
+                                    radius: Theme.controlRadius
+                                    color: active ? Theme.accentFill : allChipArea.containsMouse ? Theme.hover : Theme.card
+                                    border.width: active ? 0 : Theme.edge(card.dpr)
+                                    border.color: Theme.cardBorder
+
+                                    Text {
+                                        id: allChipText
+                                        anchors.centerIn: parent
+                                        text: qsTr("显示全部")
+                                        color: allGroupsChip.active ? Theme.accentText : Theme.text
+                                        font.pixelSize: Theme.fontCaption
+                                        font.weight: allGroupsChip.active ? Font.DemiBold : Font.Normal
+                                    }
+                                    MouseArea {
+                                        id: allChipArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: card.editor.selectPinGroup("*")
+                                    }
+                                }
+                            }
+                        ]
+                    }
                 }
 
                 SettingsSection {
@@ -804,7 +991,7 @@ Column {
                         id: lastPinHotkeyRow
                         objectName: "capturePinImageHotkey"
                         title: qsTr("贴图的快捷键")
-                        description: qsTr("优先贴剪贴板里的图片；没有新图片时，把最近截图贴回原位置并保留标注。不设时仍可从托盘菜单操作")
+                        description: qsTr("优先贴剪贴板里的图片或文字；连续按下会按顺序贴出之前的历史截图与贴图（并保留标注）。不设时仍可从托盘菜单操作")
                         hotkey: card.editor.captureLastPinHotkey
                         error: card.editor.captureLastPinHotkeyError
                         onRecorded: (hotkey) => card.editor.captureLastPinHotkey = hotkey
@@ -816,6 +1003,15 @@ Column {
                         hotkey: card.editor.capturePinsHotkey
                         error: card.editor.capturePinsHotkeyError
                         onRecorded: (hotkey) => card.editor.capturePinsHotkey = hotkey
+                    }
+                    HotkeyRow { // #451: cycle pin groups
+                        id: pinGroupHotkeyRow
+                        objectName: "capturePinGroupHotkey"
+                        title: qsTr("切换贴图分组的快捷键")
+                        description: qsTr("按一下依次切换贴图分组，只显示当前分组的贴图；不设时仍可从贴图右键菜单、托盘菜单或 cap 搜索切换")
+                        hotkey: card.editor.capturePinGroupHotkey
+                        error: card.editor.capturePinGroupHotkeyError
+                        onRecorded: (hotkey) => card.editor.capturePinGroupHotkey = hotkey
                     }
                     HotkeyRow {
                         id: restoreHotkeyRow

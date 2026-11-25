@@ -71,17 +71,7 @@ Blender 的独立文件窗口是自绘 `GHOST_WindowClass`，不能套用 Win32 
 
 通信回归可用 Blender 自带 Python 运行 `tests/blender/test_transport.py -v`，覆盖连续 Unicode 请求、延迟读取及非法帧后继续服务；不需要 Blender 界面或用户文件。
 
-### 2026-10-30 本地结果
-
-- Release 构建成功。相关 CTest 共 8 个通过，含 CAD 进程隔离正/反例、对话框导航、Shell 启动、命令图标，以及 GPU/软件两种搜索栏可见性。Blender、真实 Inno 和文件粘贴实窗用例需要显式夹具；普通回归不冒用用户窗口。
-- 真实 Windows 命名管道 3 项回归通过，含 30 次连续中文请求与延迟读取。
-- Blender 5.2 英文实例通过扩展启停、中文路径、原名保留、文件选择与打开、另存为不自动确认；完整 `App` 搜索/选择流程也通过。中文实例实际显示深色搜索栏和结果列表，独立观察器确认选择变化，QML 运行告警为 0。快捷键路由沿用现有实现，此轮未把模拟 Ctrl+G 按键当成实测证据。
-- ZIP 通过 Blender 官方构建及校验，并在私有配置、离线后台实例中通过官方安装器安装、启用、建立通信端点和干净停用。
-- AutoCAD 未安装，尚无实机通过结论；没有关闭 #143 或发布新版本。
-
-本地证据保存在未提交的 `build/issue143`：`ctest-final.txt`、`visibility-final.txt`、`transport-tests.txt`、`acceptance-en`、`final-ui-zh/runtime/runtime.json` 与 `dialog-with-search.png`、`package-verification/stdout.txt`。
-
-单独的 `tst_filedialog` 默认跳过 Blender 和真实 Inno 窗口用例；只有提供隔离实例 PID 和观察器文件才执行。未通过的探索记录保留在忽略目录 `build/issue143`，不计为当前实现的通过证据。
+单独的 `tst_filedialog` 默认跳过 Blender 和真实 Inno 窗口用例，仅在提供隔离实例 PID 和观察器文件时执行。
 
 ## 程序自己画的选文件窗口：用户规则（#272，2026-11-12）
 
@@ -139,3 +129,71 @@ Bandizip 7.36 实测（本机已装；7-Zip、WinRAR 本机没有，也没有为
 - `tst_filedialog`、`tst_dialognav` 各加一项：界面端识别为选文件夹窗口、当前位置取自框里、跳转、不给文件名也不确认、认过之后保持；助手对不存在的文件夹和相对路径不动手。
 - 真实主程序：`./tools/verify-bandizip-dialog.ps1 -BuildDir build/dialog-pathbox -OutputDir build/dialog-pathbox/bandizip`。真实 `App`、`DialogJump`、`DialogBar` 和搜索引擎对着真实 Bandizip 窗口：搜索框出现在窗口下方并拿到焦点，搜到文件夹，选中后窗口的框里是该文件夹，窗口没有被关闭；随后取消窗口，确认什么都没解压。2026-11-13 通过，QML 运行告警 0。
 - **没有实机结果的部分**：7-Zip 和 WinRAR 只有替身窗口的结果（依据分别是 7-Zip 源码和 Listary 插件源码）；管理员权限下的 Bandizip 没有实测（助手一侧只有替身窗口）。这两个软件的“复制到/移动到”等其他窗口没有处理。
+
+## Tessoa 自己的打开、另存为窗口（2026-11-24）
+
+用户反馈：文件管理器用 Tessoa，WPS、CAD 另存为能自动转到 Tessoa 当前的文件夹；微信另存为弹出的却是 Tessoa 自己的窗口（下面有“改用系统窗口”），停在上次保存的文件夹，点“改用系统窗口”后才转过去。
+
+原因在 Tessoa 0.31 起的实验功能“接管打开 / 另存为窗口”（Tessoa 设置的安装页，只有安装版有）。打开后它在 HKCU 下把系统的 FileSaveDialog、FileOpenDialog 换成自己的 DLL（`HKCU\Software\Classes\CLSID\{C0B4E2F3-BA21-4773-8DBA-335EC946EB8B}` 与 `{DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7}` 的 `InprocServer32` 指向 `%LOCALAPPDATA%\tessoa-file-dialog\tessoa-dialog-x64-*.dll`；32 位程序的在 `WOW6432Node\CLSID` 下，指向 x86 版）。用这两个系统接口的程序（微信等）弹出的就是 Tessoa 的窗口；WPS、CAD 用自己的窗口，没被接管，仍是 Win顺 认识的窗口。它另有“不接管的程序”名单和窗口里的“改用系统窗口”按钮。
+
+Tessoa 0.32.0 实测（本机临时装上并打开接管，测完关掉、核对注册表已还原）：
+
+- 窗口属于 tessoa.exe，类名 `Window Class`（winit），标题是调用方给的对话框标题，owner 是调用方的窗口（跨进程）。全部自绘：没有子控件，也没有 UI Automation。
+- Tessoa 给其他程序的[接口](https://github.com/Tessoa/Listary.FileAppPlugin.Tessoa/blob/main/docs/launcher-integration.zh-CN.md)不包括这个窗口：查询管道 `query-cwd` 对它回空，`query-tabs` 只回 `api 2`；`--open-window=<文件夹> --in-tab=<这个窗口>` 退出码为 0，文件夹却开在 Tessoa 主窗口的新标签里，这个窗口不动。
+- 它的文件名框不接受文件夹（提示“文件名与现有文件夹重名”），接受文件的完整路径；它的地址栏（点路径条，输入，回车）能转到文件夹。
+
+所以这个窗口 Win顺 转不过去，是 Tessoa 一侧的限制。Win顺 的做法（`filedialog::isTessoaPicker`：tessoa.exe 的顶层窗口，owner 在别的进程；不属于任何 `kind`）：
+
+- 不注册 `Ctrl+G`（按键留给 Tessoa），不自动转，管理员窗口的助手也不试。
+- 窗口下的搜索框照常出现，只复制路径。提示语：“Tessoa 的窗口不能自动跳转：搜索后复制路径，或点‘改用系统窗口’”；复制后改为“路径已复制：文件夹粘贴到 Tessoa 的地址栏，文件粘贴到文件名框”。
+- 每次运行、每个调用程序记一行日志（开了 `Ctrl+G` 或自动跳转时为警告级，默认就写进 `WinShun.log`）和一条诊断记录 `tessoa-picker`（调用程序、是否开了跳转、搜索框是否显示）。
+- 开了 `Ctrl+G` 或自动跳转，而这个窗口下又没有搜索框（关了搜索框，或把 tessoa.exe 加进了“不在这些程序的对话框下显示”）时：窗口在前台 1 秒后发一次通知，说明原因和办法，以后不再发（`Launcher/TessoaPickerHinted`）。
+
+用户的办法：在 Tessoa 的窗口里点“改用系统窗口”；或在 Tessoa 设置的安装页把这个程序（新版微信 `Weixin.exe`，旧版 `WeChat.exe`）加入“不接管的程序”；或关掉 Tessoa 的接管。之后弹出的是系统窗口，`Ctrl+G` 和自动跳转照常可用。
+
+验证：
+
+- `tst_filedialog` 的 `tessoaPicker`：测试副本改名 tessoa.exe，建一个隐藏窗口，owner 是测试进程的窗口：认出，`kind` 为 None，`goTo`、`setFileName` 不动手；没有 owner、owner 在 tessoa.exe 自己进程里、换成别的程序名、本进程里的同类窗口、空句柄，都不认。
+- 真实主程序（隔离 `--profile`，`Ctrl+G` 与自动跳转都开）对真实 Tessoa 0.32.0 窗口（WinForms 另存为被接管后弹出），2026-11-24：
+  - 搜索框开着：窗口在前台时搜索框出现在它正下方，显示 Tessoa 的提示语，窗口没被移动或改尺寸；此时 `Ctrl+G` 仍可被别的程序注册（Win顺 没占）；`WinShun.log` 默认就有一行警告，诊断记录 `tessoa-picker` 为 `bar: true, following: true`。
+  - 搜索框关着：同样的日志与记录（`bar: false`），1 秒后系统通知“Tessoa 的窗口不能自动跳转”，正文带上调用程序名，完整显示（通知正文只有约四行，原先较长的一版被截断，已压短），`TessoaPickerHinted` 写为 true。
+  - 没实测：选中结果后的“路径已复制”提示（复制会进 Windows 剪贴板历史；只复制的逻辑与管理员窗口共用）；没有托盘图标时不发通知、不记为已提示（按代码）。
+
+## WPS 自己的打开、另存为窗口（2026-11-24 加固）
+
+WPS 文字、表格、演示和 PDF（`wps.exe`、`et.exe`、`wpp.exe`、`wpspdf.exe`、`wpsoffice.exe`）的打开、另存为窗口是 WPS 用 Qt 自己画的（`KcfdFileDialog`），没有系统对话框的地址栏和控件 ID，只能通过 UI Automation 认（`filedialog::kingsoft`）。地址栏平时是一串路径按钮，点它后面的空白（`KcfdLocSpaceButton`）才换成输入框（`KcfdLocNavigationLineEdit`），在里面回车就过去，和资源管理器一样。Win顺 的跳转就是这样做的：把文件夹写进这个输入框，确认焦点在它上面才投回车，以路径按钮重新出现为跳转完成；不读 WPS 的当前文件夹和文件类型。
+
+这次加固（3a1e3e7c）解决了三种“有时自动跳、有时不跳”的情况：
+
+- **第一次打开不跳，之后这个窗口一直不跳**：Qt 的无障碍要等第一次被问到才打开，在那之前窗口只报 `Qt5QWindowIcon` 这类 `Qt*` 类名或空类名。原先等 500 毫秒还没认出就记成“不是选文件窗口”，这个窗口从此不再被认。现在冷启动最多等 1 秒；还没认出就不记结论，500 毫秒后在它仍在前台时再认一次（`DialogJump::probeKingsoft`）。
+- **关掉再打开，第二次不跳**：Qt 的对话框关闭时常常只是隐藏，下次打开还是同一个窗口句柄，而 Win顺 记着“这个窗口已经跳过了”。现在窗口隐藏时（`EVENT_OBJECT_HIDE`）就忘掉它，已跳过、刚从文件管理器回来、已发过的路径一并清掉，再打开按新窗口处理。
+- **偶尔不跳，或差点把文件名框里的名字直接保存**：刚打开时 `SetFocus` 要过一会儿才在 UI Automation 里生效，焦点也可能还在落向文件名框；原先设焦后马上判断，判断落空就放弃。回车总是发给当时有焦点的控件，落在文件名框就等于保存。现在设焦后最多等 250 毫秒，没落上就在窗口仍在前台时再设一次、再等 250 毫秒；写入前后都核对焦点在地址输入框、窗口仍在前台，才投回车。
+
+没变的约束：
+
+- 以管理员身份运行的 WPS 对普通权限的 UI Automation 不可见（UIPI），需要 Win顺 同为管理员。
+- WPS 转不到的文件夹会弹它自己的“输入位置有误”，所以跳之前先确认目标确实是存在的文件夹。
+
+验证：`tst_filedialog` 里没有 WPS 替身窗口（它的识别要真实的 Qt 无障碍树）；这次加固没有留下真实 WPS 的测试记录。本机装有 WPS 12.1，日后改这段时用它实测三种情况：冷启动后第一次打开、关掉再开、刚打开就跳。
+
+## XYplorer 的当前文件夹（2026-11-24 加固）
+
+文件管理器选 XYplorer 时，对话框跳到它当前的文件夹，搜索框的建议里也列出它打开的标签页（`filemanager::Kind::XYplorer`，#23）。正常途径是它的脚本接口：用 `WM_COPYDATA` 发一段脚本，问当前和另一个窗格的标签页（`pathreal()` 把“文档”这类特殊位置换成真实路径），它用 `WM_COPYDATA` 回答。
+
+这次加固（3a1e3e7c）改了这几处：
+
+- **认不出 XYplorer**：原先只认 `XYplorer.exe`，找它时还要求运行库的隐藏窗口 `ThunderRT6Main` 标题正好是“XYplorer”。现在认 `XYplorer*.exe`（Free 版 `XYplorerFree.exe`、`XYplorer64.exe`、便携版改名的 `XYplorerPortable.exe`），排除 `XYcopy.exe` 和 `XY64*.exe` 这类辅助程序。32 位（VB6，27.x）和 64 位（twinBASIC，28.x）的主窗口都是 `ThunderRT6FormDC`，64 位的没有 owner；XYplorer 自己的对话框 owner 是主窗口，不算主窗口。
+- **打开对话框时偶尔读错或读空**：搜索框（`DialogBar`）和自动跳转（`DialogJump`）在两个工作线程里同时问，而 XYplorer 的脚本引擎是单线程的，会被重入。现在 `askXYplorer` 加锁，一次只问一个。
+- **64 位下偶尔没有回答**：回信地址是 Win顺 窗口的句柄，64 位里句柄按有符号数扩展，转成十进制会超出它能接的长度。现在用 `HandleToULong` 截成 32 位再写。
+- **长路径和网络路径被截掉**：标签页路径里的 `?` 表示快速搜索（`C:\Windows?*.exe`），原先先按 `?` 截断，`\\?\D:\…`、`\\?\UNC\…` 这类前缀会被整条截没。现在先去掉前缀，再截 `?`。
+- **脚本不回答时读不到**：Free 版没有脚本接口；XYplorer 开着弹窗时脚本回空；XYplorer 以管理员身份运行时 UIPI 同时挡住 `WM_COPYDATA` 和 `WM_GETTEXT`。现在依次退回：
+  1. 读可见的主地址栏（`ThunderRT6FormDC` › `ThunderRT6PictureBoxDC` › `Edit`）。取最宽的那个，不会误读右边的实时筛选框和隐藏的框；地址栏里只有“桌面”“文档”这类特殊位置名时，换成它的真实文件夹。
+  2. 读主窗口标题（`GetWindowTextW` 读的是系统保存的标题，不发跨进程消息，管理员身份的 XYplorer 也能读）。默认格式是 `<路径> - XYplorer 28.50 - (Academic)`，取最后一个 ` - XYplorer` 之前的部分，路径里含“ - XYplorer”的文件夹也不会读错；把程序名放在前面的格式 `XYplorer 28.50 - <路径>` 也认。“此电脑”这类虚拟位置读不出路径，就不给。
+
+这两种退路只拿得到当前窗格的一个文件夹，没有另一个窗格和后台标签页。
+
+验证：
+
+- `tst_core`：XYplorer 标签页回答里的 `\\?\`、`\\?\UNC\` 和快速搜索；地址栏文字和窗口标题两种格式（版本号、Free 版、路径含“ - ”或“ - XYplorer”、网络路径、虚拟位置、试用版标题）。
+- `tst_shelllaunch` 的 `xyplorerDiscoveryAndFallbacks`：另一个进程里的替身 XYplorer（改名为 `XYplorerFree.exe`，`ThunderRT6Main` 标题不是默认的，主窗口加一个属于它的对话框）依次覆盖三条路：脚本回答当前、另一个窗格和后台标签页，两个线程同时问时回答不串；脚本不答时读宽地址栏，不读较窄的筛选框和隐藏框，“Documents”换成真实的文档文件夹；地址栏也隐藏时读窗口标题。属于主窗口的对话框不被当成主窗口。0.45.0 发布前单独跑过，通过。
+- 没有覆盖：真实 XYplorer（本机装有 32 位版）、管理员身份的 XYplorer。

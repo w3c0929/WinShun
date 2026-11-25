@@ -231,6 +231,10 @@ Type: filesandordirs; Name: "{app}\plugins\winshun.semantic"
 Type: filesandordirs; Name: "{app}\plugins\winshun.translate"
 Type: filesandordirs; Name: "{app}\plugins\winshun.bookmarks"
 Type: filesandordirs; Name: "{app}\plugins\winshun.web"
+; The library plugins' copies that come with Win顺 (the screenshot's, which the
+; first-run guide installs from): this version's only, none of an older one's
+; files left among them.
+Type: filesandordirs; Name: "{app}\library-plugins"
 
 #ifndef TestInstall
 [Icons]
@@ -262,9 +266,11 @@ Filename: "{app}\{#AppExe}"; Parameters: "--take-autostart {code:TakeAutostartAr
 ; new files is slow (the antivirus reads each one: seconds, tens of them at
 ; times), and nothing would show for that long after Finish. Finish then has the running
 ; copy put up its search box, at once (the second start hands it "show"), or,
-; unticked, has it quit (CurStepChanged). Not runhidden: a hidden start would
-; hide the first window it shows later on.
-Filename: "{app}\{#AppExe}"; Parameters: "--background"; Flags: nowait runasoriginaluser
+; unticked, has it quit (CurStepChanged). A first install's welcome guide is made
+; but kept back until that "show" (--setup-page): up at once, after this page,
+; and only once. Not runhidden: a hidden start would hide the first window it
+; shows later on.
+Filename: "{app}\{#AppExe}"; Parameters: "--background{code:SetupPageArgs}"; Flags: nowait runasoriginaluser
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 #endif
 
@@ -1128,6 +1134,16 @@ begin
     Result := '';
 end;
 
+// For [Run]: started while the last page is up, Win顺 keeps a welcome guide
+// still to come until Finish asks for it. A silent install has no such page.
+function SetupPageArgs(Param: String): String;
+begin
+  if WizardSilent() then
+    Result := ''
+  else
+    Result := ' --setup-page';
+end;
+
 // ---- What still holds Win顺's files (GitHub #97) -----------------------------
 // Restart Manager, Windows' own "files in use" check: what still has a file
 // of {app} open once Win顺 and its relays were closed (a relay an AI tool runs
@@ -1763,23 +1779,47 @@ begin
   RemoveDir(Folder);
 end;
 
-// Explorer's right-click "用 Win顺 搜索此处" and "粘贴为文件"
-// (src/app/platform/ShellMenu.cpp), when they run this copy's
-// WinShunSearch.exe: a portable copy's stay.
+// Explorer's right-click verbs (src/app/platform/ShellMenu.cpp), when they
+// run this copy's WinShunSearch.exe: a portable copy's stay.
 procedure RemoveExplorerMenu();
 var
-  Keys: array[0..3] of String;
+  Keys: TArrayOfString;
+  Pictures: TArrayOfString;
+  CascadeKeys: array[0..1] of String;
   Command: String;
+  State: String;
+  Stub: String;
   I: Integer;
 begin
+  Stub := Lowercase(ExpandConstant('{app}\WinShunSearch.exe'));
+  // 贴到屏幕 is on each picture extension (kPinnablePictureExtensions in
+  // src/app/PictureFile.h: the same list, tst_settings compares them), and
+  // was under *\shell (0.45.0) and SystemFileAssociations\image before.
+  Pictures := StringSplit('png,jpg,jpeg,jpe,jfif,bmp,dib,gif,webp,tif,tiff,ico,heic,heif,avif,jxr,wdp,hdp', [','], stAll);
+  SetArrayLength(Keys, 6 + GetArrayLength(Pictures));
   Keys[0] := 'Software\Classes\Directory\shell\WinShun.SearchHere';
   Keys[1] := 'Software\Classes\Directory\Background\shell\WinShun.SearchHere';
   Keys[2] := 'Software\Classes\Drive\shell\WinShun.SearchHere';
   Keys[3] := 'Software\Classes\Directory\Background\shell\WinShun.PasteFile';
-  for I := 0 to 3 do
+  Keys[4] := 'Software\Classes\*\shell\WinShun.PinPicture';
+  Keys[5] := 'Software\Classes\SystemFileAssociations\image\shell\WinShun.PinPicture';
+  for I := 0 to GetArrayLength(Pictures) - 1 do
+    Keys[6 + I] := 'Software\Classes\SystemFileAssociations\.' + Pictures[I] + '\shell\WinShun.PinPicture';
+  for I := 0 to GetArrayLength(Keys) - 1 do
     if RegQueryStringValue(HKCU, Keys[I] + '\command', '', Command)
-      and (Pos(Lowercase(ExpandConstant('{app}\WinShunSearch.exe')), Lowercase(Command)) > 0) then
+      and (Pos(Stub, Lowercase(Command)) > 0) then
+    begin
       RegDeleteKeyIncludingSubkeys(HKCU, Keys[I]);
+      // No empty "shell" or ".webp" left behind (as ShellMenu.cpp, removeEmptyParents).
+      if RegDeleteKeyIfEmpty(HKCU, ExtractFileDir(Keys[I])) then
+        RegDeleteKeyIfEmpty(HKCU, ExtractFileDir(ExtractFileDir(Keys[I])));
+    end;
+  CascadeKeys[0] := 'Software\Classes\*\shell\WinShun.Commands';
+  CascadeKeys[1] := 'Software\Classes\Directory\shell\WinShun.Commands';
+  for I := 0 to 1 do
+    if RegQueryStringValue(HKCU, CascadeKeys[I], 'WinShunState', State)
+      and (Pos(Stub, Lowercase(State)) = 1) then
+      RegDeleteKeyIncludingSubkeys(HKCU, CascadeKeys[I]);
 end;
 
 // The winshun:// links (ShellMenu.cpp, applyUriProtocol), when they run this
