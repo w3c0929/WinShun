@@ -374,6 +374,12 @@ add_test(NAME tst_searchlogo COMMAND $<TARGET_FILE:WinShun>
 set_tests_properties(tst_searchlogo PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
+# 文件's type chips with how many of what is typed each lists: the tag, its room, switched off.
+add_test(NAME tst_typestripcounts COMMAND $<TARGET_FILE:WinShun>
+    --preview-results "${CMAKE_CURRENT_BINARY_DIR}/type-strip-counts" --type-strip-counts --renderer d3d11)
+set_tests_properties(tst_typestripcounts PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
 add_test(NAME tst_shortcutpanel COMMAND $<TARGET_FILE:WinShun>
     --preview-results "${CMAKE_CURRENT_BINARY_DIR}/shortcut-panel" --shortcut-panel --renderer d3d11)
 set_tests_properties(tst_shortcutpanel PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
@@ -1347,6 +1353,13 @@ target_include_directories(tst_ocr PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
 target_link_libraries(tst_ocr PRIVATE winshun_options wscapture Qt6::Qml Qt6::Test onnxruntime_headers)
 set_target_properties(tst_ocr PROPERTIES QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
 
+# The larger reading model a user may install (ocr::preciseModel), for the
+# test that reads Japanese with it: fetched once per build folder.
+set(precise_ocr_model "${CMAKE_BINARY_DIR}/ocr-precise/PP-OCRv6_rec_small.onnx")
+if(NOT EXISTS "${precise_ocr_model}")
+    winshun_download("https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv6/rec/PP-OCRv6_rec_small.onnx"
+        "${precise_ocr_model}" "6f327246b50388f3c176ae304bd95767ea6dc0c9ae92153ef8cbe210b3c14884")
+endif()
 qt_add_executable(tst_ocrpackage tst_ocrpackage.cpp
     ${PROJECT_SOURCE_DIR}/src/capture/CaptureOcr.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/OcrPackage.cpp
@@ -1764,6 +1777,15 @@ target_link_libraries(tst_clipimport PRIVATE wscore Qt6::Gui Qt6::Test)
 target_compile_definitions(tst_clipimport PRIVATE WINSHUN_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_test(NAME tst_clipimport COMMAND tst_clipimport)
 set_tests_properties(tst_clipimport PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+# Backing the clipboard history up and restoring it: a real store through a
+# zip and into another's place; what is no backup turned away.
+qt_add_executable(tst_clipbackup tst_clipbackup.cpp ${PROJECT_SOURCE_DIR}/src/app/ClipBackupFiles.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/BackupFiles.cpp)
+target_include_directories(tst_clipbackup PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
+target_link_libraries(tst_clipbackup PRIVATE wscore miniz Qt6::Gui Qt6::Test)
+add_test(NAME tst_clipbackup COMMAND tst_clipbackup)
+set_tests_properties(tst_clipbackup PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 # A native file picker, enabled explicitly with WINSHUN_TEST_NATIVE_DIALOG=1.
 qt_add_executable(tst_filepaste tst_filepaste.cpp ${PROJECT_SOURCE_DIR}/src/app/ClipFiles.cpp

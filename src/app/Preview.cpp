@@ -67,6 +67,7 @@
 #include "platform/WindowEffects.h"
 #include "platform/Foreground.h"
 #include "platform/MessageWindow.h"
+#include "platform/OcrFiles.h"
 #include "platform/OcrPackage.h"
 #include "miniz.h"
 
@@ -293,9 +294,20 @@ void writeEdges(QQuickWindow* window, const QString& path)
     walk(window->contentItem(), 0, QString());
 }
 
-bool saveGrab(QQuickWindow* window, const QString& path)
+// `crop` (logical pixels, none: all of it): the device pixels it covers,
+// outwards. A window bigger than what it draws (the drop pie's covers the work
+// area) is cut down to that.
+QRect cropPixels(QQuickWindow* window, const QRectF& crop)
 {
-    const QImage image = window->grabWindow();
+    const qreal dpr = window->devicePixelRatio();
+    return QRectF(crop.topLeft() * dpr, crop.size() * dpr).toAlignedRect();
+}
+
+bool saveGrab(QQuickWindow* window, const QString& path, const QRectF& crop = {})
+{
+    QImage image = window->grabWindow();
+    if (!crop.isEmpty() && !image.isNull())
+        image = image.copy(cropPixels(window, crop).intersected(image.rect()));
     if (g_edges)
         writeEdges(window, path + u".edges.txt"_s);
     const bool saved = !image.isNull() && image.save(path, "PNG");
@@ -2284,6 +2296,8 @@ int runSettings(const QStringList& args)
         return finish(window, checkDoubleTapSettings(window, editor, out));
     if (args.contains(u"--search-experience-settings"_s))
         return finish(window, checkSearchExperienceSettings(window, editor, out));
+    if (args.contains(u"--plugin-readme-reading"_s)) // + --readme <a README.md>; else a sample of every kind of block
+        return finish(window, checkPluginReadmeReading(window, editor, out, valueAfter(args, u"--readme")));
     if (args.contains(u"--logo-position-settings"_s))
         return finish(window, checkLogoPositionSettings(window, editor, out));
     if (args.contains(u"--dialog-rule-settings"_s)) // + --fixture tests\fixtures\wpf-file-window.ps1
@@ -9979,6 +9993,109 @@ bool checkContentKinds(QQmlEngine* qml, const QDir& output)
 // takes no clicks through its MouseArea alone: the chip itself stays enabled,
 // since a style's key may change with that (tactile's chosen key turns bold,
 // wider), and `whole` reads the chip's width (a binding loop, 2026-11-24).
+// --preview-results <dir> --type-strip-counts: 文件's chips with how many of
+// what is typed each lists (Launcher.fileTypeCounts): a tag after each name,
+// the chip as much wider; none for no numbers, and the chips as before.
+bool checkTypeStripCounts(QQmlEngine* qml, const QDir& output)
+{
+    QTemporaryDir temporary;
+    IndexService index(temporary.filePath(u"index"_s), IndexService::Options{});
+    AppCatalog apps;
+    SystemCatalog places;
+    apps.setApps(std::make_shared<const AppList>());
+    places.setPlaces(std::make_shared<const PlaceList>());
+    History history(temporary.filePath(u"history.tsv"_s));
+    SearchEngine search(&index, &apps, &places);
+    Launcher launcher(&index, &apps, &places, &search, &history);
+    FileTypes types;
+    for (const auto& [name, extension] : {std::pair {u"文档"_s, u"docx"_s}, {u"图片"_s, u"jpg"_s}, {u"视频"_s, u"mp4"_s},
+             {u"音频"_s, u"mp3"_s}, {u"压缩包"_s, u"zip"_s}})
+        types.append(FileType {name, {extension}});
+    launcher.setFileTypes(types);
+    ClipStore store(temporary.filePath(u"clipboard"_s));
+    if (!store.open(QDateTime::currentMSecsSinceEpoch())) return false;
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Launcher"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(qml, u"WinShun"_s, u"Main"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {u"launcher"_s, QVariant::fromValue(&launcher)}, {u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"frame"_s, QVariant::fromValue(&frame)}, {u"placement"_s, QVariant::fromValue(&placement)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { say(component.errorString()); return false; }
+    window->create();
+    launcher.setWindow(window);
+    frame.setWindow(window);
+    placement.setWindow(window);
+    showOffScreen(window);
+    bool ok = true;
+    const auto check = [&](bool condition, const char* reason) {
+        ok = condition && ok;
+        if (!condition) qWarning("type strip counts regression: %s", reason);
+    };
+    launcher.setScope(Launcher::Files);
+    launcher.toggleFileType(0); // 文档 chosen: the others' numbers stay
+    settle(window);
+    const auto chipOf = [&](int type) { return visualNamed(window->contentItem(), u"searchTypeChip%1"_s.arg(type)); };
+    const auto tagOf = [&](int type) { QQuickItem* chip = chipOf(type); return chip ? visualNamed(chip, u"searchTypeChipCount"_s) : nullptr; };
+    const QList<int> shown {-1, -2, 0, 1, 2, 3, 4};
+    QList<qreal> plain;
+    for (const int type : shown) {
+        QQuickItem* chip = chipOf(type);
+        QQuickItem* tag = tagOf(type);
+        if (!chip || !tag) { check(false, "a chip or its tag is missing"); return false; }
+        check(!tag->isVisible(), "a tag shows with no numbers");
+        plain.append(chip->width());
+        // Laid out by the icon's container: an even square, as far from the chip's left edge as from
+        // its top and bottom, the name a fixed gap after it.
+        QQuickItem* icon = visualNamed(chip, u"searchTypeChipIcon"_s);
+        QQuickItem* name = visualNamed(chip, u"searchTypeChipName"_s);
+        if (!icon || !name) { check(false, "a chip's icon or name is missing"); return false; }
+        if (icon->isVisible()) {
+            const qreal left = icon->x();
+            const qreal top = icon->y();
+            const qreal bottom = chip->height() - top - icon->height();
+            const qreal gap = name->x() - (left + icon->width());
+            if (icon->width() != icon->height() || std::fmod(icon->width(), 2) != 0 || std::abs(left - top) > 0.01 || std::abs(top - bottom) > 0.7
+                || std::abs(gap - 4) > 0.01) {
+                qWarning("type strip counts regression: chip %d: icon box %.1fx%.1f, %.2f from the left, %.2f from the top, "
+                         "%.2f from the bottom, %.2f before the name", type, icon->width(), icon->height(), left, top, bottom, gap);
+                ok = false;
+            }
+        }
+    }
+    check(saveGrab(window, output.filePath(u"type-strip-counts-none.png"_s)), "the window did not render");
+    // all, folders, then the kinds: small, none, and too long to write out.
+    launcher.setFileTypeCounts({QVariant(1'254'380), QVariant(3), QVariant(128), QVariant(0), QVariant(9'999), QVariant(10'000), QVariant(356'000)});
+    settle(window);
+    const qreal dpr = window->effectiveDevicePixelRatio();
+    for (int i = 0; i < shown.size(); ++i) {
+        QQuickItem* chip = chipOf(shown.at(i));
+        QQuickItem* tag = tagOf(shown.at(i));
+        check(tag->isVisible(), "a tag does not show with numbers");
+        check(chip->width() > plain.at(i) + tag->width(), "a chip is not wider by its tag");
+        // Inside its chip, clear of the edge, on whole device pixels.
+        const QPointF at = tag->mapToItem(chip, QPointF(0, 0));
+        check(at.x() + tag->width() <= chip->width() - 4 && at.x() > 0, "a tag is not inside its chip");
+        const qreal left = tag->mapToScene(QPointF(0, 0)).x() * dpr;
+        check(std::abs(left - std::round(left)) < 0.01, "a tag is not on a whole device pixel");
+    }
+    check(launcher.countLabel(128) == u"128" && launcher.countLabel(0) == u"0" && launcher.countLabel(9'999) == u"9999",
+        "a small count is not written out");
+    check(launcher.countLabel(10'000) == u"1万" && launcher.countLabel(356'000) == u"35万"
+            && launcher.countLabel(1'254'380) == u"125万" && launcher.countLabel(19'999) == u"1.9万"
+            && launcher.countLabel(230'000'000) == u"2.3亿",
+        "a large count is not shortened");
+    check(saveGrab(window, output.filePath(u"type-strip-counts.png"_s)), "the window did not render");
+    // Switched off: the numbers go, the chips as wide as before.
+    launcher.setTypeCounts(false);
+    settle(window);
+    for (int i = 0; i < shown.size(); ++i)
+        check(!tagOf(shown.at(i))->isVisible() && chipOf(shown.at(i))->width() == plain.at(i), "switched off, a tag or its room stays");
+    return ok;
+}
+
 bool checkTypeStripScroll(QQmlEngine* qml, const QDir& output)
 {
     static QtMessageHandler counted = nullptr;
@@ -11361,11 +11478,14 @@ bool checkDropPiePages(QQmlEngine* engine, const QDir& output)
             settle(window);
             pump(300);
             settle(window, 2);
-            check(saveGrab(window, output.filePath(name + u".png"_s)), name);
+            const QRectF drawn = pie.drawnRect();
+            check(saveGrab(window, output.filePath(name + u".png"_s), drawn), name);
             // Where the middle is in the picture (device pixels), for measuring the dots on its pixels.
             const qreal dpr = window->devicePixelRatio();
-            say(u"%1: hub centre %2,%3 radius %4 (device pixels)"_s.arg(name).arg(window->property("cx").toReal() * dpr)
-                    .arg(window->property("cy").toReal() * dpr).arg(pie.hubRadius() * dpr));
+            const QPoint corner = cropPixels(window, drawn).topLeft();
+            say(u"%1: hub centre %2,%3 radius %4 (device pixels)"_s.arg(name)
+                    .arg(window->property("cx").toReal() * dpr - corner.x())
+                    .arg(window->property("cy").toReal() * dpr - corner.y()).arg(pie.hubRadius() * dpr));
         };
         for (const Shot& shot : shots) {
             pie.previewPage(shot.page, shot.hovered);
@@ -11385,7 +11505,7 @@ bool checkDropPiePages(QQmlEngine* engine, const QDir& output)
             pump(50);
             const qreal turn = window->property("turn").toReal();
             check(pie.page() == 1 && !pie.leavingSectors().isEmpty(), tag + u": a turn"_s);
-            check(saveGrab(window, output.filePath(tag + u"-fade.png"_s)), tag + u"-fade"_s);
+            check(saveGrab(window, output.filePath(tag + u"-fade.png"_s), pie.drawnRect()), tag + u"-fade"_s);
             say(u"drop pie pages: the fade was at %1 when grabbed"_s.arg(turn));
             pump(400);
             check(window->property("turn").toReal() == 1, tag + u": the fade ends"_s);
@@ -11414,6 +11534,262 @@ bool checkDropPiePages(QQmlEngine* engine, const QDir& output)
     return passed;
 }
 
+// --drop-pie-columns: the folders inside a chip's folder, and inside a row's
+// (GitHub #463), as DropPie and DropPieWindow.qml make them, off the screen:
+// a column on the right with the pointer on a row (droppie-columns-right),
+// one further in (-second), one on the left (-left), one too long for the
+// screen scrolled down a way with the pointer on its lower strip (-scroll),
+// and an empty folder's (-empty). `--scale` as for the others.
+bool checkDropPieColumns(QQmlEngine* engine, const QDir& output)
+{
+    bool passed = true;
+    const auto check = [&](bool condition, const QString& what) {
+        if (!condition)
+            say(u"drop pie columns: %1 FAILED"_s.arg(what));
+        passed = passed && condition;
+    };
+    QTemporaryDir temporary;
+    const auto make = [&](const QString& path) {
+        QDir().mkpath(temporary.filePath(path));
+        return QDir::toNativeSeparators(temporary.filePath(path));
+    };
+    // Six chips: 0 above, 1 and 2 on the right, 3 below, 4 and 5 on the left.
+    Favorites favorites(temporary.filePath(u"favorites.json"_s));
+    const QStringList favoriteNames {u"年度报告"_s, u"项目资料"_s, u"照片"_s, u"空文件夹"_s, u"客户合同"_s, u"设计素材"_s};
+    for (const QString& name : favoriteNames)
+        favorites.add({Favorite::Kind::Folder, make(name), name});
+    // As File Explorer orders them: 2 before 10.
+    const QStringList projects {u"2024"_s, u"2025"_s, u"2026"_s, u"客户 A"_s, u"客户 B"_s, u"设计稿"_s, u"归档"_s};
+    for (const QString& name : projects)
+        make(u"项目资料/"_s + name);
+    for (int month = 1; month <= 12; ++month)
+        make(u"项目资料/2026/%1 月"_s.arg(month));
+    for (const QString& name : {u"财务年报"_s, u"季度报告"_s})
+        make(u"年度报告/"_s + name);
+    for (int day = 1; day <= 60; ++day)
+        make(u"照片/2026-03-%1 旅行"_s.arg(day, 2, 10, u'0'));
+    make(u"客户合同/已签"_s);
+    make(u"设计素材/图标"_s);
+
+    piedrop::FileOperations operations;
+    DropPie pie(&favorites, nullptr, &operations, {});
+    QQmlComponent component(engine, u"WinShun"_s, u"DropPieWindow"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({{u"dropPie"_s, QVariant::fromValue(&pie)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    check(window, component.errorString());
+    if (!window)
+        return false;
+    pie.setWindow(window);
+    QElapsedTimer waiting;
+    waiting.start();
+    while (pie.folderCount() < favoriteNames.size() && waiting.elapsed() < 5000)
+        pump(20);
+    check(pie.folderCount() == favoriteNames.size(), u"its folders"_s);
+    QScreen* primary = QGuiApplication::primaryScreen();
+    const QPoint centre = primary->geometry().center();
+    const qreal scale = primary->devicePixelRatio();
+    const auto open = [&] {
+        pie.preview(POINT {LONG(std::lround(centre.x() * scale)), LONG(std::lround(centre.y() * scale))}, -1);
+        pump(50);
+    };
+    open();
+    const QSize size = window->size();
+    showOffScreen(window);
+    window->resize(size);
+    pump(400);
+    const auto shoot = [&](const QString& name) {
+        settle(window);
+        pump(300);
+        settle(window, 2);
+        check(saveGrab(window, output.filePath(name + u".png"_s), pie.drawnRect()), name);
+    };
+    const auto box = [&](int column) {
+        const QVariantMap item = pie.columns().value(column).toMap();
+        return QRectF(item.value(u"x"_s).toReal(), item.value(u"y"_s).toReal(), item.value(u"width"_s).toReal(),
+            item.value(u"height"_s).toReal());
+    };
+    const auto texts = [&](int column) {
+        QStringList shown;
+        for (const QVariant& row : pie.columns().value(column).toMap().value(u"rows"_s).toList())
+            shown.append(row.toMap().value(u"text"_s).toString());
+        return shown;
+    };
+    const auto chip = [&](int sector) {
+        const QVariantMap item = pie.sectors().value(sector).toMap();
+        return QRectF(pie.centre() + QPointF(item.value(u"x"_s).toReal(), item.value(u"y"_s).toReal()),
+            QSizeF(item.value(u"width"_s).toReal(), pie.chipHeight()));
+    };
+    const QRectF screen(QPointF(0, 0), QSizeF(window->size()));
+
+    // On the right: beside the pie, its first row level with the chip, clear of the line under the chips.
+    check(pie.previewOpen(1), u"right: opened"_s);
+    pie.previewColumnPointer(0, 2);
+    check(pie.columns().size() == 1, u"right: one column"_s);
+    check(texts(0).size() == projects.size() && texts(0).first(3) == projects.first(3),
+        u"right: its rows in File Explorer's order (%1)"_s.arg(texts(0).join(u", ")));
+    check(box(0).left() >= chip(1).right(), u"right: beside the chip"_s);
+    check(!box(0).intersects(pie.statusRect()), u"right: clear of the line under the chips"_s);
+    check(screen.contains(box(0)), u"right: on the screen"_s);
+    check(pie.statusName() == projects[2] && pie.statusDetail().contains(projects[2]), u"right: the line names the row"_s);
+    check(pie.columnStates().value(0).toMap().value(u"target"_s).toBool(), u"right: the row is where they go"_s);
+    shoot(u"droppie-columns-right"_s);
+
+    // Further in: the next beside the first, level with the row it came from.
+    check(pie.previewOpen(2), u"second: opened"_s);
+    pie.previewColumnPointer(1, 5);
+    check(pie.columns().size() == 2, u"second: two columns"_s);
+    check(texts(1).size() == 12 && texts(1).first() == u"1 月"_s && texts(1).at(9) == u"10 月"_s, u"second: 1 to 12"_s);
+    check(box(1).left() >= box(0).right(), u"second: beside the first"_s);
+    check(pie.columnStates().value(0).toMap().value(u"opener"_s).toInt() == 2, u"second: the row it came from shown"_s);
+    shoot(u"droppie-columns-second"_s);
+
+    // A chip on the left: its column on the left.
+    open();
+    check(pie.previewOpen(5), u"left: opened"_s);
+    pie.previewColumnPointer(0, 0);
+    check(box(0).right() <= chip(5).left(), u"left: beside the chip"_s);
+    shoot(u"droppie-columns-left"_s);
+
+    // Too long for the screen: the strips, scrolled.
+    open();
+    check(pie.previewOpen(2), u"scroll: opened"_s);
+    const QVariantMap tall = pie.columns().value(0).toMap();
+    check(tall.value(u"scrolls"_s).toBool() && tall.value(u"shown"_s).toInt() < 60, u"scroll: scrolls"_s);
+    check(screen.contains(box(0)), u"scroll: on the screen"_s);
+    pie.previewColumnPointer(0, -1, 10, 1);
+    const QVariantMap scrolled = pie.columnStates().value(0).toMap();
+    check(scrolled.value(u"first"_s).toInt() == 10 && scrolled.value(u"up"_s).toBool() && scrolled.value(u"down"_s).toBool(),
+        u"scroll: scrolled a way"_s);
+    check(scrolled.value(u"strip"_s).toInt() == 1, u"scroll: the pointer on the lower strip"_s);
+    shoot(u"droppie-columns-scroll"_s);
+
+    // An empty folder: one row that says so, nothing to drop on.
+    open();
+    check(pie.previewOpen(3), u"empty: opened"_s);
+    pie.previewColumnPointer(0, -1);
+    check(texts(0).size() == 1 && pie.columns().value(0).toMap().value(u"rows"_s).toList().value(0).toMap()
+        .value(u"message"_s).toBool(), u"empty: says so"_s);
+    shoot(u"droppie-columns-empty"_s);
+
+    // Driven as a drag drives it: a DragOver at every move, and again every
+    // 50 ms while the pointer is still (OLE's own asking), the pie's timers
+    // and its reading of folders as they are.
+    open();
+    QPointF at = pie.centre();
+    pie.previewPointer(at);
+    const auto moveTo = [&](QPointF to, int steps, const std::function<void()>& each = {}) {
+        const QPointF from = at;
+        for (int i = 1; i <= steps; ++i) {
+            at = from + (to - from) * (double(i) / steps);
+            pie.previewPointer(at);
+            pump(16);
+            if (each)
+                each();
+        }
+    };
+    const auto rest = [&](int ms) {
+        for (int waited = 0; waited < ms; waited += 50) {
+            pie.previewPointer(at);
+            pump(50);
+        }
+    };
+    const auto state = [&](int column) { return pie.columnStates().value(column).toMap(); };
+    const auto rowAt = [&](int column, int row) {
+        const QVariantMap item = pie.columns().value(column).toMap();
+        const double strip = item.value(u"scrolls"_s).toBool() ? item.value(u"strip"_s).toReal() : 0;
+        return QPointF(box(column).left() + 40, box(column).top() + window->property("columnPadding").toReal() + strip
+                + (row - state(column).value(u"first"_s).toInt() + 0.5) * window->property("columnRow").toReal());
+    };
+
+    // Passing over chips opens nothing; resting on one opens its column.
+    moveTo(chip(0).center(), 6);
+    moveTo(chip(1).center(), 6);
+    check(pie.columns().isEmpty() && pie.hovered() == 1, u"drag: passing opens nothing"_s);
+    rest(600);
+    check(pie.columns().size() == 1 && pie.openedSector() == 1 && texts(0).size() == projects.size(),
+        u"drag: resting on a chip opens its column"_s);
+
+    // On the way to a lower row the pointer crosses the next chip's direction:
+    // the chip it came from stays chosen, its column up.
+    bool crossed = false;
+    bool kept = true;
+    const QPointF lower = rowAt(0, 5);
+    moveTo(lower, 14, [&] {
+        crossed = crossed || (!box(0).contains(at) && pie::sectorAt(pie::angleOf(at - pie.centre()), 6) == 2);
+        kept = kept && pie.hovered() != 2 && pie.columns().size() == 1;
+    });
+    check(crossed, u"drag: the way to the row crosses the next chip's direction"_s);
+    check(kept, u"drag: aiming at the column keeps the chip it came from"_s);
+    rest(100);
+    check(state(0).value(u"hovered"_s).toInt() == 5 && state(0).value(u"target"_s).toBool()
+            && pie.statusName() == texts(0).value(5) && pie.previewPointer(at) == DROPEFFECT_COPY,
+        u"drag: on the row, letting go puts them there"_s);
+
+    // Resting on a row opens the next column beside it.
+    moveTo(rowAt(0, 2), 6);
+    rest(600);
+    check(pie.columns().size() == 2 && texts(1).size() == 12 && state(0).value(u"opener"_s).toInt() == 2,
+        u"drag: resting on a row opens its column"_s);
+
+    // Heading for that column but stopping on the row below: the row it came
+    // from stays chosen a moment (kAim), then the one under the pointer is,
+    // and resting there opens its own column (an empty folder's) instead.
+    moveTo(QPointF(at.x() + (box(1).left() - at.x()) / 2, rowAt(0, 3).y()), 4);
+    rest(50);
+    check(state(0).value(u"hovered"_s).toInt() == 2, u"drag: aimed past, the row it came from still chosen"_s);
+    rest(300);
+    check(state(0).value(u"hovered"_s).toInt() == 3, u"drag: stopped, the row under it chosen"_s);
+    rest(500);
+    check(pie.columns().size() == 2 && state(0).value(u"opener"_s).toInt() == 3
+            && pie.columns().value(1).toMap().value(u"rows"_s).toList().value(0).toMap().value(u"message"_s).toBool(),
+        u"drag: its column in place of the other"_s);
+
+    // Back to the middle: the columns go.
+    moveTo(pie.centre(), 12);
+    rest(600);
+    check(pie.columns().isEmpty() && pie.inMiddle() && pie.previewPointer(at) == DROPEFFECT_NONE,
+        u"drag: resting in the middle closes them"_s);
+
+    // A long column scrolls while the pointer rests on its strip.
+    moveTo(chip(2).center(), 8);
+    rest(600);
+    const QVariantMap photos = pie.columns().value(0).toMap();
+    check(photos.value(u"scrolls"_s).toBool(), u"drag: the long column scrolls"_s);
+    const double strip = photos.value(u"strip"_s).toReal();
+    moveTo(QPointF(box(0).center().x(), box(0).bottom() - window->property("columnPadding").toReal() - strip / 2), 10);
+    rest(1000);
+    const int down = state(0).value(u"first"_s).toInt();
+    check(down >= 8 && state(0).value(u"strip"_s).toInt() == 1 && state(0).value(u"up"_s).toBool(),
+        u"drag: resting on the lower strip scrolls it down (%1 rows)"_s.arg(down));
+    moveTo(QPointF(box(0).center().x(), box(0).top() + window->property("columnPadding").toReal() + strip / 2), 10);
+    rest(300);
+    check(state(0).value(u"first"_s).toInt() < down, u"drag: the upper strip scrolls it back"_s);
+
+    // Resting just past a chip, where its column then comes: that folder stays
+    // chosen (letting go still puts them there) until the pointer moves.
+    open();
+    at = pie.centre();
+    pie.previewPointer(at);
+    double right = 0;
+    for (qsizetype i = 0; i < pie.sectors().size(); ++i)
+        right = std::max(right, chip(int(i)).right());
+    moveTo(QPointF(right + 20, chip(1).center().y()), 8);
+    rest(600);
+    check(pie.columns().size() == 1 && box(0).contains(at), u"drag: the column came under the pointer"_s);
+    check(pie.hovered() == 1 && pie.statusName() == favoriteNames[1] && pie.previewPointer(at) == DROPEFFECT_COPY,
+        u"drag: under it, the chip stays chosen"_s);
+    moveTo(at + QPointF(0, 8), 2);
+    check(pie.hovered() == -1 && state(0).value(u"hovered"_s).toInt() >= 0, u"drag: moved, the row under it"_s);
+
+    // Out past the columns' and the chips' reach: it goes.
+    moveTo(QPointF(1, 1), 6);
+    check(!pie.revealed() && pie.columns().isEmpty(), u"drag: leaving it, it goes"_s);
+
+    window->hide();
+    say(u"drop pie columns: %1"_s.arg(passed ? u"passed"_s : u"FAILED"_s));
+    return passed;
+}
+
 // --style-windows: the small windows of every 界面风格 (themes/README.md),
 // each as the app makes it, off the screen: a menu dropped from a button and
 // a field with its caret (style-controls), the screenshot question
@@ -11428,11 +11804,11 @@ bool checkStyleWindows(QQmlEngine* engine, const QDir& output)
             say(u"style windows: %1 FAILED"_s.arg(what));
         passed = passed && condition;
     };
-    const auto shoot = [&](QQuickWindow* window, const QString& name) {
+    const auto shoot = [&](QQuickWindow* window, const QString& name, const QRectF& crop = {}) {
         settle(window);
         pump(300);
         settle(window, 2);
-        check(saveGrab(window, output.filePath(name + u".png"_s)), name);
+        check(saveGrab(window, output.filePath(name + u".png"_s), crop), name);
     };
     const auto evaluate = [](QObject* object, const QString& expression) {
         QQmlExpression run(qmlContext(object), object, expression);
@@ -11665,7 +12041,7 @@ bool checkStyleWindows(QQmlEngine* engine, const QDir& output)
             showOffScreen(window);
             window->resize(size);
             pump(400); // its reveal
-            shoot(window, u"style-droppie"_s);
+            shoot(window, u"style-droppie"_s, pie.drawnRect());
             window->hide();
         }
     }
@@ -11708,6 +12084,8 @@ int runResults(const QStringList& args)
         return checkStyleButtons(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--drop-pie-pages"_s))
         return checkDropPiePages(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--drop-pie-columns"_s))
+        return checkDropPieColumns(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--clipboard-sizing"_s))
         return checkClipboardInteractions(&engine, out, {}, true) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--clipboard-file"_s))
@@ -11728,6 +12106,8 @@ int runResults(const QStringList& args)
         return checkContentKinds(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--type-strip-scroll"_s))
         return checkTypeStripScroll(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--type-strip-counts"_s)) // by its own checks: the empty index's first searches may warn of being slow on a busy PC
+        return checkTypeStripCounts(&engine, out) ? 0 : 4;
     if (args.contains(u"--clipboard-crashed-reading"_s)) // its warning when it gives up is expected
         return checkClipboardCrashedReading() ? 0 : 4;
     if (const qsizetype at = args.indexOf(u"--terminal-launch"_s); at >= 0 && at + 2 < args.size()) {
@@ -15507,6 +15887,73 @@ int runRuntime(const QStringList& args)
                 const QString retry = valueAfter(args, u"--ocr-retry-source");
                 if (!retry.isEmpty() && !attempt(retry, false, false, 2))
                     return 4;
+                // --ocr-precise <the larger reading model's file>: its row shows
+                // once the package is there; installed from the file, in use,
+                // and removed again by the row's own button.
+                if (const QString precise = valueAfter(args, u"--ocr-precise"); !precise.isEmpty()) {
+                    auto* preciseRow = qobject_cast<QQuickItem*>(visualNamed(window->contentItem(), u"preciseOcrRow"_s));
+                    auto* preciseButton = qobject_cast<QQuickItem*>(visualNamed(window->contentItem(), u"preciseOcrButton"_s));
+                    OcrModel* larger = model->preciseModel();
+                    if (!preciseRow || !preciseButton)
+                        return 4;
+                    report.insert(u"precise_shown_with_package"_s, preciseRow->isVisible() == model->available());
+                    QMetaObject::invokeMethod(window, "goTo", Q_ARG(QVariant, QVariant::fromValue(preciseRow)));
+                    settle(window, 3);
+                    report.insert(u"precise_offer"_s, preciseRow->property("description").toString());
+                    report.insert(u"precise_offer_button"_s, preciseButton->property("text").toString());
+                    if (!saveGrab(window, out.filePath(u"ocr-precise-offer.png"_s)))
+                        return 4;
+                    larger->installFile(precise);
+                    QElapsedTimer waiting;
+                    waiting.start();
+                    while (larger->busy() && waiting.elapsed() < 20000)
+                        pump(20);
+                    settle(window, 3);
+                    const QRectF inRow = preciseButton->mapRectToItem(preciseRow, QRectF(QPointF(), preciseButton->size()));
+                    report.insert(u"precise_installed"_s, larger->installed() && !ocr::preciseModel().isEmpty());
+                    report.insert(u"precise_status"_s, larger->status());
+                    report.insert(u"precise_installed_text"_s, preciseRow->property("description").toString());
+                    report.insert(u"precise_installed_button"_s, preciseButton->property("text").toString());
+                    report.insert(u"precise_button_inside_row"_s, QRectF(QPointF(-1, -1), preciseRow->size() + QSizeF(2, 2)).contains(inRow));
+                    if (!saveGrab(window, out.filePath(u"ocr-precise-installed.png"_s)))
+                        return 4;
+                    QMetaObject::invokeMethod(preciseButton, "clicked");
+                    settle(window, 3);
+                    report.insert(u"precise_removed"_s, !larger->installed() && ocr::preciseModel().isEmpty());
+                    report.insert(u"precise_removed_button"_s, preciseButton->property("text").toString());
+                }
+                // --ocr-own <a reading model of the user's>: tried and taken
+                // through the row's model, named in the row, removed by its button.
+                if (const QString mine = valueAfter(args, u"--ocr-own"); !mine.isEmpty()) {
+                    auto* preciseRow = qobject_cast<QQuickItem*>(visualNamed(window->contentItem(), u"preciseOcrRow"_s));
+                    auto* preciseButton = qobject_cast<QQuickItem*>(visualNamed(window->contentItem(), u"preciseOcrButton"_s));
+                    auto* ownButton = qobject_cast<QQuickItem*>(visualNamed(window->contentItem(), u"chooseOwnOcrModel"_s));
+                    OcrModel* larger = model->preciseModel();
+                    if (!preciseRow || !preciseButton || !ownButton)
+                        return 4;
+                    QMetaObject::invokeMethod(window, "goTo", Q_ARG(QVariant, QVariant::fromValue(preciseRow)));
+                    settle(window, 3);
+                    report.insert(u"own_offer_button"_s, ownButton->property("text").toString());
+                    QElapsedTimer waiting;
+                    waiting.start();
+                    larger->useOwnFile(mine);
+                    while (larger->busy() && waiting.elapsed() < 60000)
+                        pump(20);
+                    settle(window, 3);
+                    const QRectF inRow = ownButton->mapRectToItem(preciseRow, QRectF(QPointF(), ownButton->size()));
+                    report.insert(u"own_ms"_s, waiting.elapsed());
+                    report.insert(u"own_name"_s, larger->ownName());
+                    report.insert(u"own_status"_s, larger->status());
+                    report.insert(u"own_text"_s, preciseRow->property("description").toString());
+                    report.insert(u"own_button"_s, preciseButton->property("text").toString());
+                    report.insert(u"own_change_button"_s, ownButton->property("text").toString());
+                    report.insert(u"own_buttons_inside_row"_s, QRectF(QPointF(-1, -1), preciseRow->size() + QSizeF(2, 2)).contains(inRow));
+                    if (!saveGrab(window, out.filePath(u"ocr-own.png"_s)))
+                        return 4;
+                    QMetaObject::invokeMethod(preciseButton, "clicked");
+                    settle(window, 3);
+                    report.insert(u"own_removed"_s, larger->ownName().isEmpty() && ocr::ownModel().file.isEmpty());
+                }
                 report.insert(u"ocr_attempts"_s, attempts);
             } else {
             QMetaObject::invokeMethod(window, "showPage", Q_ARG(QVariant, window->property("pluginsPage")), Q_ARG(QVariant, QVariant(0)));

@@ -29,6 +29,13 @@ Window {
     // 0 → 1 as the chips of a page just turned to replace those it left: the
     // new fade in as the old fade out (opacity only: nothing is scaled).
     property real turn: 1
+    // The columns' rows as the folder menu's, their words as the chips', for
+    // DropPie to place them (DropPie::columnMetrics, columnWidth).
+    readonly property int columnRow: Theme.menuItemHeight
+    readonly property real columnPadding: Theme.menuPadding
+    readonly property int columnTextSize: labelSize
+    readonly property int columnMinWidth: Theme.menuColumnMinWidth
+    readonly property int columnMaxWidth: Theme.menuColumnMaxWidth
 
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     color: "transparent"
@@ -149,7 +156,7 @@ Window {
             width: size
             height: size
             radius: size / 2
-            color: pie.dropPie.hovered < 0 ? Theme.pieHover : Theme.menuBackground
+            color: pie.dropPie.inMiddle ? Theme.pieHover : Theme.menuBackground
             border.width: Theme.edge(pie.dpr)
             border.color: Theme.windowEdge
 
@@ -159,13 +166,13 @@ Window {
             readonly property bool paged: pie.dropPie.pageCount > 1
             readonly property bool dots: pie.dropPie.pageCount <= 6
             // The smaller cross, an even number of device pixels (150 %: 16, not 15), so its centre is the middle's.
-            readonly property real cross: Math.round(10 * pie.dpr / 2) * 2 / pie.dpr
+            readonly property real cross: Math.round(12 * pie.dpr / 2) * 2 / pie.dpr
 
             Glyph {
                 anchors.centerIn: parent
                 anchors.verticalCenterOffset: middle.paged ? -Theme.snap((middle.dots ? 3.5 : 6) * pie.k, pie.dpr) : 0
                 glyph: "\uE711" // Cancel
-                size: middle.paged ? middle.cross : 12
+                size: middle.paged ? middle.cross : 14
                 color: Theme.subtext
             }
 
@@ -204,11 +211,13 @@ Window {
             }
         }
 
+        // The dot points at the chip chosen, or at the one the columns came from.
         Rectangle {
-            readonly property real angle: pie.dropPie.hovered * 2 * Math.PI / pie.count
+            readonly property int sector: pie.dropPie.hovered >= 0 ? pie.dropPie.hovered : pie.dropPie.openedSector
+            readonly property real angle: sector * 2 * Math.PI / pie.count
             readonly property real distance: middle.size / 2 + 6 * pie.k
 
-            visible: pie.dropPie.hovered >= 0
+            visible: sector >= 0
             width: Theme.snap(7 * pie.k, pie.dpr)
             height: width
             radius: width / 2
@@ -229,6 +238,7 @@ Window {
                 readonly property bool live: modelData.leaving !== true
                 readonly property bool picked: live && index === pie.dropPie.picked
                 readonly property bool hovered: live && index === pie.dropPie.hovered
+                readonly property bool opened: live && index === pie.dropPie.openedSector // its folders' column is up
                 readonly property color ink: picked ? Theme.accentText : modelData.disabled ? Theme.faint : Theme.text
 
                 x: pie.chipX(modelData)
@@ -237,7 +247,7 @@ Window {
                 height: pie.chipHeight
                 radius: pie.chipRadius
                 opacity: live ? pie.turn : 1 - pie.turn
-                color: picked ? Theme.accentFill : hovered ? Theme.pieHover : Theme.menuBackground
+                color: picked ? Theme.accentFill : hovered || opened ? Theme.pieHover : Theme.menuBackground
                 border.width: picked ? 0 : Theme.edge(pie.dpr)
                 border.color: Theme.windowEdge
 
@@ -249,7 +259,7 @@ Window {
                     Glyph {
                         anchors.verticalCenter: parent.verticalCenter
                         glyph: chip.modelData.disabled && pie.dropPie.noFolders ? "\uE734" : "\uE8B7" // FavoriteStar, Folder
-                        size: 16 * pie.k
+                        size: 18 * pie.k
                         color: chip.ink
                     }
                     Text {
@@ -323,7 +333,7 @@ Window {
                         font.pixelSize: pie.labelSize + 1
                     }
                     Text {
-                        readonly property bool bold: pie.dropPie.hovered >= 0
+                        readonly property bool bold: pie.dropPie.onFolder
                         text: pie.dropPie.elide(pie.dropPie.statusName, pie.labelSize + 1, bold,
                                                 parent.width - (statusVerb.visible ? statusVerb.width + parent.spacing : 0))
                         textFormat: Text.PlainText
@@ -340,7 +350,7 @@ Window {
                         id: detail
                         // The line for the middle ("Let go in the middle...") is cut short of the hint's room
                         // (it is longer in English); a path is cut to fit already (DropPie::updateTexts).
-                        readonly property bool fitting: pie.dropPie.hovered < 0
+                        readonly property bool fitting: !pie.dropPie.onFolder
                         width: fitting ? Math.max(0, parent.width - (hint.text.length > 0 ? hint.implicitWidth + 12 * pie.k : 0))
                                        : implicitWidth
                         text: pie.dropPie.statusDetail
@@ -358,6 +368,22 @@ Window {
                         font.pixelSize: pie.smallSize
                     }
                 }
+            }
+        }
+
+        // The folders inside the chip's folder, and inside a row's, over
+        // the rest (GitHub #463).
+        Repeater {
+            model: pie.dropPie.columns
+
+            delegate: DropPieColumn {
+                required property var modelData
+                required property int index
+
+                box: modelData
+                pointer: pie.dropPie.columnStates[index] ?? ({})
+                dpr: pie.dpr
+                textSize: pie.columnTextSize
             }
         }
     }

@@ -427,6 +427,10 @@
 <context>
     <name>AiSettings</name>
     <message>
+        <source>类型标签显示数量</source>
+        <translation>Counts on the type chips</translation>
+    </message>
+    <message>
         <source>模糊匹配（FZF）</source>
         <translation>Fuzzy matching (FZF)</translation>
     </message>
@@ -2955,6 +2959,18 @@
 <context>
     <name>FileTypesSection</name>
     <message>
+        <source>类型标签显示数量</source>
+        <translation>Counts on the type chips</translation>
+    </message>
+    <message>
+        <source>数量;个数;计数;统计;标签;角标;count;badge;number</source>
+        <translation>count;counts;badge;number;tally;how many;chip</translation>
+    </message>
+    <message>
+        <source>在“文件”里输入后，每个类型的名字右边显示它有多少个匹配；选了某个类型，其他类型的数量照样显示</source>
+        <translation>With something typed in Files, each type shows how many matches it has, after its name; the other types keep their numbers while one is chosen</translation>
+    </message>
+    <message>
         <source>文件类型</source>
         <translation>File types</translation>
     </message>
@@ -3734,6 +3750,61 @@
     <message>
         <source>创建于 %1</source>
         <translation>Created %1</translation>
+    </message>
+</context>
+<context>
+    <name>OcrModelRow</name>
+    <message>
+        <source>正在使用你自己的模型 %1：截图识别、剪贴板图片和图片搜索都用它。移除后回到原来的模型。</source>
+        <translation>Using your own model %1 for screenshot recognition, clipboard pictures and picture search. Remove it to go back to the built-in model.</translation>
+    </message>
+    <message>
+        <source>移除自己的模型</source>
+        <translation>Remove my model</translation>
+    </message>
+    <message>
+        <source>换一个自己的模型…</source>
+        <translation>Use another model of mine…</translation>
+    </message>
+    <message>
+        <source>用自己下载的模型…</source>
+        <translation>Use a model I downloaded…</translation>
+    </message>
+    <message>
+        <source>PP-OCR 的文字识别（rec）模型，ONNX 格式，比如 PP-OCRv6 medium、PP-OCRv5 server 或韩文等其他语言的模型。没带字典的，把字典改成和模型同名的 .txt 放在旁边。</source>
+        <translation>A PP-OCR text recognition (rec) model in ONNX format, such as PP-OCRv6 medium, PP-OCRv5 server, or a model for Korean or another language. If it has no dictionary inside, put the dictionary beside it as a .txt with the model's name.</translation>
+    </message>
+    <message>
+        <source>高精度识别模型</source>
+        <translation>High-accuracy model</translation>
+    </message>
+    <message>
+        <source>识字;OCR;日语;日文;假名;繁体;生僻字;高精度;模型;下载;Japanese;traditional;model</source>
+        <translation>OCR;Japanese;kana;traditional Chinese;rare characters;accuracy;model;download</translation>
+    </message>
+    <message>
+        <source>已安装并在使用：截图识别、剪贴板图片和图片搜索都用它，剪贴板里的图片会重新识别一遍。</source>
+        <translation>Installed and in use by screenshot recognition, clipboard pictures and picture search. The pictures in the clipboard history are read once more.</translation>
+    </message>
+    <message>
+        <source>能认日文、繁体字和更多生僻字，中英文小字也更准；每张图多花约 0.2 秒。需下载%1，可随时移除。</source>
+        <translation>Adds Japanese, traditional Chinese and rare characters, and reads small text better. About 0.2 s more a picture. The download is %1; remove it any time.</translation>
+    </message>
+    <message>
+        <source>移除</source>
+        <translation>Remove</translation>
+    </message>
+    <message>
+        <source>取消</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>下载并安装</source>
+        <translation>Download and install</translation>
+    </message>
+    <message>
+        <source>从本地安装模型文件…</source>
+        <translation>Install a local model file…</translation>
     </message>
 </context>
 <context>
@@ -5793,6 +5864,38 @@ Double-click grip: expand/collapse search panel</translation>
 </context>
 <context>
     <name>SettingsWindow</name>
+    <message>
+        <source>备份与还原</source>
+        <translation>Back up and restore</translation>
+    </message>
+    <message>
+        <source>备份;还原;恢复;导出;迁移;换电脑;重装;ZIP;backup;restore;export</source>
+        <translation>backup;restore;export;import;migrate;new PC;reinstall;ZIP;transfer</translation>
+    </message>
+    <message>
+        <source>把全部历史、分组、备注和图片存成一个 ZIP 文件；换电脑或重装系统后从它还原</source>
+        <translation>Saves the whole history, with its groups, notes and pictures, as one ZIP file; restore from it on a new PC or after reinstalling Windows</translation>
+    </message>
+    <message>
+        <source>备份…</source>
+        <translation>Back up…</translation>
+    </message>
+    <message>
+        <source>还原…</source>
+        <translation>Restore…</translation>
+    </message>
+    <message>
+        <source>用这份备份替换现在的剪贴板历史？</source>
+        <translation>Replace the clipboard history with this backup?</translation>
+    </message>
+    <message>
+        <source>%1。现在的历史和分组会被它替换，Win顺 会重启一次</source>
+        <translation>%1. It replaces the history and groups there are now, and WinShun restarts once</translation>
+    </message>
+    <message>
+        <source>还原并重启</source>
+        <translation>Restore and restart</translation>
+    </message>
     <message>
         <source>复制命令</source>
         <translation>Copy commands</translation>
@@ -9604,8 +9707,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Capacity and automatic cleanup</translation>
     </message>
     <message>
-        <source>数据导入与清空</source>
-        <translation>Data import and clearing</translation>
+        <source>数据导入、备份与清空</source>
+        <translation>Import, backup and clearing</translation>
     </message>
     <message>
         <source>运行状况</source>
@@ -10556,6 +10659,10 @@ Double-click grip: expand/collapse search panel</translation>
 <context>
     <name>TypeStrip</name>
     <message>
+        <source>%1，%2 个</source>
+        <translation>%1, %2</translation>
+    </message>
+    <message>
         <source>常用</source>
         <translation>Most used</translation>
     </message>
@@ -10930,6 +11037,29 @@ Double-click grip: expand/collapse search panel</translation>
 </context>
 <context>
     <name>ws::App</name>
+    <message>
+        <source>写不进 %1</source>
+        <translation>Cannot write to %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>已备份 %n 条：%1</source>
+        <translation>
+            <numerusform>Backed up %n entry: %1</numerusform>
+            <numerusform>Backed up %n entries: %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>没有备份成功：%1</source>
+        <translation>Backup failed: %1</translation>
+    </message>
+    <message>
+        <source>没有还原：%1</source>
+        <translation>Not restored: %1</translation>
+    </message>
+    <message>
+        <source>剪贴板历史已还原</source>
+        <translation>Clipboard history restored</translation>
+    </message>
     <message>
         <source>打不开 Win顺 的设置窗口</source>
         <translation>WinShun&apos;s settings window could not be opened</translation>
@@ -13248,6 +13378,14 @@ Content index: %5</translation>
         <translation>Items like these can only go into folders on this computer</translation>
     </message>
     <message>
+        <source>正在读取…</source>
+        <translation>Reading…</translation>
+    </message>
+    <message>
+        <source>没有子文件夹</source>
+        <translation>No folders inside</translation>
+    </message>
+    <message>
         <source>收藏圆盘未打开</source>
         <translation>Favorites pie could not open</translation>
     </message>
@@ -13849,6 +13987,16 @@ Content index: %5</translation>
 </context>
 <context>
     <name>ws::Launcher</name>
+    <message>
+        <source>亿</source>
+        <comment>count unit: 10^8, or M (10^6) in English</comment>
+        <translation>M</translation>
+    </message>
+    <message>
+        <source>万</source>
+        <comment>count unit: 10^4, or k (10^3) in English</comment>
+        <translation>k</translation>
+    </message>
     <message>
         <source>确认%1</source>
         <translation>Confirm %1</translation>
@@ -15116,7 +15264,110 @@ Content index: %5</translation>
     </message>
 </context>
 <context>
+    <name>ws::OcrModel</name>
+    <message>
+        <source>正在检查这个模型…</source>
+        <translation>Checking this model…</translation>
+    </message>
+    <message>
+        <source>选择自己的识别模型（PP-OCR 的 rec 模型，ONNX）</source>
+        <translation>Choose your recognition model (a PP-OCR rec model, ONNX)</translation>
+    </message>
+    <message>
+        <source>约 %1 MB</source>
+        <translation>about %1 MB</translation>
+    </message>
+    <message>
+        <source>正在取消…</source>
+        <translation>Cancelling…</translation>
+    </message>
+    <message>
+        <source>正在下载高精度模型…</source>
+        <translation>Downloading the high-accuracy model…</translation>
+    </message>
+    <message>
+        <source>下载没有完成，请检查网络后重试，或从本地安装模型文件。</source>
+        <translation>The download did not finish. Check the network and try again, or install a local model file.</translation>
+    </message>
+    <message>
+        <source>这不是高精度模型文件 %1。</source>
+        <translation>This is not the high-accuracy model file %1.</translation>
+    </message>
+    <message>
+        <source>已取消，稍后可以重新安装。</source>
+        <translation>Cancelled. You can install it again later.</translation>
+    </message>
+    <message>
+        <source>选择高精度模型文件 %1</source>
+        <translation>Choose the high-accuracy model file %1</translation>
+    </message>
+    <message>
+        <source>识别模型</source>
+        <translation>Recognition model</translation>
+    </message>
+</context>
+<context>
     <name>ws::OcrPackage</name>
+    <message>
+        <source>这个文件不能用作识别模型。</source>
+        <translation>This file cannot be used as a recognition model.</translation>
+    </message>
+    <message>
+        <source>请先安装增强文字识别。</source>
+        <translation>Install enhanced text recognition first.</translation>
+    </message>
+    <message>
+        <source>这个文件不能用作识别模型：它不是 PP-OCR 的文字识别（rec）模型。</source>
+        <translation>This file cannot be used: it is not a PP-OCR text recognition (rec) model.</translation>
+    </message>
+    <message>
+        <source>这个模型里没有字典。把它的字典文件改成同名的 %1，和模型放在同一个文件夹里再选。</source>
+        <translation>This model has no dictionary inside. Name its dictionary file %1, put it in the model's folder and choose the model again.</translation>
+    </message>
+    <message>
+        <source>这个模型和旁边的字典 %1 对不上（字数不符），或不是 PP-OCR 的文字识别（rec）模型。</source>
+        <translation>This model does not match the dictionary %1 beside it (the character counts differ), or it is not a PP-OCR text recognition (rec) model.</translation>
+    </message>
+    <message>
+        <source>已取消。</source>
+        <translation>Cancelled.</translation>
+    </message>
+    <message>
+        <source>无法保存这个模型，请检查磁盘空间。</source>
+        <translation>Could not save this model. Check the free disk space.</translation>
+    </message>
+    <message>
+        <source>另一个窗口正在安装模型，请稍后再试。</source>
+        <translation>Another window is installing a model. Try again later.</translation>
+    </message>
+    <message>
+        <source>原来的模型正在使用，请关闭识别窗口后重试。</source>
+        <translation>The current model is in use. Close the recognition windows and try again.</translation>
+    </message>
+    <message>
+        <source>高精度模型未通过校验，请重新下载。</source>
+        <translation>The high-accuracy model failed verification. Download it again.</translation>
+    </message>
+    <message>
+        <source>无法创建高精度模型的安装目录。</source>
+        <translation>Could not create the folder for the high-accuracy model.</translation>
+    </message>
+    <message>
+        <source>另一个窗口正在安装高精度模型，完成后会自动可用。</source>
+        <translation>Another window is installing the high-accuracy model; it will be available when that finishes.</translation>
+    </message>
+    <message>
+        <source>无法保存高精度模型，请检查磁盘空间。</source>
+        <translation>Could not save the high-accuracy model. Check the free disk space.</translation>
+    </message>
+    <message>
+        <source>高精度模型正在使用，请关闭识别窗口后重试。</source>
+        <translation>The high-accuracy model is in use. Close the recognition windows and try again.</translation>
+    </message>
+    <message>
+        <source>无法完成高精度模型的安装。</source>
+        <translation>Could not finish installing the high-accuracy model.</translation>
+    </message>
     <message>
         <source>增强识别已安装，可以离线使用。</source>
         <translation>Enhanced recognition is installed and works offline.</translation>
@@ -16465,6 +16716,26 @@ Content index: %5</translation>
 <context>
     <name>ws::SettingsEditor</name>
     <message>
+        <source>备份剪贴板历史</source>
+        <translation>Back up clipboard history</translation>
+    </message>
+    <message>
+        <source>Win顺 剪贴板备份</source>
+        <translation>WinShun clipboard backup</translation>
+    </message>
+    <message>
+        <source>正在备份…</source>
+        <translation>Backing up…</translation>
+    </message>
+    <message>
+        <source>选择要还原的剪贴板备份</source>
+        <translation>Choose the clipboard backup to restore</translation>
+    </message>
+    <message>
+        <source>正在检查备份…</source>
+        <translation>Checking the backup…</translation>
+    </message>
+    <message>
         <source>无法安装索引服务：%1 的所有者是“%2”，不是管理员，普通程序也能改动它，服务放进去不安全。把所有者改回管理员组就能装：复制下面的命令，在“命令提示符（管理员）”里运行，再点一次安装。</source>
         <translation>Cannot install the index service: %1 is owned by “%2”, not by an administrator, so ordinary programs can change it and the service would not be safe there. Give it back to the Administrators group: copy the command below, run it in Command Prompt (Admin), then choose Install again.</translation>
     </message>
@@ -17744,6 +18015,10 @@ Content index: %5</translation>
 <context>
     <name>ws::backupfiles</name>
     <message>
+        <source>这是剪贴板历史的备份，不是设置的；请到 设置 › 剪贴板 里还原</source>
+        <translation>This is a backup of the clipboard history, not of the settings; restore it in Settings › Clipboard</translation>
+    </message>
+    <message>
         <source>不支持这个备份格式，请更新 Win顺 后再试</source>
         <translation>Unsupported backup format. Update WinShun and try again.</translation>
     </message>
@@ -17778,6 +18053,49 @@ Content index: %5</translation>
     <message>
         <source>备份文件已损坏</source>
         <translation>The backup file is damaged</translation>
+    </message>
+</context>
+<context>
+    <name>ws::clipbackup</name>
+    <message>
+        <source>写不进 %1</source>
+        <translation>Cannot write to %1</translation>
+    </message>
+    <message>
+        <source>还没有剪贴板历史</source>
+        <translation>There is no clipboard history yet</translation>
+    </message>
+    <message>
+        <source>读不出剪贴板历史</source>
+        <translation>Cannot read the clipboard history</translation>
+    </message>
+    <message>
+        <source>打不开 %1</source>
+        <translation>Cannot open %1</translation>
+    </message>
+    <message>
+        <source>这不是 Win顺 的剪贴板备份</source>
+        <translation>This is not a WinShun clipboard backup</translation>
+    </message>
+    <message>
+        <source>这是设置的备份，不是剪贴板历史的；请到 设置 › 常规 里恢复</source>
+        <translation>This is a backup of the settings, not of the clipboard history; restore it in Settings › General</translation>
+    </message>
+    <message>
+        <source>不支持这个备份格式，请更新 Win顺 后再试</source>
+        <translation>Unsupported backup format. Update WinShun and try again.</translation>
+    </message>
+    <message>
+        <source>备份文件已损坏</source>
+        <translation>The backup file is damaged</translation>
+    </message>
+    <message>
+        <source>磁盘空间不够，还原需要 %1 MB</source>
+        <translation>Not enough disk space: restoring needs %1 MB</translation>
+    </message>
+    <message>
+        <source>剪贴板历史正被别的程序占用，没有还原；重启 Win顺 会再试一次</source>
+        <translation>The clipboard history is in use by another program and was not restored; restarting WinShun tries again</translation>
     </message>
 </context>
 <context>

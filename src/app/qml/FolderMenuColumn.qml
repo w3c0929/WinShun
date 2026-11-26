@@ -101,26 +101,6 @@ Item {
         Qt.callLater(column.sync)
     }
 
-    // The highlight under an item chosen or pointed at (the style's
-    // rowHighlight, role "menu"). A part that knows the menu (declares
-    // `role`, or `inMenu` as brand's does) draws the item's fill; one that
-    // does not (a list's highlight) leaves it to the menu's own.
-    component MenuHighlight: Hook {
-        id: highlightPart
-        readonly property bool inMenu: item !== null && ("role" in item || "inMenu" in item)
-        part: Theme.rowHighlight
-        hovered: inMenu
-        role: "menu"
-        dpr: column.dpr
-
-        Rectangle {
-            anchors.fill: parent
-            visible: !highlightPart.inMenu
-            radius: Theme.menuItemRadius
-            color: Theme.menuHover
-        }
-    }
-
     ListView {
         id: flick
         objectName: "folderMenuScroll"
@@ -156,6 +136,7 @@ Item {
             visible: flick.currentItem !== null && column.highlighted >= 0
             MenuHighlight {
                 anchors.fill: parent
+                dpr: column.dpr
                 opacity: column.faint ? 0.5 : 1
             }
         }
@@ -208,10 +189,10 @@ Item {
             }
             Glyph {
                 visible: !entry.separator && !entry.section && (entry.toggle || !icon.visible)
-                x: entry.toggle ? 15 : 13
+                x: entry.toggle ? 14 : 12
                 anchors.verticalCenter: parent.verticalCenter
                 glyph: entry.toggle ? (entry.expanded ? "\uE70D" : "\uE76C") : (entry.modelData.glyph ?? "")
-                size: entry.toggle ? 12 : 16
+                size: entry.toggle ? 14 : 18
                 color: entry.disabled ? Theme.faint : entry.toggle ? Theme.subtext : Theme.text
             }
             Text {
@@ -251,7 +232,7 @@ Item {
                 anchors.rightMargin: 12
                 anchors.verticalCenter: parent.verticalCenter
                 glyph: "\uE76C"
-                size: 12
+                size: 14
                 color: entry.disabled ? Theme.faint : Theme.text
             }
             MouseArea {

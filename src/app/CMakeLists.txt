@@ -213,6 +213,7 @@ set(qml_files
     qml/DialogBarRow.qml
     qml/FolderMenuWindow.qml
     qml/FolderMenuColumn.qml
+    qml/MenuHighlight.qml
     qml/MenuPathTip.qml
     qml/FontPicker.qml
     qml/ChoiceBox.qml
@@ -221,6 +222,7 @@ set(qml_files
     qml/ComboPopup.qml
     qml/ClipGroupPicker.qml
     qml/DropPieWindow.qml
+    qml/DropPieColumn.qml
     qml/SoftShadow.qml
     qml/PreviewWindow.qml
     qml/PreviewBody.qml
@@ -289,6 +291,7 @@ set(qml_files
     qml/AiPrivacySection.qml
     qml/PluginsSection.qml
     qml/OcrPackageRow.qml
+    qml/OcrModelRow.qml
     qml/PluginCard.qml
     qml/PluginTile.qml
     qml/PluginReport.qml
@@ -382,6 +385,7 @@ qt_add_qml_module(WinShun
         VideoView.cpp VideoView.h # a video in the preview, by Windows' media engine
         LineHighlighter.cpp LineHighlighter.h
         TextLineSpacing.cpp TextLineSpacing.h # a TextEdit's lines spaced as a Text's lineHeight
+        ReadingStyle.cpp ReadingStyle.h # a plugin's 使用说明 and 更新内容 laid out for reading
         ContentPane.cpp ContentPane.h
         PictureFile.cpp PictureFile.h
         FolderMenu.cpp FolderMenu.h
@@ -419,6 +423,7 @@ qt_add_qml_module(WinShun
         UiSize.h
         Updater.cpp Updater.h UpdatePackage.cpp UpdatePackage.h UpdateDelta.cpp UpdateDelta.h UninstallCleanup.cpp UninstallCleanup.h
         Backup.cpp Backup.h BackupFiles.cpp BackupFiles.h
+        ClipBackupFiles.cpp ClipBackupFiles.h
         WindowFrame.cpp WindowFrame.h
 )
 

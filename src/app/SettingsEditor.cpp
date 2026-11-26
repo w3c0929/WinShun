@@ -10,6 +10,7 @@
 #include "platform/OcrFiles.h"
 #include "platform/OcrPackage.h"
 
+#include "ClipBackupFiles.h"
 #include "ClipImport.h"
 #include "CliSetup.h"
 #include "ScoopInstall.h"
@@ -141,8 +142,10 @@ void SettingsEditor::useOcrPackage(OcrPackage* package)
 {
     if (m_ocrPackage == package)
         return;
-    if (m_ocrPackage)
+    if (m_ocrPackage) {
         disconnect(m_ocrPackage, nullptr, this, nullptr);
+        disconnect(m_ocrPackage->preciseModel(), nullptr, this, nullptr);
+    }
     if (m_ocrPackage && m_ocrPackage->parent() == this)
         delete m_ocrPackage;
     m_ocrPackage = package;
@@ -150,6 +153,18 @@ void SettingsEditor::useOcrPackage(OcrPackage* package)
         const QString file = shell::pickFile(nullptr, OcrPackage::tr("选择增强识别包"), {{OcrPackage::tr("增强识别包"), u"*.zip"_s}});
         if (!file.isEmpty())
             m_ocrPackage->installFile(file);
+    });
+    connect(package->preciseModel(), &OcrModel::localRequested, this, [this] {
+        const QString file = shell::pickFile(nullptr, OcrModel::tr("选择高精度模型文件 %1").arg(QString(ocr::kPreciseModel)),
+            {{OcrModel::tr("识别模型"), u"*.onnx"_s}});
+        if (!file.isEmpty())
+            m_ocrPackage->preciseModel()->installFile(file);
+    });
+    connect(package->preciseModel(), &OcrModel::ownRequested, this, [this] {
+        const QString file = shell::pickFile(nullptr, OcrModel::tr("选择自己的识别模型（PP-OCR 的 rec 模型，ONNX）"),
+            {{OcrModel::tr("识别模型"), u"*.onnx"_s}});
+        if (!file.isEmpty())
+            m_ocrPackage->preciseModel()->useOwnFile(file);
     });
 }
 
@@ -290,6 +305,14 @@ void SettingsEditor::setShowFileSize(bool on)
     if (m_settings.showFileSize == on)
         return;
     m_settings.showFileSize = on;
+    commit();
+}
+
+void SettingsEditor::setTypeCounts(bool on)
+{
+    if (m_settings.typeCounts == on)
+        return;
+    m_settings.typeCounts = on;
     commit();
 }
 
@@ -2728,6 +2751,48 @@ void SettingsEditor::setClipboardImportDone(const clipimport::Report& report, co
     emit clipboardImportChanged();
 }
 
+void SettingsEditor::backUpClipboard()
+{
+    if (m_clipboardBackupBusy || m_clipboardImporting)
+        return;
+    const HWND owner = m_window ? reinterpret_cast<HWND>(m_window->winId()) : nullptr;
+    const QString path = shell::pickSaveFile(owner, tr("备份剪贴板历史"),
+        clipbackup::fileName(QDateTime::currentDateTime()), tr("Win顺 剪贴板备份"), u"zip"_s);
+    if (path.isEmpty())
+        return;
+    m_clipboardBackupBusy = true;
+    m_clipboardBackupMessage = tr("正在备份…");
+    emit clipboardBackupChanged();
+    emit clipboardBackupRequested(path);
+}
+
+QString SettingsEditor::pickClipboardBackup()
+{
+    if (m_clipboardBackupBusy || m_clipboardImporting)
+        return {};
+    const HWND owner = m_window ? reinterpret_cast<HWND>(m_window->winId()) : nullptr;
+    return QDir::toNativeSeparators(shell::pickFile(owner, tr("选择要还原的剪贴板备份"),
+        {{tr("Win顺 剪贴板备份"), u"*.zip"_s}, {tr("所有文件"), u"*.*"_s}}));
+}
+
+void SettingsEditor::restoreClipboard(const QString& path)
+{
+    if (m_clipboardBackupBusy || m_clipboardImporting || path.isEmpty())
+        return;
+    m_clipboardBackupBusy = true;
+    m_clipboardBackupMessage = tr("正在检查备份…");
+    emit clipboardBackupChanged();
+    emit clipboardRestoreRequested(path);
+}
+
+void SettingsEditor::setClipboardBackupDone(const QString& message, bool stays)
+{
+    m_clipboardBackupBusy = false;
+    m_clipboardBackupStays = stays;
+    m_clipboardBackupMessage = message;
+    emit clipboardBackupChanged();
+}
+
 bool SettingsEditor::addClipboardExcludedApp(const QString& name)
 {
     if (!addProgram(m_settings.clipboardExcludedApps, name))
@@ -4663,6 +4728,12 @@ void SettingsEditor::forgetMessages()
     if (!m_clipboardImporting && !m_clipboardImportMessage.isEmpty()) {
         m_clipboardImportMessage.clear();
         emit clipboardImportChanged();
+    }
+    if (m_clipboardBackupStays) {
+        m_clipboardBackupStays = false; // seen this once
+    } else if (!m_clipboardBackupBusy && !m_clipboardBackupMessage.isEmpty()) {
+        m_clipboardBackupMessage.clear();
+        emit clipboardBackupChanged();
     }
     if (!m_mcpSkillBusy)
         setMcpMessage({});
