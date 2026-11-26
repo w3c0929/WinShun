@@ -196,7 +196,8 @@
 //                      MB and the process's peak commit so far (one query
 //                      at --limit 100,50000: the large limit should not
 //                      move it)
-//   wsbench --plugin FOLDER --query "TEXT" [--runs N] [--setting KEY=VALUE ...] [--action ID] [--app-dir DIR]
+//   wsbench --plugin FOLDER --query "TEXT" [--runs N] [--setting KEY=VALUE ...] [--action ID] [--status-action ID]
+//           [--linger MS] [--data DIR] [--app-dir DIR]
 //                      a plugin (src/plugin) as the app runs it: checks its
 //                      plugin.json, starts it through WinShunPluginHost.exe
 //                      (next to wsbench), prints the items of the first
@@ -207,7 +208,12 @@
 //                      gives the plugin a declared setting's value (what the
 //                      settings page would); --action runs that action on
 //                      the first item of the first answer and prints the
-//                      effects. A plugin with `elevated`: what its start
+//                      effects; --status-action clicks a button of its
+//                      card once its status offers it; the status lines
+//                      are printed as they change; --linger keeps it
+//                      running that long after; --data keeps the plugins'
+//                      data folders there (a download stays). A plugin
+//                      with `elevated`: what its start
 //                      comes to is printed (wsbench run as administrator
 //                      plays an elevated Win顺); --confirm-elevated first
 //                      confirms its files as the card's 确认 does
@@ -316,6 +322,7 @@
 #include "TextUtil.h"
 #include "Tools.h"
 #include "platform/PaddleOcr.h"
+#include "platform/OcrTable.h"
 #include "platform/SystemSwitches.h"
 #include "Unc.h"
 #include "WebShortcut.h"
@@ -4754,9 +4761,10 @@ int runShare(QStringList args)
         args.remove(at, 2);
     }
     options.shortNames = args.removeAll(u"--short-names"_s) > 0;
+    const bool tried = args.removeAll(u"--tried"_s) > 0; // as with someone at the computer: share::Width finds how many
     const bool lifecycle = args.removeAll(u"--indexer"_s) > 0;
     if (args.isEmpty()) {
-        std::printf("wsbench --share \\\\host\\share [--threads N] [--rounds N] [--buffer KB] [--short-names] [--watch S] [--indexer]\n");
+        std::printf("wsbench --share \\\\host\\share [--threads N] [--tried] [--rounds N] [--buffer KB] [--short-names] [--watch S] [--indexer]\n");
         return 1;
     }
     const std::wstring path = ws::unc::normalize(args.first().toStdWString());
@@ -4868,15 +4876,18 @@ int runShare(QStringList args)
         ws::share::Lister lister(crawler, path, options, stop);
         std::vector<ws::EntryId> gone;
         ws::Crawler::SyncStats stats;
+        ws::share::Width width([&] { return ws::share::Width::Limit {threads, tried}; });
+        const ws::Crawler::Gate gate {[&](std::stop_token stopped) { return width.enter(stopped); },
+            [&](std::optional<std::size_t> items) { width.leave(items); }};
         t.restart();
         crawler.sync(index, {{root, path, ws::EntryFlag::Remote}}, threads, false, stop.get_token(),
-            [&](const ws::Crawler::Root& dir, ws::DirListing& out) { return lister(dir, out); }, &gone, &stats);
+            [&](const ws::Crawler::Root& dir, ws::DirListing& out) { return lister(dir, out); }, &gone, &stats, &gate);
         const double ms = msSince(t);
-        std::printf("round %d: %.0f ms  folders %zu (%.0f/s, %.2f ms each)  items %zu  failed %zu  denied %zu  gone %zu"
-                    "  problem %s (error %lu)%s\n",
+        std::printf("round %d: %.0f ms  folders %zu (%.0f/s, %.2f ms each)  at a time %.1f (%d at most)  items %zu  failed %zu"
+                    "  denied %zu  gone %zu  problem %s (error %lu)%s\n",
             r + 1, ms, stats.listed, stats.listed / (ms / 1000.0), ms / std::max<std::size_t>(1, stats.listed),
-            stats.items, stats.failed, lister.deniedFolders(), gone.size(), problemName(lister.problem()),
-            lister.firstError(), lister.stoppedPass() ? "  [pass stopped]" : "");
+            width.mean(), width.widest(), stats.items, stats.failed, lister.deniedFolders(), gone.size(),
+            problemName(lister.problem()), lister.firstError(), lister.stoppedPass() ? "  [pass stopped]" : "");
     }
     {
         const auto lock = index.readLock();
@@ -4960,8 +4971,18 @@ int runPlugin(QStringList args)
         lingerMs = std::max(0, args[at + 1].toInt());
         args.remove(at, 2);
     }
+    QString statusActionId; // --status-action ID: click that button of the plugin's card once its status offers it
+    if (const qsizetype at = args.indexOf(u"--status-action"_s); at >= 0 && at + 1 < args.size()) {
+        statusActionId = args[at + 1];
+        args.remove(at, 2);
+    }
+    QString dataRoot; // --data DIR: the plugins' data folders there, kept after (a download, a model)
+    if (const qsizetype at = args.indexOf(u"--data"_s); at >= 0 && at + 1 < args.size()) {
+        dataRoot = QDir::fromNativeSeparators(args[at + 1]);
+        args.remove(at, 2);
+    }
     if (folder.isEmpty() || query.isEmpty()) {
-        std::printf("usage: wsbench --plugin FOLDER --query \"TEXT\" [--runs N] [--setting KEY=VALUE ...] [--action ID [--linger MS]] [--app-dir DIR]\n");
+        std::printf("usage: wsbench --plugin FOLDER --query \"TEXT\" [--runs N] [--setting KEY=VALUE ...] [--action ID] [--status-action ID] [--linger MS] [--data DIR] [--app-dir DIR]\n");
         return 1;
     }
     const QFileInfo info(folder);
@@ -4985,11 +5006,16 @@ int runPlugin(QStringList args)
         !manifest->runtime ? "zero-code" : manifest->runtime->mode == ws::plugin::RunMode::Resident ? "resident" : "once",
         static_cast<long long>(manifest->commands.size()));
 
+    // A number setting given on the command line is a number, as the page saves it.
+    for (const ws::plugin::Setting& setting : manifest->settings) {
+        if (setting.type == u"number" && pluginSettings.value(setting.key).isString())
+            pluginSettings.insert(setting.key, pluginSettings.value(setting.key).toString().toDouble());
+    }
     QTemporaryDir temp;
     ws::plugin::Host::Options options;
     options.userPluginDir = temp.path() + u"/plugins"_s;
     options.bundledPluginDir = info.absolutePath();
-    options.dataRoot = temp.path() + u"/data"_s;
+    options.dataRoot = dataRoot.isEmpty() ? temp.path() + u"/data"_s : dataRoot;
     options.runnerExe = QCoreApplication::applicationDirPath() + u"/WinShunPluginHost.exe"_s;
     options.appDir = appDir;
     options.version = QStringLiteral(WINSHUN_VERSION "-bench");
@@ -4998,6 +5024,21 @@ int runPlugin(QStringList args)
     if (!pluginSettings.isEmpty())
         host.setPluginSettings(manifest->id, pluginSettings);
     QObject::connect(&host, &ws::plugin::Host::logged, [](const QString& line) { std::printf("  log: %s\n", qUtf8Printable(line)); });
+    // What its card would show (winshun/status), each time it changes.
+    QObject::connect(&host, &ws::plugin::Host::reportChanged, [&host](const QString& id) {
+        const std::optional<ws::plugin::Host::Report> report = host.state(id).report;
+        if (!report) {
+            std::printf("  status: (none)\n");
+            return;
+        }
+        QStringList buttons;
+        for (const ws::plugin::Host::Report::Action& a : report->actions)
+            buttons += a.id + u'=' + a.title;
+        const QString progress = report->progress >= 0 ? u" %1%"_s.arg(report->progress * 100, 0, 'f', 1) : QString();
+        std::printf("  status: [%s]%s %s%s\n", qUtf8Printable(report->tone), qUtf8Printable(progress), qUtf8Printable(report->text),
+            buttons.isEmpty() ? "" : qUtf8Printable(u" {"_s + buttons.join(u", "_s) + u'}'));
+        std::fflush(stdout);
+    });
     if (manifest->permissions.has(ws::plugin::Permission::Elevated)) {
         std::printf("elevated: Win顺 here %s\n", host.hostElevated() ? "is elevated" : "is not elevated");
         if (confirmElevated) {
@@ -5148,6 +5189,28 @@ int runPlugin(QStringList args)
             while (!linger.hasExpired())
                 QCoreApplication::processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMoreEvents, 50);
         }
+    }
+    if (!statusActionId.isEmpty()) {
+        // The card's button, once the status offers it (as a click on it).
+        const QDeadlineTimer offered(15000);
+        const auto offers = [&] {
+            const std::optional<ws::plugin::Host::Report> report = host.state(manifest->id).report;
+            return report && std::ranges::any_of(report->actions, [&](const auto& a) { return a.id == statusActionId; });
+        };
+        while (!offers() && !offered.hasExpired())
+            QCoreApplication::processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMoreEvents, 50);
+        if (offers()) {
+            std::printf("status action %s\n", qUtf8Printable(statusActionId));
+            host.statusAction(manifest->id, statusActionId);
+        } else {
+            std::printf("status action %s: not offered in 15 s\n", qUtf8Printable(statusActionId));
+            actionOk = false;
+        }
+    }
+    if (actionId.isEmpty() && lingerMs > 0) {
+        const QDeadlineTimer linger(lingerMs);
+        while (!linger.hasExpired())
+            QCoreApplication::processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMoreEvents, 50);
     }
     host.shutdown();
     return cold && actionOk ? 0 : 1;
@@ -6906,6 +6969,29 @@ int runOcr(QStringList args)
         args.remove(at, 2);
     }
     const bool quiet = args.removeAll(u"--quiet"_s) > 0; // the times only
+    QString tablesFile; // --tables FILE: each picture's table (复制为表格) as JSON, {"name": [["cell", ...], ...]}
+    if (const qsizetype at = args.indexOf(u"--tables"_s); at >= 0 && at + 1 < args.size()) {
+        tablesFile = args[at + 1];
+        args.remove(at, 2);
+    }
+    // --table-model FILE: the tables as the screenshot plugin reads them, with the table model (PaddleOcr::readTable)
+    if (const qsizetype at = args.indexOf(u"--table-model"_s); at >= 0 && at + 1 < args.size()) {
+        ws::PaddleOcr::setTableModel(args[at + 1]);
+        args.remove(at, 2);
+    }
+    // --words-only: the tables from where the words stand alone (ocrTable), as before the lines and the model
+    const bool wordsOnly = args.removeAll(u"--words-only"_s) > 0;
+    QString htmlFolder; // --html FOLDER: each table as the clipboard gets it for Excel, <picture>.html
+    if (const qsizetype at = args.indexOf(u"--html"_s); at >= 0 && at + 1 < args.size()) {
+        htmlFolder = args[at + 1];
+        args.remove(at, 2);
+    }
+    // --as-capture: each picture made larger first as the screenshot plugin
+    // does for one taken at the scale in its name ("table@125.png": 125%).
+    const bool asCapture = args.removeAll(u"--as-capture"_s) > 0;
+    if (args.removeAll(u"--trace"_s) > 0) // each step of every reading (PaddleOcr::setTrace)
+        ws::PaddleOcr::setTrace([](const QString& step) { std::printf("  %ls\n", qUtf16Printable(step)); });
+    QJsonObject tables;
     QStringList files;
     for (const QString& arg : std::as_const(args)) {
         if (QFileInfo(arg).isDir()) {
@@ -6916,7 +7002,7 @@ int runOcr(QStringList args)
         }
     }
     if (files.isEmpty()) {
-        std::printf("wsbench --ocr <picture or folder>... [--threads N] [--quiet]\n");
+        std::printf("wsbench --ocr <picture or folder>... [--threads N] [--quiet] [--as-capture] [--trace] [--tables FILE [--table-model FILE] [--words-only] [--html FOLDER]]\n");
         return 1;
     }
     QElapsedTimer t;
@@ -6931,16 +7017,52 @@ int runOcr(QStringList args)
     std::vector<double> times;
     for (const QString& file : std::as_const(files)) {
         const QImage image(file);
+        double larger = 1.0;
+        if (asCapture) {
+            const QString name = QFileInfo(file).completeBaseName();
+            const double dpr = name.contains(u'@') ? name.section(u'@', -1).toDouble() / 100 : 1.0;
+            const double scale = dpr >= 1.5 ? 1.0 : std::min(2.0, 2000.0 / image.width()); // capture::ocrUpscale
+            larger = scale >= 1.25 ? scale : 1.0;
+        }
         t.start();
         QStringList lines;
-        const bool ok = ocr->read(image, &lines, &error);
+        QList<QStringList> table;
+        bool ok = false;
+        if (!tablesFile.isEmpty() && !wordsOnly) {
+            ws::OcrTable seen;
+            ok = ocr->readTable(image, larger, &lines, &seen, &error);
+            table = seen.rows;
+            if (!htmlFolder.isEmpty() && !seen.isEmpty()) {
+                QFile page(QDir(htmlFolder).filePath(QFileInfo(file).completeBaseName() + u".html"_s));
+                if (QDir().mkpath(htmlFolder) && page.open(QIODevice::WriteOnly))
+                    page.write("<html><head><meta charset=\"utf-8\"></head><body>" + seen.html().toUtf8() + "</body></html>");
+            }
+        } else {
+            const QImage read = larger > 1.0 ? image.scaled(static_cast<int>(std::lround(image.width() * larger)),
+                                                   static_cast<int>(std::lround(image.height() * larger)), Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                                             : image;
+            ok = ocr->read(read, &lines, &error, tablesFile.isEmpty() ? nullptr : &table);
+        }
         times.push_back(msSince(t));
+        if (!tablesFile.isEmpty()) {
+            QJsonArray rows;
+            for (const QStringList& row : std::as_const(table))
+                rows.append(QJsonArray::fromStringList(row));
+            tables.insert(QFileInfo(file).completeBaseName(), rows);
+        }
         std::printf("%ls\t%dx%d\t%.0f ms\t%ls\n", qUtf16Printable(QFileInfo(file).fileName()), image.width(), image.height(),
             times.back(), qUtf16Printable(!ok ? u"FAILED: "_s + error : quiet ? QString() : lines.join(u" | "_s)));
     }
     std::ranges::sort(times);
     std::printf("%zu pictures: median %.0f ms, 90%% %.0f ms, slowest %.0f ms, all %.1f s\n", times.size(),
         times[times.size() / 2], times[times.size() * 9 / 10], times.back(), std::accumulate(times.begin(), times.end(), 0.0) / 1000);
+    if (!tablesFile.isEmpty()) {
+        QFile out(tablesFile);
+        if (!out.open(QIODevice::WriteOnly) || out.write(QJsonDocument(tables).toJson()) < 0) {
+            std::printf("Could not write %ls\n", qUtf16Printable(tablesFile));
+            return 1;
+        }
+    }
     return 0;
 }
 

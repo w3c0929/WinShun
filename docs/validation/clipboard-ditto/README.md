@@ -2,7 +2,7 @@
 
 用户反馈：“如果剪贴板功能能够支持复制重复项以及自定义粘贴快捷键，那么连 Ditto 也可以替换掉了”。做了两件事：
 
-- **保留重复项**（`[Clipboard] KeepDuplicates`，默认关）：再复制一次已有的内容也记成新的一条；紧接着重复复制（连按 `Ctrl+C`）仍只记一条，从剪贴板粘贴出去不算复制。
+- **保留重复项**（`[Clipboard] KeepDuplicates`，默认关）：再复制一次已有的内容也记成新的一条；连着复制同样的内容也各记一条（0.48.0 之后改：此前与最新一条相同的一律并入，未开“粘贴后保持位置”时粘贴过的条目再复制就不新增），只有半秒内的重复写入算同一次复制；从剪贴板粘贴出去不算复制。
 - **单条内容的快捷键**（`clips.hotkey`）：右键一条 →“设置快捷键…”→ 设置窗口打开到 **剪贴板 › 快捷键 › 单条内容的快捷键** 的这一条并开始录制；之后在任何程序里按下就粘贴这一条。设了的放进“固定”；一键一条；和 Win顺 自身快捷键冲突、被他程序占用时在该行下用红字说明；按键一览里列出。
 
 ## 验证
@@ -11,6 +11,7 @@
 |---|---|
 | `ctest -R "^(tst_clipboard\|tst_aisettings\|tst_keycaps\|tst_settings\|tst_cliplifecycle\|tst_mcp\|tst_clipselect\|tst_clipboarddisplay)$"` | 全部通过。`tst_clipboard` 新增 `duplicatesKeptWhenAsked`、`entryHotkeys`（含“让出的键、去掉的键重开后仍为空”）、`hotkeyColumnAddedToAnOldHistory`。 |
 | `WinShun.exe --probe-runtime <目录> --entry-hotkey-check`（`WINSHUN_TEST_NO_CLIP_HISTORY=1`，隔离配置，真实 App） | 通过。启动时从历史里注册了 `Ctrl+Alt+Shift+F20`；把另一个进程的文本框切到前台后用 `SendInput` 真按这个键，文本框拿到的是较旧那一条（不是最新一条）；开着保留重复项，粘贴后条目仍是 2 条，快捷键仍在原条目上；系统剪贴板原样还原（6 种格式）。 |
+| `WinShun.exe --probe-runtime <目录> --duplicates-check`，再加 `--keep-place` 跑一遍（`WINSHUN_TEST_NO_CLIP_HISTORY=1`，隔离配置，真实 App 与系统剪贴板；2026-11-26，连续重复改动之后） | 两遍都通过。同样的文字复制一次、隔 1.2 秒再复制一次：2 条；接着相隔 150 毫秒连写两遍：只多 1 条（共 3 条）；用单条快捷键真按键把较旧的一条粘贴进另一个进程的文本框：不新增，未开“粘贴后保持位置”时它到了最前、开着时留在原位；1.2 秒后再复制它的文字：两种设置下都在最前新增一条（该文字共 2 条）。测试复制带 `WinShun.Test.Copy` 标记，只有被测实例记录；Windows 剪贴板历史前后 25 条、Id 完全一致，系统剪贴板原样还原。 |
 | `WinShun.exe --preview-results <目录> --clipboard-entry-hotkey`（真实 QML 剪贴板窗口，临时历史） | 通过。行右侧徽标显示快捷键（键盘图标）；菜单：没设的有“设置快捷键…”，设了的有“更改快捷键（Ctrl+Alt+1）…”和“去掉快捷键”，多选时没有；“设置快捷键…”发出 `hotkeyRequested`；“去掉快捷键”后键清空、仍在固定、待注册列表少一条。系统剪贴板写入线程未启动。 |
 | `WinShun.exe --preview-settings <目录> --entry-hotkey-settings --scale 1.5` | 通过。`showClipboardEntryHotkey` 把该行滚到可见并让它的录制器获得焦点；按 `Ctrl+Alt+K` 后 `clipboardEntryHotkeyRequested(47, "Ctrl+Alt+K")` 发出，录制器停止。 |
 | `--preview-settings --page 7`、`--page 1`（150%，中文和 `--english`） | 布局与其他分区一致；英文无截断。 |

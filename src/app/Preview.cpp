@@ -147,6 +147,13 @@
 
 using namespace Qt::StringLiterals;
 
+QT_BEGIN_NAMESPACE
+// QtGui's own, exported for QTest (qtestmouse.h): mouse input through
+// QGuiApplication, as the system's comes.
+Q_GUI_EXPORT void qt_handleMouseEvent(QWindow* window, const QPointF& local, const QPointF& global, Qt::MouseButtons state,
+    Qt::MouseButton button, QEvent::Type type, Qt::KeyboardModifiers mods, int timestamp);
+QT_END_NAMESPACE
+
 namespace ws::preview {
 
 // Clipboard's paste as far as what it would put on the clipboard
@@ -210,6 +217,20 @@ void pump(int ms)
     do
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     while (timer.elapsed() < ms);
+}
+
+// The left button pressed, moved with or let go at `at` (in the window), as
+// the system's mouse comes: through QGuiApplication, which gives the point
+// its press position and keeps its grabs. A QMouseEvent sent to the window
+// has no press position, so a DragHandler takes the press itself for a drag
+// already made from (0, 0) and loses it to the MouseArea under it.
+void systemMouse(QWindow* window, QEvent::Type type, QPointF at)
+{
+    static int timestamp = 0;
+    timestamp += type == QEvent::MouseButtonRelease ? 1000 : 16; // a press after a release is no double click
+    const Qt::MouseButtons buttons = type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
+    qt_handleMouseEvent(window, at, window->mapToGlobal(at), buttons, type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+        type, Qt::NoModifier, timestamp);
 }
 
 // A window off the screen gets no resize or expose from Windows, so its
@@ -718,6 +739,53 @@ int runPlugins(const QStringList& args)
             QMetaObject::invokeMethod(reset, "clicked");
         pump(200);
         expect("reset", look(), u"tr fy"_s, false, false, false, {}, own);
+        // The command's own shortcut (GitHub #466), recorded on the card:
+        // the INI's Hotkey.main, the recorder (made again with the rows),
+        // where it stands by the keyword's box, and why it does not work
+        // (App's to say: setCommandHotkeyErrors) under the row.
+        {
+            const auto recorder = [&] { return visualNamed(window->contentItem(), u"pluginCommandHotkey-"_s + key); };
+            const auto kept = [&] {
+                const QSettings ini(QSettings::IniFormat, QSettings::UserScope, u"WinShun"_s, u"WinShun"_s);
+                return ini.value(u"Plugin."_s + wordsPlugin + u"/Hotkey.main"_s);
+            };
+            const auto record = [&](const QString& keys) {
+                if (QQuickItem* r = recorder())
+                    QMetaObject::invokeMethod(r, "recorded", Q_ARG(QString, keys));
+                pump(200);
+            };
+            const auto check = [&](const char* what, const QString& keys, const QString& why) {
+                QQuickItem* r = recorder();
+                QQuickItem* box = visualNamed(window->contentItem(), u"pluginKeyword-"_s + key);
+                QQuickItem* note = visualNamed(window->contentItem(), u"pluginCommandHotkeyError-"_s + key);
+                const QRectF at = r ? r->mapRectToScene(QRectF(0, 0, r->width(), r->height())) : QRectF();
+                const QRectF by = box ? box->mapRectToScene(QRectF(0, 0, box->width(), box->height())) : QRectF();
+                // Beside the box on its line, clear of it, or under it from the box's left edge.
+                const bool beside = at.top() == by.top() && at.height() == by.height() && at.left() >= by.right() + 12;
+                const bool under = at.top() >= by.bottom() + 6 && at.left() == by.left();
+                const QVariant ini = kept();
+                const QString said = note && note->isVisible() ? note->property("text").toString() : QString();
+                const bool ok = r && box && note && r->property("hotkey").toString() == keys && ini.isValid() != keys.isEmpty()
+                    && ini.toString() == keys && (beside || under) && by.width() >= 120 && said == why;
+                say(u"#466 command shortcut, %1: recorder [%2] %3 (%4x%5 at %6,%7; box to %8), INI %9, note [%10]: %11"_s
+                        .arg(QString::fromUtf8(what), r ? r->property("hotkey").toString() : u"?"_s, beside ? u"beside"_s : under ? u"under"_s : u"astray"_s)
+                        .arg(at.width()).arg(at.height()).arg(at.left()).arg(at.top()).arg(by.right())
+                        .arg(ini.isValid() ? u'[' + ini.toString() + u']' : u"none"_s, said, ok ? u"passed"_s : u"FAILED"_s));
+                keywords = keywords && ok;
+            };
+            const QString taken = u"“Ctrl+Alt+B” 已被其他程序或系统占用，请换一个。"_s;
+            check("as installed", QString(), QString());
+            record(u"Ctrl+Alt+B"_s);
+            check("recorded", u"Ctrl+Alt+B"_s, QString());
+            editor->plugins()->setCommandHotkeyErrors({{key, taken}});
+            pump(200);
+            check("refused by Windows", u"Ctrl+Alt+B"_s, taken);
+            record(QString()); // Backspace while recording
+            check("cleared", QString(), QString());
+            editor->plugins()->setCommandHotkeyErrors({});
+            record(u"Ctrl+Alt+Shift+F12"_s); // the longest a chord gets, for the picture
+            check("the longest chord", u"Ctrl+Alt+Shift+F12"_s, QString());
+        }
         expect("for the picture", type(quoted), quoted, true, false, true, {}, own);
         if (!keywords)
             qWarning("plugin keyword check failed");
@@ -1764,6 +1832,10 @@ int runSettings(const QStringList& args)
     const QString shareSignIn = u"\\\\nas\\photos"_s;
     const QString shareWsl = u"\\\\wsl.localhost\\Ubuntu-24.04\\home\\me\\项目"_s;
     settings.shares = {{shareOnline, u"公司资料"_s}, {shareSignIn, {}}, {shareWsl, {}}};
+    if (args.contains(u"--share-excluded"_s)) { // a share in a folder of 排除目录: its card says so
+        settings.shares.append({u"\\\\nas\\video"_s, {}});
+        settings.excludedPaths.append(u"\\\\nas\\video"_s);
+    }
     settings.hotkey = u"Alt+Space"_s;
     settings.doubleCtrlExcludedApps = {u"TheFinals.exe"_s};
     settings.clipboardHotkey = u"Win+Alt+V"_s;
@@ -2306,6 +2378,8 @@ int runSettings(const QStringList& args)
         return finish(window, checkOptimizationSettings(window, editor, out));
     if (args.contains(u"--donate-place"_s)) // the 捐赠 button to the 拾穗计划 page and back (GitHub #402)
         return finish(window, checkDonatePlace(window, editor, out));
+    if (args.contains(u"--update-failed"_s)) // the update dialog after a failed install
+        return finish(window, checkUpdateFailed(window, updater, out));
 
     // The three tables, side by side: a page without a keyword entry or a
     // tabs entry would read undefined.
@@ -3076,17 +3150,55 @@ int runSettings(const QStringList& args)
             auto* input = visualNamed(window->contentItem(), u"fileTypeFolder_0"_s);
             check(input && input->isVisible(), "点击范围按钮未展开路径输入框");
         }
-        for (int i = 0; i <= csv; ++i) {
+        // The rows in the strip's order, 文件夹 among the kinds (csv + 1 kinds and it).
+        const std::function<void(QQuickItem*, QQuickItem*)> inside = [&](QQuickItem* row, QQuickItem* item) {
+            for (auto* child : item->childItems()) {
+                if (!child->isVisible())
+                    continue;
+                check(child->mapToItem(row, QPointF(child->width(), 0)).x() <= row->width() + 0.5, "类型或范围控件超出卡片宽度");
+                inside(row, child);
+            }
+        };
+        for (int i = 0; i <= csv + 1; ++i) {
             auto* row = visualNamed(window->contentItem(), u"fileTypeRow_%1"_s.arg(i));
             check(row != nullptr, "文件类型行不存在");
-            if (row) {
-                for (auto* child : row->childItems()) {
-                    if (child->isVisible())
-                        check(child->x() + child->width() <= row->width() + 0.5, "类型或范围控件超出卡片宽度");
-                }
-            }
+            if (row)
+                inside(row, row);
         }
         bool saved = saveGrab(window, out.filePath(u"file-types-top.png"_s));
+        // 文件夹 by its handle two rows down, past 文档 and 图片; then 上移 one back.
+        check(editor->folderChipAt() == 0, "文件夹 is not first");
+        if (auto* first = visualNamed(window->contentItem(), u"fileTypeRow_0"_s); first) {
+            // Its bottom to the third row's (文档's is taller, with its range open).
+            auto* third = visualNamed(window->contentItem(), u"fileTypeRow_2"_s);
+            const qreal by = third ? third->y() + third->height() - first->y() - first->height() : 0;
+            const QPointF grip = first->mapToScene(QPointF(12, 16));
+            systemMouse(window, QEvent::MouseButtonPress, grip);
+            for (int i = 1; i <= 20; ++i) {
+                systemMouse(window, QEvent::MouseMove, grip + QPointF(0, by * i / 20));
+                QCoreApplication::processEvents();
+            }
+            pump(200);
+            settle(window, 2);
+            saved = saveGrab(window, out.filePath(u"file-types-drag.png"_s)) && saved;
+            systemMouse(window, QEvent::MouseButtonRelease, grip + QPointF(0, by));
+            settle(window, 3);
+            check(by > 0 && editor->folderChipAt() == 2, "文件夹's handle did not move it two rows down");
+            check(editor->fileTypes().value(0).toMap().value(u"name"_s).toString() == u"文档", "dragging 文件夹 moved a kind");
+        }
+        editor->moveStripChip(2, 1); // its 上移
+        check(editor->folderChipAt() == 1 && !editor->fileTypesDefault(), "上移 did not move 文件夹, or the order counts as the default");
+        editor->moveStripChip(3, 0); // a kind to the top, 文件夹 after it as before
+        check(editor->fileTypes().value(0).toMap().value(u"name"_s).toString() == u"视频" && editor->folderChipAt() == 2,
+            "moving a kind to the top did not keep 文件夹 where it was");
+        editor->removeFileType(0); // 视频 gone: 文件夹 stays after 文档
+        check(editor->folderChipAt() == 1, "removing a kind before 文件夹 did not keep it after the same kind");
+        editor->resetFileTypes();
+        check(editor->folderChipAt() == 0, "恢复默认 did not put 文件夹 first");
+        check(editor->addFileType(u"工作 CSV"_s, u"csv"_s).isEmpty() && editor->setFileTypeKeyword(csv, u"cw"_s).isEmpty()
+                && editor->setFileTypeFolder(csv, u"H:\\__work__"_s).isEmpty(),
+            "putting the range example back failed");
+        settle(window, 3);
         // The quick filters, below the types on the same tab.
         check(editor->quickFilters().isEmpty(), "quick filters: some before any was added");
         check(!editor->addQuickFilter(u" "_s, u"ext:pdf"_s).isEmpty(), "quick filters: one with no name was accepted");
@@ -3721,6 +3833,7 @@ int runSettings(const QStringList& args)
         {QCoreApplication::translate("SettingsWindow", "文件夹的子列也列出文件"), integrationPage, 2}, // GitHub #384
         {QCoreApplication::translate("SettingsWindow", "对话框旁的搜索框"), integrationPage, 3}, // 对话框
         {QCoreApplication::translate("SettingsWindow", "在 Directory Opus 里直接打字搜索"), integrationPage, 1},
+        {QCoreApplication::translate("SettingsWindow", "结果行按钮"), resultsPage, 1}, // its keys, with their icons
         {u"AI"_s, aiPage, 0},
         {u"命令行"_s, aiPage, 0},
         {u"ws"_s, aiPage, 0},
@@ -3889,7 +4002,7 @@ int runSettings(const QStringList& args)
 // GitHub #186: the preview window by the real launcher on the real screen
 // (GetWindowRect, physical): beside it while there is room (a launcher in
 // the middle of the screen), and with no room, never over the names.
-void checkPreviewPlacement(Launcher& launcher, QQuickWindow* window, FilePreview& preview)
+void checkPreviewPlacement(Launcher& launcher, QQuickWindow* window, FilePreview& preview, const QDir* output = nullptr)
 {
     const auto check = [](bool okay, const QString& name) {
         if (!okay) qWarning("preview placement regression: %s", qUtf8Printable(name));
@@ -3943,6 +4056,73 @@ void checkPreviewPlacement(Launcher& launcher, QQuickWindow* window, FilePreview
             check(QRect(QPoint(work.left, work.top), QPoint(work.right - 1, work.bottom - 1)).contains(previewRect),
                 u"the preview stays in the work area"_s);
         }
+        preview.close();
+        pump(50);
+    }
+    // Enlarged (the key in its header, a double click on the header): the
+    // work area's whole height, the launcher's names still never under it,
+    // the same size for the next file; and back as it was.
+    {
+        const QSize size(760, 480);
+        window->setGeometry(area.left() + (area.width() - size.width()) / 2, area.top() + area.height() * 2 / 5, size.width(), size.height());
+        settle(window);
+        const auto showAndWait = [&](const FilePreview::Item& file) {
+            preview.show(file);
+            QElapsedTimer loaded;
+            loaded.start();
+            while ((preview.kind() == FilePreview::Loading || !preview.isShowing(file.path) || !preview.window()
+                       || !preview.window()->isVisible())
+                && loaded.elapsed() < 3000)
+                pump(10);
+            pump(100);
+        };
+        showAndWait(item);
+        QQuickWindow* shown = preview.window();
+        QQuickItem* key = shown ? visualNamed(shown->contentItem(), u"previewEnlarge"_s) : nullptr;
+        check(key && key->isVisible() && !preview.enlarged(), u"enlarged: the key is in the header, off at first"_s);
+        if (key) {
+            const auto hwnd = reinterpret_cast<HWND>(shown->winId());
+            const qreal dpr = shown->devicePixelRatio();
+            const auto screenPoint = [&](QPointF scene) {
+                RECT bounds {};
+                ::GetWindowRect(hwnd, &bounds);
+                return MAKELPARAM(bounds.left + qRound(scene.x() * dpr), bounds.top + qRound(scene.y() * dpr));
+            };
+            const QRect usual = physical(shown);
+            const QPointF onKey = key->mapToScene({key->width() / 2, key->height() / 2});
+            check(::SendMessageW(hwnd, WM_NCHITTEST, 0, screenPoint(onKey)) == HTCLIENT, u"enlarged: the key is the window's own, not a drag of it"_s);
+            systemMouse(shown, QEvent::MouseButtonPress, onKey);
+            systemMouse(shown, QEvent::MouseButtonRelease, onKey);
+            pump(150);
+            const QRect large = physical(shown), launcherRect = physical(window);
+            MONITORINFO monitor {.cbSize = sizeof(MONITORINFO)};
+            ::GetMonitorInfoW(::MonitorFromWindow(reinterpret_cast<HWND>(window->winId()), MONITOR_DEFAULTTONEAREST), &monitor);
+            const QRect work(QPoint(monitor.rcWork.left, monitor.rcWork.top), QPoint(monitor.rcWork.right - 1, monitor.rcWork.bottom - 1));
+            const int gap = qCeil(8 * dpr) + 2;
+            say(u"preview placement (enlarged): launcher %1,%2 %3x%4, preview %5,%6 %7x%8, before %9x%10 (physical)"_s
+                    .arg(launcherRect.x()).arg(launcherRect.y()).arg(launcherRect.width()).arg(launcherRect.height())
+                    .arg(large.x()).arg(large.y()).arg(large.width()).arg(large.height()).arg(usual.width()).arg(usual.height()));
+            check(preview.enlarged() && large.width() > usual.width() && large.height() > usual.height(),
+                u"enlarged: a click on the key did not enlarge the window"_s);
+            check(work.contains(large) && large.top() - work.top() <= gap && work.bottom() - large.bottom() <= gap
+                    && work.right() - large.right() <= gap,
+                u"enlarged: not the work area's height to its right edge"_s);
+            check(large.left() >= launcherRect.left() + launcherRect.width() * 40 / 100 - 1, u"enlarged: the preview covered the names"_s);
+            const QString next = launcher.results()->pathAt(1);
+            showAndWait({next, QFileInfo(next).fileName()});
+            check(physical(shown) == large, u"enlarged: the next file changed the window's size"_s);
+            if (output)
+                check(saveGrab(shown, output->filePath(u"preview-enlarged.png"_s)), u"enlarged: screenshot"_s);
+            QQuickItem* header = key->parentItem() ? key->parentItem()->parentItem() : nullptr;
+            const QPointF onHeader = header ? header->mapToScene({header->width() / 3, header->height() / 2}) : QPointF();
+            check(header && ::SendMessageW(hwnd, WM_NCHITTEST, 0, screenPoint(onHeader)) == HTCAPTION, u"enlarged: the header still drags the window"_s);
+            ::SendMessageW(hwnd, WM_NCLBUTTONDBLCLK, HTCAPTION, screenPoint(onHeader));
+            pump(150);
+            showAndWait(item);
+            check(!preview.enlarged() && physical(shown).size() == usual.size(),
+                u"enlarged: a double click on the header did not put it back"_s);
+        }
+        preview.setEnlarged(false);
         preview.close();
         pump(50);
     }
@@ -5030,7 +5210,7 @@ bool checkShortcutPanels(QQmlEngine* engine, const QDir& output)
                 return false;
             };
             check(shown(u"deleteAction"_s) && shown(u"copyPathAction"_s), u"launcher: a file's row has its delete button"_s);
-            launcher.setRowDeleteButton(false);
+            launcher.setRowActions({u"admin"_s, u"reveal"_s, u"terminal"_s, u"copy"_s, u"copyPath"_s});
             settle(window);
             check(!shown(u"deleteAction"_s) && shown(u"copyPathAction"_s),
                 u"launcher: the delete button goes with its setting, the other buttons stay"_s);
@@ -5039,9 +5219,45 @@ bool checkShortcutPanels(QQmlEngine* engine, const QDir& output)
                 u"launcher: quick context menu directly offers Move to Recycle Bin with danger styling"_s);
             check(menuHasAction(0, Launcher::SystemMenu), u"launcher: the row's menu still leads to Windows' own"_s);
             saveGrab(window, output.filePath(u"row-without-delete.png"_s));
-            launcher.setRowDeleteButton(true);
+            launcher.setRowActions(rowactions::defaults());
             settle(window);
             check(shown(u"deleteAction"_s), u"launcher: the delete button is back with its setting"_s);
+
+            // The buttons chosen and ordered in the settings (Results/RowActions):
+            // only those named, left to right as named; the ones that are not
+            // there by default too.
+            {
+                const auto lefts = [&](const QStringList& names) {
+                    QList<qreal> xs;
+                    QQuickItem* row = visualNamed(window->contentItem(), u"resultRow-0"_s);
+                    for (const QString& name : names) {
+                        QQuickItem* action = row ? visualNamed(row, name) : nullptr;
+                        xs.append(action && action->isVisible() ? action->mapToScene({0, 0}).x() : -1);
+                    }
+                    return xs;
+                };
+                check(!shown(u"previewAction"_s) && !shown(u"copyNameAction"_s) && !shown(u"favoriteAction"_s),
+                    u"row buttons: the ones to be chosen show without having been"_s);
+                launcher.setRowActions({u"delete"_s, u"preview"_s, u"copyPath"_s, u"favorite"_s, u"copyName"_s});
+                settle(window);
+                const QList<qreal> chosen = lefts({u"deleteAction"_s, u"previewAction"_s, u"copyPathAction"_s, u"favoriteAction"_s,
+                    u"copyNameAction"_s});
+                check(std::ranges::all_of(chosen, [](qreal x) { return x >= 0; }) && std::ranges::is_sorted(chosen)
+                        && std::ranges::adjacent_find(chosen) == chosen.end(),
+                    u"row buttons: the chosen five do not stand in the order chosen"_s);
+                check(!shown(u"terminalAction"_s), u"row buttons: one not chosen still shows"_s);
+                saveGrab(window, output.filePath(u"row-buttons-chosen.png"_s));
+                launcher.setRowActions({});
+                settle(window);
+                check(!shown(u"deleteAction"_s) && !shown(u"copyPathAction"_s) && !shown(u"previewAction"_s),
+                    u"row buttons: none chosen, some still show"_s);
+                launcher.setRowActions(rowactions::defaults());
+                settle(window);
+                const QList<qreal> usual = lefts({u"terminalAction"_s, u"copyPathAction"_s, u"deleteAction"_s});
+                check(std::ranges::all_of(usual, [](qreal x) { return x >= 0; }) && std::ranges::is_sorted(usual)
+                        && !shown(u"previewAction"_s),
+                    u"row buttons: back as they come, not in their usual order"_s);
+            }
 
             // Cross-folder multi-select delete in quick context menu (#434):
             // supports files across distinct folders, prunes nested children, skips apps/drive roots,
@@ -5748,7 +5964,7 @@ void checkFileGallery(Launcher& launcher, IndexService& index, SystemCatalog& pl
         "real image search did not produce the gallery rows");
     if (auto* field = visualNamed(window->contentItem(), u"panelSearchField"_s))
         field->setProperty("text", u"测试照片"_s);
-    checkPreviewPlacement(launcher, window, filePreview);
+    checkPreviewPlacement(launcher, window, filePreview, &output);
     checkSearchMenuKeys(launcher, places, window, filePreview, output);
     checkFolderSteps(launcher, index, window, output);
     checkDialogSearchKeys(index, engine, output);
@@ -6784,6 +7000,171 @@ bool checkScopeMemory(QQuickWindow* window, const QDir& output)
             {u"file_type_kept_while_prefix_typed"_s, typedChoiceKept}}).toJson());
     say(passed ? u"scope memory: the scope chosen by tab, Tab or chip comes back at the next start; what only passes is not kept"_s
                : u"scope memory: FAILED (%1)"_s.arg(failures.join(u"; "_s)));
+    return passed;
+}
+
+// The footer's word about pinning (Launcher::tellPinHint): a result opened,
+// the box up again within the minute with the same words. Real Launcher,
+// SearchEngine and index over a temporary folder; what is opened is a folder
+// handed to a folder opener of the check's own, so nothing opens for real.
+bool checkPinHint(QQuickWindow* window, const QDir& output)
+{
+    QTemporaryDir temporary;
+    IndexService index(temporary.path(), IndexService::Options {});
+    AppCatalog apps;
+    SystemCatalog places;
+    apps.setApps(std::make_shared<const AppList>());
+    places.setPlaces(std::make_shared<const PlaceList>());
+    History history(temporary.filePath(u"history.tsv"_s));
+    SearchEngine engine(&index, &apps, &places);
+    const QString stateFile = temporary.filePath(u"state.ini"_s);
+    bool passed = true;
+    QStringList failures;
+    const auto check = [&](bool condition, const QString& message) {
+        if (condition)
+            return;
+        passed = false;
+        failures.append(message);
+        qWarning().noquote() << u"pin hint: "_s + message;
+    };
+    const QStringList names {u"zqpinhint 合同"_s, u"zqpinhint 报价"_s, u"zqother 图纸"_s};
+    {
+        const auto files = index.index();
+        const auto lock = files->writeLock();
+        const auto root = files->addRoot(QDir::toNativeSeparators(temporary.path()).toStdString());
+        for (const QString& name : names) {
+            check(QDir(temporary.path()).mkdir(name), u"could not make the folder "_s + name);
+            files->add(root, name.toStdString(), EntryFlag::Directory);
+        }
+    }
+    const auto told = [&] { return QSettings(stateFile, QSettings::IniFormat).value(u"Hints/PinAfterOpen"_s).toInt(); };
+    QString shownHint;
+    // One run of the program: `body` is what the user does in it.
+    const auto start = [&](const std::function<void(Launcher&)>& body) {
+        Launcher launcher(&index, &apps, &places, &engine, &history);
+        launcher.setWindow(window);
+        launcher.setSwitches(nullptr, stateFile);
+        launcher.setContentOptions(false, {u"txt"_s}, ContentSizeLimits {}, false, false);
+        body(launcher);
+        QElapsedTimer settling;
+        settling.start();
+        while (launcher.searching() && settling.elapsed() < 2000)
+            pump(10);
+        launcher.setSwitches(nullptr, {});
+    };
+    const auto type = [&](Launcher& launcher, const QString& words, int rows) {
+        launcher.setQuery(words);
+        QElapsedTimer timeout;
+        timeout.start();
+        while ((launcher.searching() || launcher.results()->count() != rows) && timeout.elapsed() < 3000)
+            pump(10);
+        check(launcher.results()->count() == rows, u"“%1” found %2 rows, not %3"_s.arg(words).arg(launcher.results()->count()).arg(rows));
+    };
+    // Enter on the first row, the box hidden for it (as App hides it, unless
+    // pinned), and up again: what the footer says then.
+    // `revealed`: as App shows it, the same rows on the screen at once and
+    // searched again only after (finishShownRefresh), which is when it is said.
+    const auto openAndReturn = [&](Launcher& launcher, const QString& wordsOnReturn = {}, bool revealed = false) {
+        int opened = 0, dismissed = 0;
+        launcher.setFolderOpener([&](const QString&) { ++opened; return true; });
+        const auto connection = QObject::connect(&launcher, &Launcher::dismissRequested, &launcher, [&] { ++dismissed; });
+        launcher.trigger(0, Launcher::Open);
+        QObject::disconnect(connection);
+        launcher.setFolderOpener({});
+        check(opened == 1 && dismissed == 1, u"Enter did not open the folder once and ask to be hidden"_s);
+        if (!launcher.pinned())
+            launcher.handleHidden();
+        if (!wordsOnReturn.isEmpty())
+            launcher.setQuery(wordsOnReturn);
+        launcher.handleShown(revealed);
+        if (revealed) {
+            check(!launcher.statusText().contains(u"Ctrl+T"), u"said before the search that would have cleared it"_s);
+            launcher.finishShownRefresh();
+        }
+        return launcher.statusText();
+    };
+    const auto isHint = [](const QString& status) { return status.contains(u"Ctrl+T"); };
+
+    start([&](Launcher& launcher) {
+        type(launcher, u"zqpinhint"_s, 2);
+        check(!isHint(launcher.statusText()) && told() == 0, u"said before anything was opened"_s);
+        shownHint = openAndReturn(launcher);
+        check(isHint(shownHint) && told() == 1, u"opened and back with the same words: not said (“%1”, told %2)"_s.arg(shownHint).arg(told()));
+        // Typing takes it away, as any word in the footer.
+        type(launcher, u"zqpinhint 合"_s, 1);
+        check(!isHint(launcher.statusText()), u"it stayed while typing"_s);
+        // Back with other words: looking for something else, not said.
+        const QString other = openAndReturn(launcher, u"zqother"_s);
+        check(!isHint(other) && told() == 1, u"said though the words had changed"_s);
+    });
+    // The next run: once more, and then never again.
+    start([&](Launcher& launcher) {
+        type(launcher, u"zqpinhint"_s, 2);
+        check(isHint(openAndReturn(launcher, {}, true)) && told() == 2, u"not said a second time (the box revealed first, searched after)"_s);
+        check(!isHint(openAndReturn(launcher)) && told() == 2, u"said a third time"_s);
+    });
+    // Pinned: nothing is hidden, nothing to say; and who has pinned once knows.
+    QFile::remove(stateFile);
+    start([&](Launcher& launcher) {
+        type(launcher, u"zqpinhint"_s, 2);
+        launcher.setPinned(true);
+        check(!isHint(openAndReturn(launcher)), u"said while pinned"_s);
+        launcher.setPinned(false);
+        check(!isHint(openAndReturn(launcher)) && told() == 2, u"said to someone who has pinned before"_s);
+    });
+    // Pinned, a result opened and the box back in front: the list as it was
+    // left (the row, the order, no search), for the next result. With nothing
+    // typed, the start list shown anew.
+    start([&](Launcher& launcher) {
+        type(launcher, u"zqpinhint"_s, 2);
+        launcher.setPinned(true);
+        launcher.setCurrentRow(1);
+        const QString second = launcher.results()->at(1)->path;
+        int opened = 0, replaced = 0, forward = 0, shown = 0;
+        launcher.setFolderOpener([&](const QString&) { ++opened; return true; });
+        launcher.trigger(1, Launcher::Open);
+        launcher.setFolderOpener({});
+        const auto c1 = QObject::connect(&launcher, &Launcher::resultsReplaced, &launcher, [&] { ++replaced; });
+        const auto c2 = QObject::connect(&launcher, &Launcher::broughtForward, &launcher, [&] { ++forward; });
+        const auto c3 = QObject::connect(&launcher, &Launcher::shown, &launcher, [&] { ++shown; });
+        launcher.handleBroughtForward();
+        pump(300);
+        check(opened == 1 && forward == 1 && shown == 0, u"pinned and back in front: not told as such (%1 %2 %3)"_s.arg(opened).arg(forward).arg(shown));
+        check(!launcher.searching() && replaced == 0, u"pinned and back in front: searched again"_s);
+        check(launcher.currentRow() == 1 && launcher.results()->count() == 2 && launcher.results()->at(1)->path == second,
+            u"pinned and back in front: the row or the order changed"_s);
+        // 已打开: the row opened, not the other; kept as the same words are
+        // searched again, forgotten with other words.
+        const QString first = launcher.results()->at(0)->path;
+        const auto tagged = [&](int row) { return launcher.results()->data(launcher.results()->index(row), ResultModel::OpenedRole).toBool(); };
+        check(tagged(1) && !tagged(0), u"opened: the row opened is not the one tagged"_s);
+        launcher.handleShown();
+        pump(300);
+        check(launcher.results()->opened(second) && !launcher.results()->opened(first), u"opened: lost as the same words were searched again"_s);
+        launcher.setQuery({});
+        pump(300);
+        check(!launcher.results()->opened(second), u"opened: kept with other words"_s);
+        launcher.setQuery(u"zqpinhint"_s);
+        pump(300);
+        check(!launcher.results()->opened(second), u"opened: back with the words typed again"_s);
+        launcher.setQuery({});
+        pump(300);
+        forward = shown = 0;
+        launcher.handleBroughtForward();
+        pump(100);
+        check(shown == 1 && forward == 0, u"nothing typed: the start list was not shown anew"_s);
+        QObject::disconnect(c1);
+        QObject::disconnect(c2);
+        QObject::disconnect(c3);
+        launcher.setPinned(false);
+    });
+
+    QFile report(output.filePath(u"pin-hint.json"_s));
+    if (report.open(QIODevice::WriteOnly))
+        report.write(QJsonDocument(QJsonObject {{u"passed"_s, passed}, {u"failures"_s, QJsonArray::fromStringList(failures)},
+            {u"hint"_s, shownHint}}).toJson());
+    say(passed ? u"pin hint: said when a result was opened and the box came back with the same words, twice at most, never once pinned (“%1”)"_s.arg(shownHint)
+               : u"pin hint: FAILED (%1)"_s.arg(failures.join(u"; "_s)));
     return passed;
 }
 
@@ -10096,6 +10477,228 @@ bool checkTypeStripCounts(QQmlEngine* qml, const QDir& output)
     return ok;
 }
 
+// --preview-results <dir> --type-strip-drag: 文件's chips held and dragged with
+// the mouse, as the user does it. 文件夹 and the kinds go anywhere after 不限
+// (Launcher.moveFileChip, applied as the app applies it: Settings::moveStripChip,
+// then setFileTypes); the others make way while one is dragged; the kind chosen
+// and the numbers stay with their kinds; Ctrl+Tab goes in the new order; a press
+// without a drag is still a click; 不限 stays first; with more kinds than room,
+// one held at the end scrolls the strip on.
+bool checkTypeStripDrag(QQmlEngine* qml, const QDir& output)
+{
+    static QtMessageHandler counted = nullptr;
+    static int loops = 0;
+    loops = 0;
+    counted = qInstallMessageHandler([](QtMsgType type, const QMessageLogContext& context, const QString& message) {
+        if (message.contains(u"Binding loop detected"_s))
+            ++loops;
+        counted(type, context, message);
+    });
+    const auto restore = qScopeGuard([] { qInstallMessageHandler(counted); });
+    QTemporaryDir temporary;
+    IndexService index(temporary.filePath(u"index"_s), IndexService::Options{});
+    AppCatalog apps;
+    SystemCatalog places;
+    apps.setApps(std::make_shared<const AppList>());
+    places.setPlaces(std::make_shared<const PlaceList>());
+    History history(temporary.filePath(u"history.tsv"_s));
+    SearchEngine search(&index, &apps, &places);
+    Launcher launcher(&index, &apps, &places, &search, &history);
+    Settings settings;
+    for (const auto& [name, extension] : {std::pair {u"文档"_s, u"docx"_s}, {u"图片"_s, u"jpg"_s}, {u"视频"_s, u"mp4"_s},
+             {u"音频"_s, u"mp3"_s}, {u"压缩包"_s, u"zip"_s}})
+        settings.fileTypes.append(FileType {name, {extension}});
+    int moves = 0;
+    QObject::connect(&launcher, &Launcher::fileChipMoveRequested, &launcher, [&](int from, int to) {
+        ++moves;
+        if (settings.moveStripChip(from, to))
+            launcher.setFileTypes(settings.fileTypes, settings.folderChipAt);
+    });
+    launcher.setFileTypes(settings.fileTypes, settings.folderChipAt);
+    ClipStore store(temporary.filePath(u"clipboard"_s));
+    if (!store.open(QDateTime::currentMSecsSinceEpoch())) return false;
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Launcher"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(qml, u"WinShun"_s, u"Main"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {u"launcher"_s, QVariant::fromValue(&launcher)}, {u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"frame"_s, QVariant::fromValue(&frame)}, {u"placement"_s, QVariant::fromValue(&placement)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { say(component.errorString()); return false; }
+    window->create();
+    launcher.setWindow(window);
+    frame.setWindow(window);
+    placement.setWindow(window);
+    showOffScreen(window);
+    bool ok = true;
+    const auto check = [&](bool condition, const char* reason) {
+        ok = condition && ok;
+        if (!condition) qWarning("type strip drag regression: %s", reason);
+    };
+    auto* strip = visualNamed(window->contentItem(), u"searchTypeStrip"_s);
+    if (!strip) { check(false, "there is no strip"); return false; }
+    launcher.setScope(Launcher::Files);
+    launcher.toggleFileType(1); // 图片
+    settle(window);
+    // all, folders, then 文档 图片 视频 音频 压缩包
+    launcher.setFileTypeCounts({QVariant(100), QVariant(7), QVariant(10), QVariant(11), QVariant(12), QVariant(13), QVariant(14)});
+    settle(window);
+
+    const auto chipOf = [&](int type) { return visualNamed(window->contentItem(), u"searchTypeChip%1"_s.arg(type)); };
+    const auto countOn = [&](int type) {
+        QQuickItem* chip = chipOf(type);
+        QQuickItem* tag = chip ? visualNamed(chip, u"searchTypeChipCount"_s) : nullptr;
+        return tag ? tag->property("count").toInt() : -100;
+    };
+    const auto order = [&] {
+        QStringList names;
+        for (const QVariant& chip : strip->property("chips").toList())
+            names.append(chip.toMap().value(u"name"_s).toString());
+        return names;
+    };
+    const auto centre = [&](QQuickItem* item) { return item->mapToScene(QPointF(item->width() / 2, item->height() / 2)); };
+    // Pressed on the chip, moved sideways by `by` (inside the window) a few
+    // pixels at a time, held `hold` ms, `midway` before it is let go; then
+    // the glide into its place.
+    const auto drag = [&](QQuickItem* chip, qreal by, const std::function<void()>& midway, int hold = 0) {
+        const QPointF from = centre(chip);
+        by = std::clamp(from.x() + by, 2.0, window->width() - 2.0) - from.x();
+        systemMouse(window, QEvent::MouseButtonPress, from);
+        const int steps = std::max(1, static_cast<int>(std::abs(by) / 4));
+        for (int i = 1; i <= steps; ++i) {
+            systemMouse(window, QEvent::MouseMove, from + QPointF(by * i / steps, 0));
+            QCoreApplication::processEvents();
+        }
+        pump(250 + hold); // the others make way
+        settle(window, 2);
+        if (midway)
+            midway();
+        systemMouse(window, QEvent::MouseButtonRelease, from + QPointF(by, 0));
+        pump(300);
+        settle(window, 2);
+    };
+    // The chips shown side by side as they rest: none over another, the gaps
+    // between the kinds the row's, each on a whole device pixel.
+    // (Scrolling, the room left is shared out between the gaps: as wide each,
+    // and the first chip shown starts at the view's left edge, none left out before it.)
+    const qreal dpr = window->effectiveDevicePixelRatio();
+    auto* view = visualNamed(strip, u"searchTypeView"_s);
+    if (!view) { check(false, "there is no view of the chips"); return false; }
+    const auto laidOut = [&](const char* when) {
+        const QVariantList chips = strip->property("chips").toList();
+        qreal right = -1;
+        qreal gap = strip->property("scrolls").toBool() ? -1 : 4;
+        for (int i = 0; i < chips.size(); ++i) {
+            QQuickItem* chip = chipOf(chips.at(i).toMap().value(u"type"_s).toInt());
+            if (!chip || !chip->property("whole").toBool())
+                continue;
+            const qreal left = chip->mapToScene(QPointF(0, 0)).x();
+            if (right < 0 && strip->property("scrolls").toBool()
+                && (i != strip->property("firstChip").toInt() || std::abs(left - view->mapToScene(QPointF(0, 0)).x()) > 0.6)) {
+                qWarning("type strip drag regression: %s: chip %d is the first shown, %.2f from the left edge; firstChip is %d", when, i,
+                    left - view->mapToScene(QPointF(0, 0)).x(), strip->property("firstChip").toInt());
+                ok = false;
+            }
+            if (right >= 0 && i > 1 && gap < 0)
+                gap = left - right;
+            if (right >= 0 && (left < right - 0.5 || (i > 1 && std::abs(left - right - gap) > 0.6))) {
+                qWarning("type strip drag regression: %s: chip %d starts at %.2f, the one before ends at %.2f", when, i, left, right);
+                ok = false;
+            }
+            check(std::abs(left * dpr - std::round(left * dpr)) < 0.01, "a chip is not on a whole device pixel");
+            check(chip->property("way").toReal() == 0 && !chip->property("dragged").toBool(), "a chip still makes way or is dragged");
+            right = left + chip->width();
+        }
+    };
+    laidOut("at the start");
+    check(order() == QStringList({u"不限"_s, u"文件夹"_s, u"文档"_s, u"图片"_s, u"视频"_s, u"音频"_s, u"压缩包"_s}), "the strip does not start 不限, 文件夹");
+
+    // 文件夹 past 文档 and 图片: those two make way while it is held.
+    QQuickItem* documents = chipOf(0);
+    QQuickItem* pictures = chipOf(1);
+    drag(chipOf(-2), documents->width() + pictures->width() + 8, [&] {
+        check(strip->property("dragFrom").toInt() == 1 && strip->property("dragTo").toInt() == 3, "the strip does not know what is dragged where");
+        check(documents->property("makeWay").toReal() < 0 && pictures->property("makeWay").toReal() < 0
+                && chipOf(2)->property("makeWay").toReal() == 0,
+            "文档 and 图片 do not make way for 文件夹, or 视频 does");
+        check(saveGrab(window, output.filePath(u"type-strip-drag.png"_s)), "the window did not render");
+    });
+    check(moves == 1 && order() == QStringList({u"不限"_s, u"文档"_s, u"图片"_s, u"文件夹"_s, u"视频"_s, u"音频"_s, u"压缩包"_s}),
+        "文件夹 did not go after 图片");
+    check(settings.folderChipAt == 2 && launcher.folderChipAt() == 2, "the settings do not have 文件夹 after 图片");
+    check(strip->property("dragFrom").toInt() == -1, "the drag did not end");
+    check(launcher.scope() == Launcher::Files && launcher.selectedFileTypes() == QList<int> {1}, "the drag changed what is chosen");
+    laidOut("文件夹 dropped");
+    check(saveGrab(window, output.filePath(u"type-strip-dropped.png"_s)), "the window did not render");
+
+    // 压缩包 dragged far to the left: first after 不限, no further; the kinds' own order with it.
+    drag(chipOf(4), -1000, {});
+    check(moves == 2 && order() == QStringList({u"不限"_s, u"压缩包"_s, u"文档"_s, u"图片"_s, u"文件夹"_s, u"视频"_s, u"音频"_s}),
+        "压缩包 did not go first after 不限");
+    check(settings.fileTypes.value(0).name == u"压缩包" && settings.folderChipAt == 3, "the settings do not have 压缩包 first");
+    check(launcher.selectedFileTypes() == QList<int> {2}, "图片 was not still chosen where it went");
+    check(countOn(0) == 14 && countOn(2) == 11 && countOn(-2) == 7 && countOn(-1) == 100, "the numbers did not go with their kinds");
+    laidOut("压缩包 dropped");
+
+    // A press without a drag is a click: 视频 chosen too.
+    QQuickItem* videos = chipOf(3);
+    systemMouse(window, QEvent::MouseButtonPress, centre(videos));
+    systemMouse(window, QEvent::MouseButtonRelease, centre(videos));
+    settle(window);
+    check(moves == 2 && launcher.selectedFileTypes() == (QList<int> {2, 3}), "a click on a chip did not choose it");
+    // 不限 does not move: dragged a little it is clicked; far, nothing.
+    drag(chipOf(-1), 300, {});
+    check(moves == 2 && order().first() == u"不限", "不限 moved");
+    // Ctrl+Tab in the strip's order.
+    launcher.chooseFileType(-1);
+    QList<int> stops;
+    for (int i = 0; i < 7; ++i) {
+        launcher.cycleFileType(1);
+        stops.append(launcher.scope() == Launcher::Folders ? Launcher::kFoldersChip : launcher.fileType());
+    }
+    check(stops == QList<int>({0, 1, 2, Launcher::kFoldersChip, 3, 4, -1}), "Ctrl+Tab does not go in the strip's order");
+    settle(window);
+
+    // More kinds than room: one held at the right end scrolls the chips on, and goes there.
+    for (const auto& [name, extension] : {std::pair {u"表格"_s, u"xlsx"_s}, {u"演示"_s, u"pptx"_s}, {u"PDF"_s, u"pdf"_s},
+             {u"程序"_s, u"exe"_s}, {u"代码"_s, u"cpp"_s}, {u"文本"_s, u"txt"_s}, {u"电子书"_s, u"epub"_s}, {u"设计稿"_s, u"psd"_s},
+             {u"字体"_s, u"ttf"_s}})
+        settings.fileTypes.append(FileType {name, {extension}});
+    launcher.setFileTypes(settings.fileTypes, settings.folderChipAt);
+    launcher.chooseFileType(0);
+    settle(window);
+    check(strip->property("scrolls").toBool() && strip->property("firstChip").toInt() == 0, "the strip does not scroll, or does not start at 不限");
+    const int count = static_cast<int>(strip->property("chips").toList().size());
+    drag(chipOf(1), 2000, [&] { // 文档
+        check(strip->property("firstChip").toInt() > 0, "held at the end, the chips did not scroll on");
+        check(chipOf(1)->property("whole").toBool() && chipOf(1)->opacity() == 1, "the chip dragged was hidden");
+        // The chips that made way past the left edge show cut off by it: no room left empty there.
+        const qreal viewLeft = view->mapToScene(QPointF(0, 0)).x();
+        qreal shownFrom = viewLeft + view->width();
+        for (const QVariant& each : strip->property("chips").toList()) {
+            QQuickItem* chip = chipOf(each.toMap().value(u"type"_s).toInt());
+            const qreal left = chip ? chip->mapToScene(QPointF(0, 0)).x() : 0;
+            if (chip && chip->opacity() > 0.99 && left + chip->width() > viewLeft + 0.5)
+                shownFrom = std::min(shownFrom, std::max(left, viewLeft));
+        }
+        check(shownFrom - viewLeft <= 4 + strip->property("spreadGap").toReal() + 1, "held at the end, the strip left room empty at its start");
+        check(saveGrab(window, output.filePath(u"type-strip-drag-scroll.png"_s)), "the window did not render");
+    }, 2000);
+    const QStringList last = order();
+    check(moves == 3 && last.indexOf(u"文档"_s) > 6, "文档 did not go towards the end");
+    check(last.size() == count && last.first() == u"不限", "a chip was lost or 不限 moved");
+    check(strip->property("firstChip").toInt() > 0, "the drop scrolled back to the start");
+    QQuickItem* dropped = chipOf(strip->property("chips").toList().value(last.indexOf(u"文档"_s)).toMap().value(u"type"_s).toInt());
+    check(dropped && dropped->property("whole").toBool(), "文档, let go at the end, is not in view");
+    laidOut("scrolled and dropped");
+    check(loops == 0, "a binding loop while dragging");
+    window->hide();
+    say(u"type strip drag: 文件夹 and the kinds reordered by the mouse (%1)"_s.arg(SystemTheme::uiStyle()));
+    return ok;
+}
+
 bool checkTypeStripScroll(QQmlEngine* qml, const QDir& output)
 {
     static QtMessageHandler counted = nullptr;
@@ -12106,6 +12709,8 @@ int runResults(const QStringList& args)
         return checkContentKinds(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--type-strip-scroll"_s))
         return checkTypeStripScroll(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--type-strip-drag"_s))
+        return checkTypeStripDrag(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--type-strip-counts"_s)) // by its own checks: the empty index's first searches may warn of being slow on a busy PC
         return checkTypeStripCounts(&engine, out) ? 0 : 4;
     if (args.contains(u"--clipboard-crashed-reading"_s)) // its warning when it gives up is expected
@@ -12285,6 +12890,8 @@ int runResults(const QStringList& args)
         return finish(window, checkSwitchProvider(window, out) && saved);
     if (args.contains(u"--scope-memory"_s))
         return finish(window, checkScopeMemory(window, out) && saved);
+    if (args.contains(u"--pin-hint"_s))
+        return finish(window, checkPinHint(window, out) && saved);
     if (args.contains(u"--number-column"_s))
         return finish(window, checkNumberColumn(&engine, out, valueAfter(args, u"--width", u"760"_s).toInt()) && saved);
     if (args.contains(u"--clipboard-send"_s))
@@ -14814,6 +15421,9 @@ bool probeSettingsReopen(App& app, const QStringList& args, const QDir& out, QJs
         // pages cost ~20 MB each. The search box taking the keyboard makes the
         // rest (fillInBackground); a letter typed (--settings-type-at) does too.
         pump(500);
+        say(u"settings after the first frame: made %1, pointer on %2"_s.arg(
+            js(w, u"[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].filter(i => pageItem(i) !== null).join(',')"_s).toString(),
+            js(w, u"String(navHovered)"_s).toString()));
         if (!allFirst)
             check(js(w, u"[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter(i => pageItem(i) !== null).join(',')"_s).toString() == madeFirst,
                 u"nothing_made_after_first_frame"_s);
@@ -15146,6 +15756,53 @@ bool probeSettingsReopen(App& app, const QStringList& args, const QDir& out, QJs
             u"unload_page_made_again"_s);
         js(window, u"loadAllPages()"_s);
         check(js(window, u"searchReady"_s).toBool() && js(window, others).toInt() == 10, u"unload_search_ready_again"_s);
+
+        // Left open: the pages left behind go too, all but the one on show
+        // (SettingsWindow.putPagesAway, GitHub #467), and one gone back to is
+        // made again where it was left. Not while the search has them.
+        const QString madeNow = u"[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].filter(i => pageItem(i) !== null).join(',')"_s;
+        // What Task Manager's 内存 follows: the freed pages' memory is given back
+        // at once though the window is in use (App, IdleTrim::freed).
+        const auto workingSetMb = [] {
+            PROCESS_MEMORY_COUNTERS counters {sizeof counters};
+            GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof counters);
+            return static_cast<double>(counters.WorkingSetSize) / (1024.0 * 1024.0);
+        };
+        const double openWithPages = workingSetMb();
+        js(window, u"leftPagesMs = 300"_s);
+        js(window, u"showPage(scopePage)"_s);
+        pump(300);
+        const int leftAt = js(window, u"flick.contentY = Math.min(120, Math.max(0, flick.contentHeight - flick.height)); flick.contentY"_s).toInt();
+        guiThreadIdle(4000); // put away one per turn, then given back a second later, on a thread
+        // The page under the real pointer is kept (hoverNav): said, to tell that from a page left by mistake.
+        say(u"settings pages left: made %1, pointer on %2"_s.arg(js(window, madeNow).toString(), js(window, u"String(navHovered)"_s).toString()));
+        check(js(window, madeNow).toString() == js(window, u"String(scopePage)"_s).toString()
+                && js(window, u"visible && !allPagesLoaded && !searchReady"_s).toBool(),
+            u"left_pages_put_away"_s);
+        const double openAfter = workingSetMb();
+        report.insert(u"left_pages_working_set_mb"_s, QJsonObject {{u"with_pages"_s, std::round(openWithPages)}, {u"after"_s, std::round(openAfter)}});
+        say(u"settings pages left behind put away: working set with all pages %1 MB, after %2 MB"_s.arg(std::round(openWithPages)).arg(std::round(openAfter)));
+        check(openWithPages - openAfter > 50, u"left_pages_give_memory_back"_s);
+        js(window, u"showPage(resultsPage)"_s);
+        guiThreadIdle(1500);
+        check(js(window, madeNow).toString() == js(window, u"String(resultsPage)"_s).toString(), u"left_pages_follow_the_page_on_show"_s);
+        js(window, u"navigateBack()"_s);
+        pump(400);
+        check(js(window, u"currentPage === scopePage && pageItem(scopePage) !== null"_s).toBool()
+                && js(window, u"Math.round(flick.contentY)"_s).toInt() == leftAt,
+            u"left_page_made_again_where_it_was"_s);
+        js(window, u"searchBox.setText('a')"_s); // the search makes them all, and keeps them while it is on
+        QElapsedTimer filling;
+        filling.start();
+        while (filling.elapsed() < 5000 && !js(window, u"searchReady"_s).toBool())
+            pump(20);
+        guiThreadIdle(1500);
+        check(js(window, u"searchReady"_s).toBool() && js(window, others).toInt() == 10, u"left_pages_kept_for_the_search"_s);
+        js(window, u"searchBox.clear()"_s);
+        guiThreadIdle(2500);
+        check(js(window, madeNow).toString() == js(window, u"String(currentPage)"_s).toString(), u"left_pages_put_away_after_the_search"_s);
+        js(window, u"leftPagesMs = 30000"_s);
+
         app.setSettingsUnloadAfter(60'000); // not during what follows
         close(window);
     }
@@ -15564,7 +16221,10 @@ int runRuntime(const QStringList& args)
         }
         settings.pastePlainHotkey = QString(kPastePlainProbeChord);
     }
-    const bool entryHotkey = args.contains(u"--entry-hotkey-check"_s);
+    const bool duplicatesCheck = args.contains(u"--duplicates-check"_s);
+    const bool entryHotkey = duplicatesCheck || args.contains(u"--entry-hotkey-check"_s);
+    if (duplicatesCheck)
+        settings.clipboardKeepPlace = args.contains(u"--keep-place"_s);
     if (entryHotkey) { // an entry's own shortcut: a chord nobody else has
         if (!entryHotkeyChordFree()) {
             qWarning("entry hotkey: %s is someone else's already", qPrintable(QString(kEntryHotkeyProbeChord)));
@@ -15573,8 +16233,18 @@ int runRuntime(const QStringList& args)
         settings.clipboard = true;
         settings.clipboardDuplicates = true;
     }
+    if (args.contains(u"--command-hotkey-check"_s)) { // GitHub #466: a plugin command's own shortcut, a chord nobody else has
+        if (!commandHotkeyChordFree()) {
+            qWarning("command hotkey: %s is someone else's already", qPrintable(QString(kCommandHotkeyProbeChord)));
+            return 4;
+        }
+        if (!seedCommandHotkey(settings))
+            return 4;
+    }
     const bool activationPaste = args.contains(u"--activation-paste-check"_s);
-    if (activationPaste) { // GitHub #432: the clipboard's own chord, nobody else's
+    const bool gameCheck = args.contains(u"--full-screen-game-check"_s); // GitHub #452
+    const bool fieldFocus = gameCheck || args.contains(u"--field-focus-check"_s);
+    if (activationPaste || fieldFocus) { // GitHub #432: the clipboard's own chord, nobody else's
         if (!activationPasteChordFree()) {
             qWarning("activation paste: %s is someone else's already", qPrintable(QString(kActivationPasteProbeChord)));
             return 4;
@@ -15588,6 +16258,8 @@ int runRuntime(const QStringList& args)
     if (activationPaste
         && !seedActivationPastePicture(Settings::dataDir() + u"/clipboard"_s,
             std::clamp(valueAfter(args, u"--picture-width", u"240"_s).toInt(), 16, 6000)))
+        return 4;
+    if (fieldFocus && !seedFieldFocus(Settings::dataDir() + u"/clipboard"_s))
         return 4;
     if (!scopeLeft.isEmpty()) {
         QSettings state(Settings::dataDir() + u"/state.ini"_s, QSettings::IniFormat);
@@ -15689,7 +16361,11 @@ int runRuntime(const QStringList& args)
                     || args.contains(u"--clipboard-animation-check"_s) || args.contains(u"--settings-motion-check"_s)
                     || args.contains(u"--search-shadow-check"_s) || args.contains(u"--paste-plain-check"_s)
                     || args.contains(u"--activation-paste-check"_s) || args.contains(u"--entry-hotkey-check"_s)
-                    || args.contains(u"--launcher-settings-check"_s) || args.contains(u"--launcher-open-check"_s))
+                    || args.contains(u"--command-hotkey-check"_s)
+                    || args.contains(u"--duplicates-check"_s) || args.contains(u"--field-focus-check"_s)
+                    || args.contains(u"--full-screen-game-check"_s)
+                    || args.contains(u"--launcher-settings-check"_s) || args.contains(u"--launcher-open-check"_s)
+                    || args.contains(u"--pinned-stacking-check"_s))
                 && profile.fileName().startsWith(u"WinShun-preview-")
                 && QDir::cleanPath(profile.absolutePath()).compare(QDir::cleanPath(QDir::tempPath()), Qt::CaseInsensitive) == 0)
                 QDir(profile.absoluteFilePath()).removeRecursively();
@@ -15755,14 +16431,24 @@ int runRuntime(const QStringList& args)
             return checkLauncherToSettings(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--launcher-open-check"_s))
             return checkLauncherOpen(app, args, out) ? 0 : 4; // its profile likewise
+        if (args.contains(u"--pinned-stacking-check"_s))
+            return checkPinnedStacking(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--search-shadow-check"_s))
             return checkSearchShadow(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--paste-plain-check"_s))
             return checkPastePlain(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--activation-paste-check"_s))
             return checkActivationPaste(app, args, out) ? 0 : 4; // its profile likewise
+        if (args.contains(u"--full-screen-game-check"_s))
+            return checkFullScreenGame(app, args, out) ? 0 : 4; // its profile likewise
+        if (args.contains(u"--field-focus-check"_s))
+            return checkFieldFocus(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--entry-hotkey-check"_s))
             return checkEntryHotkey(app, args, out) ? 0 : 4; // its profile likewise
+        if (args.contains(u"--command-hotkey-check"_s))
+            return checkCommandHotkey(app, args, out) ? 0 : 4; // its profile likewise
+        if (args.contains(u"--duplicates-check"_s))
+            return checkDuplicates(app, args, out) ? 0 : 4; // its profile likewise
         if (args.contains(u"--settings-reopen-check"_s))
             return probeSettingsReopen(app, args, out, report) ? 0 : 4;
         if (args.contains(u"--settings-motion-check"_s))

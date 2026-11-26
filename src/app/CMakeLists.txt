@@ -62,6 +62,7 @@ qt_add_executable(WinShun WIN32
     ContextMenuGuard.cpp ContextMenuGuard.h # a right-click on a window's top-left pixel crashed Qt Quick (QTBUG-146671)
     DialogBarVisibility.cpp DialogBarVisibility.h
     FrameReveal.cpp FrameReveal.h
+    PinnedStacking.h
     Elide.cpp Elide.h
     FileIconProvider.cpp FileIconProvider.h
     DragPicture.cpp DragPicture.h
@@ -149,6 +150,7 @@ qt_add_executable(WinShun WIN32
     platform/TaskbarSearchBox.cpp platform/TaskbarSearchBox.h
     platform/TextCaret.cpp platform/TextCaret.h
     platform/PaddleOcr.cpp platform/PaddleOcr.h
+    platform/OcrTable.cpp platform/OcrTable.h
     platform/OcrFiles.cpp platform/OcrFiles.h
     platform/TextRecognizer.cpp platform/TextRecognizer.h
     platform/VolumeNotifier.cpp platform/VolumeNotifier.h
@@ -252,6 +254,7 @@ set(qml_files
     qml/PageSlot.qml
     qml/FileTypesSection.qml
     qml/QuickFiltersSection.qml
+    qml/RowActionsEditor.qml
     qml/SettingRow.qml
     qml/SettingsLinkRow.qml
     qml/PageTabs.qml

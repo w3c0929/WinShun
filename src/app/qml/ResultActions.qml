@@ -5,7 +5,9 @@ import WinShun
 
 // A result row's buttons (ResultRow): open its settings page (a switch's),
 // run as administrator, reveal, open in a terminal, copy, copy the path,
-// delete (click twice). Not made in every row: the list keeps a few sets
+// delete (click twice), and the ones chosen in the settings besides
+// (preview, copy the name, favorite): which show, and in which order, is
+// `order`. Not made in every row: the list keeps a few sets
 // (RowActionsPool) and lends one to a row while it shows them. Lent to
 // another row it only takes that row's state: nothing is made, the style's
 // surfaces and the drawn copy-path icon included.
@@ -14,7 +16,51 @@ Item {
 
     property ResultRow host: null // the row it is lent to; null: put away
     property real dpr: 1
-    property bool deleteButton: true // the settings': off, no row has one (GitHub #316)
+    // The settings' (Launcher.rowActions, RowActions.h): the buttons that
+    // show, in their order, left to right. One not named is on no row
+    // (no "delete": GitHub #316); a switch's own button is always there.
+    property var order: ["admin", "reveal", "terminal", "copy", "copyPath", "delete"]
+    property string previewKey // the preview's shortcut, for its button's tip
+    function shows(id: string): bool { return order.indexOf(id) >= 0 }
+
+    readonly property var buttons: ({
+        "admin": adminAction, "reveal": revealAction, "terminal": terminalAction, "copy": copyAction,
+        "copyPath": copyPathAction, "delete": deleteAction, "preview": previewAction, "copyName": copyNameAction,
+        "favorite": favoriteAction
+    })
+    // The buttons as they stand, left to right: the switch's own, then as
+    // `order` says. Each is placed by what shows before it (leftOf); the
+    // letters (letterOf, clickLettered) go by the same. Not by the order of
+    // the children: a button taken out of its parent and put back at the end
+    // was laid out in its new place and no longer drawn there (seen in
+    // --shortcut-panel's row-buttons-chosen.png).
+    readonly property var sequence: {
+        const all = [switchPageAction]
+        for (const id of order) {
+            const button = buttons[id]
+            if (button && all.indexOf(button) < 0)
+                all.push(button)
+        }
+        return all
+    }
+    function leftOf(button: RowAction): real {
+        let x = 0
+        for (const other of sequence) {
+            if (other === button)
+                return x
+            if (other.visible)
+                x += other.width + actions.spacing
+        }
+        return 0
+    }
+    readonly property real span: {
+        let x = 0
+        for (const button of sequence) {
+            if (button.visible)
+                x += button.width + actions.spacing
+        }
+        return Math.max(0, x - actions.spacing)
+    }
 
     // For the row: the room the buttons take, how many show, and the one the
     // mouse rests on (the row's HoverTip, one for its buttons and its date).
@@ -27,7 +73,10 @@ Item {
                                        : terminalAction.tipWanted ? terminalAction
                                        : copyAction.tipWanted ? copyAction
                                        : copyPathAction.tipWanted ? copyPathAction
-                                       : deleteAction.tipWanted ? deleteAction : null
+                                       : deleteAction.tipWanted ? deleteAction
+                                       : previewAction.tipWanted ? previewAction
+                                       : copyNameAction.tipWanted ? copyNameAction
+                                       : favoriteAction.tipWanted ? favoriteAction : null
 
     // 字母直达 (GitHub #357): the host's letters on its buttons as they show,
     // left to right; the nth letter clicks the nth button shown.
@@ -36,8 +85,7 @@ Item {
         if (letters.length === 0 || !button.visible)
             return ""
         let n = 0
-        for (let i = 0; i < actions.children.length; ++i) {
-            const child = actions.children[i]
+        for (const child of sequence) {
             if (child === button)
                 return n < letters.length ? letters[n] : ""
             if (child.visible)
@@ -49,8 +97,7 @@ Item {
     function clickLettered(n: int, modifiers): bool {
         const mods = modifiers ?? Qt.NoModifier
         let shown = 0
-        for (let i = 0; i < actions.children.length; ++i) {
-            const child = actions.children[i]
+        for (const child of sequence) {
             if (!child.visible)
                 continue
             if (shown === n) {
@@ -83,15 +130,18 @@ Item {
         }
     }
 
-    Row {
+    Item {
         id: actions
+        readonly property real spacing: 2
         anchors.right: parent.right
         anchors.rightMargin: bar.host ? bar.host.actionsRightMargin : 0
         anchors.verticalCenter: parent.verticalCenter
-        spacing: 2
+        width: bar.span
+        height: bar.count > 0 ? (bar.small ? 24 : 32) : 0
 
         RowAction {
             id: switchPageAction
+            x: bar.leftOf(switchPageAction)
             dpr: bar.dpr
             shared: true
             small: bar.small
@@ -104,12 +154,13 @@ Item {
         }
         RowAction {
             id: adminAction
+            x: bar.leftOf(adminAction)
             objectName: "adminAction"
             dpr: bar.dpr
             shared: true
             small: bar.small
             keyLetter: bar.letterOf(adminAction)
-            visible: bar.host !== null && bar.host.elevatable && !bar.host.switchReady
+            visible: bar.shows("admin") && bar.host !== null && bar.host.elevatable && !bar.host.switchReady
             glyph: "" // Admin (shield)
             tip: qsTranslate("ResultRow", "以管理员身份运行")
             tipShortcut: "Ctrl+Shift+Enter"
@@ -117,11 +168,12 @@ Item {
         }
         RowAction {
             id: revealAction
+            x: bar.leftOf(revealAction)
             dpr: bar.dpr
             shared: true
             small: bar.small
             keyLetter: bar.letterOf(revealAction)
-            visible: bar.host !== null && !bar.host.switchReady && (!bar.host.isApp || bar.host.revealable)
+            visible: bar.shows("reveal") && bar.host !== null && !bar.host.switchReady && (!bar.host.isApp || bar.host.revealable)
             glyph: "" // OpenFolder
             tip: bar.host !== null && bar.host.packagedApp ? qsTranslate("ResultRow", "打开安装文件夹") : qsTranslate("ResultRow", "打开所在位置")
             tipShortcut: "Ctrl+Enter"
@@ -129,12 +181,13 @@ Item {
         }
         RowAction {
             id: terminalAction
+            x: bar.leftOf(terminalAction)
             objectName: "terminalAction"
             dpr: bar.dpr
             shared: true
             small: bar.small
             keyLetter: bar.letterOf(terminalAction)
-            visible: bar.host !== null && !bar.host.isApp // a file's or folder's: its folder in cmd
+            visible: bar.shows("terminal") && bar.host !== null && !bar.host.isApp // a file's or folder's: its folder in cmd
             glyph: "" // CommandPrompt
             tip: qsTranslate("ResultRow", "在终端中打开（Shift+点击以管理员身份）")
             onClicked: bar.host.actionRequested(bar.host.index,
@@ -142,12 +195,13 @@ Item {
         }
         RowAction {
             id: copyAction
+            x: bar.leftOf(copyAction)
             dpr: bar.dpr
             shared: true
             small: bar.small
             keyLetter: bar.letterOf(copyAction)
             // A desktop app copies its program; a packaged one has none.
-            visible: bar.host !== null && bar.host.copyable && !bar.host.switchReady
+            visible: bar.shows("copy") && bar.host !== null && bar.host.copyable && !bar.host.switchReady
             glyph: "" // Copy
             tip: qsTranslate("ResultRow", "复制")
             tipShortcut: "Ctrl+C"
@@ -155,13 +209,15 @@ Item {
         }
         RowAction {
             id: copyPathAction
+            x: bar.leftOf(copyPathAction)
             objectName: "copyPathAction"
             readonly property ResultRow host: bar.host
             dpr: bar.dpr
             shared: true
             small: bar.small
             keyLetter: bar.letterOf(copyPathAction)
-            visible: host !== null && !host.settingsAction && !host.switchReady && (!host.plugin || host.pluginCopies)
+            visible: bar.shows("copyPath") && host !== null && !host.settingsAction && !host.switchReady
+                     && (!host.plugin || host.pluginCopies)
             // Copy; else drawn by Glyph: a box holding "\\..".
             glyph: host !== null && (host.plugin || host.windowResult) ? "" : "copyPath"
             tip: host === null ? ""
@@ -175,6 +231,7 @@ Item {
         }
         RowAction {
             id: deleteAction
+            x: bar.leftOf(deleteAction)
             objectName: "deleteAction"
             readonly property ResultRow host: bar.host
             readonly property bool armed: host !== null && host.deleteArmed
@@ -182,7 +239,7 @@ Item {
             shared: true
             small: bar.small
             keyLetter: bar.letterOf(deleteAction)
-            visible: bar.deleteButton && host !== null && !host.isApp // uninstalling is for Windows Settings
+            visible: bar.shows("delete") && host !== null && !host.isApp // uninstalling is for Windows Settings
             glyph: "" // Delete
             tip: armed ? "" : qsTranslate("ResultRow", "删除（点两次，移到回收站）")
             text: !armed ? ""
@@ -190,6 +247,55 @@ Item {
                   : qsTranslate("ResultRow", "确认删除")
             danger: armed
             onClicked: bar.host.deleteClicked()
+        }
+        // Not among the buttons as they come: chosen in the settings.
+        RowAction {
+            id: previewAction
+            x: bar.leftOf(previewAction)
+            objectName: "previewAction"
+            readonly property ResultRow host: bar.host
+            dpr: bar.dpr
+            shared: true
+            small: bar.small
+            keyLetter: bar.letterOf(previewAction)
+            // A file or a folder that is there to be read (as 预览 in its menu).
+            visible: bar.shows("preview") && host !== null && !host.isApp && !host.missing && !host.offline
+            glyph: "ph:eye"
+            tip: qsTranslate("ResultRow", "预览")
+            tipShortcut: bar.previewKey
+            onClicked: bar.host.actionRequested(bar.host.index, Launcher.Preview)
+        }
+        RowAction {
+            id: copyNameAction
+            x: bar.leftOf(copyNameAction)
+            objectName: "copyNameAction"
+            readonly property ResultRow host: bar.host
+            dpr: bar.dpr
+            shared: true
+            small: bar.small
+            keyLetter: bar.letterOf(copyNameAction)
+            visible: bar.shows("copyName") && host !== null && !host.switchReady && !host.settingsAction
+            glyph: "ph:textbox"
+            tip: host !== null && host.windowResult ? qsTranslate("ResultRow", "复制窗口标题") : qsTranslate("ResultRow", "复制名称")
+            onClicked: bar.host.actionRequested(bar.host.index, Launcher.CopyName)
+        }
+        RowAction {
+            id: favoriteAction
+            x: bar.leftOf(favoriteAction)
+            objectName: "favoriteAction"
+            readonly property ResultRow host: bar.host
+            readonly property bool kept: host !== null && host.favorite
+            dpr: bar.dpr
+            shared: true
+            small: bar.small
+            keyLetter: bar.letterOf(favoriteAction)
+            // A file or a folder; anything else only to take it out again
+            // (what else can be kept is the menu's to say).
+            visible: bar.shows("favorite") && host !== null && !host.missing && (favoriteAction.kept || !host.isApp)
+            glyph: favoriteAction.kept ? "ph-fill:star" : "ph:star"
+            tip: favoriteAction.kept ? qsTranslate("ResultRow", "从收藏夹移除") : qsTranslate("ResultRow", "加入收藏夹")
+            onClicked: bar.host.actionRequested(bar.host.index,
+                favoriteAction.kept ? Launcher.RemoveFavorite : Launcher.AddFavorite)
         }
     }
 }

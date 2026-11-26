@@ -190,6 +190,10 @@ constexpr int kQuickPasteHotkeyId = 20; // + 1…9: paste without opening the cl
 // + 0…kEntryHotkeys - 1: entries' own shortcuts (Clip::hotkey), pasting each anywhere.
 constexpr int kEntryHotkeyId = 100;
 constexpr int kEntryHotkeys = 200;
+// PluginHotkeys' owner of the commands' shortcuts (applyCommandHotkeys): no
+// plugin's id, which has no colon. As many as one owner may register.
+constexpr QLatin1StringView kCommandKeysOwner(":commands");
+constexpr int kCommandHotkeys = 32;
 // For another program to tell where its text caret is: longer, and the
 // clipboard would open late; it opens by the mouse pointer then.
 constexpr auto kCaretWait = 100ms;
@@ -850,6 +854,8 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
     connect(m_launcher.get(), &Launcher::dismissRequested, this, [this] {
         if (!m_launcher->pinned())
             hideLauncher();
+        else
+            launcherOpenedSomething();
     });
     // Opened by typing in an Explorer window, Esc hands the keyboard back to
     // it (allowed: the launcher is in front), as closing a menu would; not a
@@ -937,6 +943,16 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
     });
     connect(m_launcher.get(), &Launcher::webSettingsRequested, this, &App::showWebSettings);
     connect(m_launcher.get(), &Launcher::fileTypeSettingsRequested, this, &App::showFileTypeSettings);
+    // A chip of the strip dragged to another place: the order of the kinds (and 文件夹) in the settings.
+    connect(m_launcher.get(), &Launcher::fileChipMoveRequested, this, [this](int from, int to) {
+        Settings settings = m_settings;
+        if (!settings.moveStripChip(from, to))
+            return;
+        settings.save();
+        settingsEdited(settings);
+        if (m_settingsEditor)
+            m_settingsEditor->setSettings(m_settings);
+    });
     connect(m_launcher.get(), &Launcher::quickFilterSettingsRequested, this, &App::showQuickFilterSettings);
     connect(m_launcher.get(), &Launcher::favoriteSettingsRequested, this, &App::showFavoriteSettings);
     connect(m_launcher.get(), &Launcher::pluginSettingsRequested, this, &App::showPluginSettings);
@@ -1558,6 +1574,10 @@ bool App::createWindow()
         } else if (m_window && m_window->isActive()) {
             if (::GetForegroundWindow() == reinterpret_cast<HWND>(m_window->winId()))
                 stopLauncherRouting(); // in front after all (a click on it): its keys are its own
+            if (m_pinnedStacking.standsBack()) { // over the other windows again, if kept so
+                m_pinnedStacking.inFront();
+                applyLauncherPin();
+            }
             m_launcher->systemCommandDone();
             m_boxPressGrace.stop();
             lettersOnOpen();
@@ -2292,6 +2312,10 @@ void App::applySettings(bool initial)
     m_launcher->setPreviewFollowsPointer(m_settings.previewFollowsPointer);
     m_launcher->setPreviewRestore(m_settings.previewRestore);
     m_launcher->setReopenWhereLeft(m_settings.reopenWhereLeft);
+    // Pinned from the start, if set so; and as the setting is turned on or
+    // off. No other change of the settings: Ctrl+T unpins it for this run.
+    if (std::exchange(m_keptPinned, m_settings.keepPinned) != m_settings.keepPinned)
+        m_launcher->setPinned(m_settings.keepPinned);
     applyLauncherPin();
     m_preview->setTextExtensions(m_settings.contentExtensions);
     m_clipboard->filePreview()->setTextExtensions(m_settings.contentExtensions);
@@ -2299,7 +2323,7 @@ void App::applySettings(bool initial)
     m_launcher->setNumberHints(m_settings.numberHints);
     m_launcher->setLetterJump(m_settings.letterJump, m_settings.letterJumpKey, m_settings.letterJumpKeys);
     watchCopies();
-    m_launcher->setRowDeleteButton(m_settings.rowDeleteButton);
+    m_launcher->setRowActions(m_settings.rowActions);
     m_launcher->setScopeButton(m_settings.scopeButton);
     if (m_placement)
         m_placement->setAnimated(m_settings.openAnimation);
@@ -2334,7 +2358,7 @@ void App::applySettings(bool initial)
     m_launcher->setContentOptions(m_settings.contentSearch, m_settings.contentExtensions,
         m_settings.contentSizeLimits(), m_settings.contentInLowPriority, m_settings.contentDocuments);
     m_launcher->setContentIndex(m_settings.contentIndex);
-    m_launcher->setFileTypes(m_settings.namedFileTypes()); // after applyAppearance: the built-in ones' names
+    m_launcher->setFileTypes(m_settings.namedFileTypes(), m_settings.folderChipAt); // after applyAppearance: the built-in ones' names
     m_launcher->setQuickFilters(m_settings.quickFilters);
     applyPlugins();
     if (!initial) {
@@ -2514,7 +2538,8 @@ void App::applyScreenshots()
                 return;
             }
             const HWND target = m_launcherTarget;
-            emit m_launcher->dismissRequested();
+            if (!m_launcher->pinned()) // pinned: it stays where it is, for the next one (nothing was opened)
+                hideLauncher();
             m_clipboard->pasteEntry(id, target);
         };
         hooks.copy = [this](qint64 id) { m_clipboard->pasteEntry(id, nullptr); };
@@ -2804,6 +2829,16 @@ void App::setUpAppTools()
                 done(toolError(u"origin must be at most 96 UTF-8 bytes without NUL"_s));
                 return;
             }
+            // `words`: the text in the picture, when the plugin has read it
+            // already (the screenshot's pre-scan); empty: read, none found.
+            std::optional<QString> words;
+            if (const QJsonValue given = arguments.value(u"words"_s); given.isString()) {
+                if (given.toString().size() > 1'000'000) {
+                    done(toolError(u"words must be at most 1,000,000 characters"_s));
+                    return;
+                }
+                words = given.toString();
+            }
             QPointer<App> self(this);
             // Record-only handoff that settings will not keep: remove temp files without decoding pixels.
             if (!copy && !m_settings.shouldRecordClipboardImage(false, screenshot, m_clipboardPaused)) {
@@ -2819,7 +2854,7 @@ void App::setUpAppTools()
                 }).detach();
                 return;
             }
-            std::thread([self, file, project, copy, screenshot, imageOrigin, done = std::move(done)]() mutable {
+            std::thread([self, file, project, copy, screenshot, imageOrigin, words = std::move(words), done = std::move(done)]() mutable {
                 QImage image = readHandedPicture(file);
                 QByteArray bytes;
                 if (!project.isEmpty()) {
@@ -2831,7 +2866,7 @@ void App::setUpAppTools()
                 if (!project.isEmpty())
                     QFile::remove(project);
                 QMetaObject::invokeMethod(qApp, [self, image = std::move(image), bytes = std::move(bytes), copy, screenshot, imageOrigin,
-                                                    done = std::move(done)]() mutable {
+                                                    words = std::move(words), done = std::move(done)]() mutable {
                     if (!self)
                         return;
                     if (image.isNull()) {
@@ -2840,9 +2875,9 @@ void App::setUpAppTools()
                     }
                     const bool remember = self->m_settings.shouldRecordClipboardImage(copy, screenshot, self->m_clipboardPaused);
                     if (copy)
-                        self->m_clipboard->copyImage(image, remember, screenshot, std::move(bytes), imageOrigin);
+                        self->m_clipboard->copyImage(image, remember, screenshot, std::move(bytes), imageOrigin, std::move(words));
                     else if (remember)
-                        self->m_clipboard->recordImage(image, std::move(bytes), screenshot);
+                        self->m_clipboard->recordImage(image, std::move(bytes), screenshot, std::move(words));
                     done({{{u"kept"_s, remember}}});
                 }, Qt::QueuedConnection);
             }).detach();
@@ -3333,8 +3368,10 @@ void App::applyEntryHotkeys()
     });
     if (recording) // the keys being pressed must reach the settings window; told again once done
         return;
-    // Win顺's own shortcuts: an entry's keys are never one of them.
+    // Win顺's own shortcuts, a plugin command's among them: an entry's keys are never one of them.
     QStringList own = m_settings.globalHotkeys();
+    for (const Settings::CommandHotkey& h : std::as_const(m_commandHotkeys))
+        own.append(h.keys);
     if (m_settings.clipboardQuickPaste == u"ctrl" || m_settings.clipboardQuickPaste == u"alt") {
         const QString modifier = m_settings.clipboardQuickPaste == u"ctrl" ? u"Ctrl"_s : u"Alt"_s;
         for (int n = 1; n <= 9; ++n)
@@ -3381,6 +3418,120 @@ void App::applyEntryHotkeys()
         m_settingsEditor->setClipboardEntryHotkeys(entryHotkeyRows());
     if (!settingsShown() && !fresh.isEmpty() && !m_aiApplying)
         m_messages->showNotification(tr("剪贴板条目的快捷键不可用"), fresh.join(u'\n'));
+}
+
+void App::applyCommandHotkeys()
+{
+    if (!m_pluginHost || !m_pluginKeyRelay)
+        return;
+    const plugin::Catalog& catalog = m_pluginHost->catalog();
+    const bool recording = m_settingsEditor && m_settingsEditor->recordingHotkey();
+    const auto normalizedKeys = [](const Settings::CommandHotkey& h) { return hotkeys::normalized(h.keys); };
+    QHash<QString, QString> errors;
+    QList<Settings::CommandHotkey> wanted;
+    QStringList titles; // of `wanted`: what each is called on its card
+    // None while a shortcut is recorded: the keys being pressed must reach the settings window.
+    if (!recording) {
+        // Win顺's own shortcuts: a command's keys are never one of them.
+        QStringList own;
+        for (const QString& keys : m_settings.globalHotkeys())
+            own.append(hotkeys::normalized(keys));
+        if (m_settings.clipboard && (m_settings.clipboardQuickPaste == u"ctrl" || m_settings.clipboardQuickPaste == u"alt")) {
+            for (int n = 1; n <= 9; ++n)
+                own.append(hotkeys::normalized(m_settings.clipboardQuickPaste + u'+' + QString::number(n)));
+        }
+        for (const Settings::CommandHotkey& h : m_settings.commandHotkeys()) {
+            // Of a plugin not installed (yet) or not running, or a command a
+            // newer version dropped: kept in the settings, nothing to
+            // register and nothing to say.
+            const plugin::Entry* entry = catalog.find(h.plugin);
+            if (!entry || !entry->manifest || !catalog.enabled(h.plugin))
+                continue;
+            const auto command = std::ranges::find(entry->manifest->commands, h.command, &plugin::Command::id);
+            if (command == entry->manifest->commands.end())
+                continue;
+            const QString row = h.plugin + u'/' + h.command;
+            const QString keys = normalizedKeys(h);
+            const qsizetype holder = std::ranges::find(wanted, keys, normalizedKeys) - wanted.begin();
+            if (catalog.keywordsOf(h.plugin, h.command).isEmpty())
+                errors.insert(row, tr("这个命令现在没有可用的关键字，快捷键打不开它，请先设好关键字。"));
+            else if (own.contains(keys))
+                errors.insert(row, tr("%1 已是 Win顺 自己的快捷键，请换一个。").arg(h.keys));
+            else if (m_clipStore && m_clipStore->isOpen() && m_clipStore->hotkeyEntry(h.keys) != 0)
+                errors.insert(row, tr("%1 已用于剪贴板里的一条内容，请换一个。").arg(h.keys));
+            else if (holder < wanted.size())
+                errors.insert(row, tr("%1 已用于“%2”，请换一个。").arg(h.keys, titles.at(holder)));
+            else if (wanted.size() == kCommandHotkeys)
+                errors.insert(row, tr("最多 %1 个命令可以设快捷键，这一个没有生效。").arg(kCommandHotkeys));
+            else {
+                const QString title = command->title.pick(m_language);
+                titles.append(title.isEmpty() ? entry->manifest->name.pick(m_language) : title);
+                wanted.append(h);
+            }
+        }
+    }
+    QStringList keys;
+    for (const Settings::CommandHotkey& h : std::as_const(wanted))
+        keys.append(h.keys);
+    // Only what changed is let go of or registered (PluginHotkeys::replace).
+    const QJsonObject failed = m_pluginKeyRelay->replace(kCommandKeysOwner, keys);
+    wanted.removeIf([&](const Settings::CommandHotkey& h) {
+        const auto code = failed.constFind(h.keys);
+        if (code == failed.constEnd())
+            return false;
+        errors.insert(h.plugin + u'/' + h.command, code->toInt() == int(ERROR_INVALID_PARAMETER)
+                ? tr("无法识别“%1”，请重新设置。").arg(h.keys)
+                : tr("“%1” 已被其他程序或系统占用，请换一个。").arg(h.keys));
+        return true;
+    });
+    m_commandHotkeys = std::move(wanted);
+    if (recording)
+        return; // let go of for the recording: what was said of them stands
+    // Told once: what did not work before is not news.
+    QStringList fresh;
+    QStringList all;
+    for (auto it = errors.cbegin(); it != errors.cend(); ++it) {
+        if (m_commandHotkeyErrors.value(it.key()) != it.value())
+            fresh.append(it.value());
+        all.append(it.value());
+    }
+    all.sort();
+    m_commandHotkeyErrors = std::move(errors);
+    noteApplyProblem(u"Plugins/CommandHotkeys"_s, all.join(u' '));
+    if (m_settingsEditor)
+        m_settingsEditor->plugins()->setCommandHotkeyErrors(m_commandHotkeyErrors);
+    if (!settingsShown() && !fresh.isEmpty() && !m_aiApplying)
+        m_messages->showNotification(tr("插件命令的快捷键不可用"), fresh.join(u'\n'));
+}
+
+void App::commandHotkey(const QString& keys)
+{
+    const auto pressed = std::ranges::find(m_commandHotkeys, keys, &Settings::CommandHotkey::keys);
+    if (pressed == m_commandHotkeys.end() || !m_pluginHost || !m_window)
+        return;
+    const QString keyword = m_pluginHost->catalog().keywordsOf(pressed->plugin, pressed->command).value(0);
+    if (keyword.isEmpty())
+        return; // gone since it was registered: the next apply says so
+    const QString typed = keyword + u' ';
+    const std::uint64_t at = ::GetTickCount64();
+    beginTrigger(TriggerSource::Hotkey, at);
+    // Pressed again with its keyword still typed: it closes what it opened,
+    // as the launcher's own shortcut does. Not a press made before the
+    // window was there to be seen (seenBy, GitHub #111).
+    if (launcherShown() && !clipboardInCharge() && m_window->isActive()
+        && m_launcher->query().startsWith(typed, Qt::CaseInsensitive) && seenBy(m_launcherRevealedAt, at)) {
+        hideLauncher();
+        if (m_triggers)
+            m_triggers->decided("hide");
+        return;
+    }
+    if (clipboardInCharge())
+        hideClipboard();
+    if (m_triggers)
+        m_triggers->decided("command", TriggerWindow::Launcher);
+    showLauncher(typed);
+    if (!m_launcherReveal.pending())
+        openingSeen(TriggerWindow::Launcher);
 }
 
 QVariantList App::entryHotkeyRows() const
@@ -3430,7 +3581,11 @@ void App::setEntryHotkey(qint64 id, const QString& hotkey)
     if (const qint64 other = m_clipStore->hotkeyEntry(keys); other != 0 && other != id) {
         m_entryHotkeyRefused = {id, tr("%1 已用于“%2”，请换一个，或先去掉那一条的快捷键。")
                                         .arg(keys, entryLabel(*m_clipStore->clip(other)).first)};
-    } else if (!keys.isEmpty() && m_settings.globalHotkeys().contains(keys, Qt::CaseInsensitive)) {
+    } else if (!keys.isEmpty()
+        && (m_settings.globalHotkeys().contains(keys, Qt::CaseInsensitive)
+            || std::ranges::any_of(m_commandHotkeys, [&](const Settings::CommandHotkey& h) {
+                   return hotkeys::normalized(h.keys) == hotkeys::normalized(keys);
+               }))) {
         m_entryHotkeyRefused = {id, tr("%1 已是 Win顺 自己的快捷键，请换一个。").arg(keys)};
     } else {
         if (keys.isEmpty() && m_entryHotkeyPending == id)
@@ -4535,11 +4690,22 @@ void App::showSettingsNow(const std::function<void(QQuickWindow*)>& at)
         connect(editor, &SettingsEditor::edited, this, &App::settingsEdited);
         editor->setMonitor(m_health.get());
         connect(editor, &SettingsEditor::giveBackMemoryRequested, this, &App::giveMemoryBack);
+        // Pages put away with the window open: what they held is free in the
+        // heap and still in the working set. Given back once their objects
+        // are gone (destroy() is a deleteLater), though the window is in use.
+        connect(editor, &SettingsEditor::pagesPutAwayWhileOpen, this, [this] {
+            QTimer::singleShot(1s, this, [this] {
+                if (m_idleTrim)
+                    m_idleTrim->freed();
+            });
+        });
         connect(editor, &SettingsEditor::recordingHotkeyChanged, this, &App::applyHotkey);
         connect(editor, &SettingsEditor::recordingHotkeyChanged, this, &App::applyClipboardHotkeys);
         connect(editor, &SettingsEditor::recordingHotkeyChanged, this, &App::applyTaskbarHotkeys);
         connect(editor, &SettingsEditor::recordingHotkeyChanged, this, &App::applyFolderMenuHotkey);
         connect(editor, &SettingsEditor::recordingHotkeyChanged, this, &App::applyPastePlainHotkey);
+        connect(editor, &SettingsEditor::recordingHotkeyChanged, this, &App::applyCommandHotkeys);
+        editor->plugins()->setCommandHotkeyErrors(m_commandHotkeyErrors);
         // Queued: the recorder that sent the keys stops first, then its list is made again.
         connect(editor, &SettingsEditor::clipboardEntryHotkeyRequested, this, &App::setEntryHotkey, Qt::QueuedConnection);
         editor->setClipboardEntryHotkeys(entryHotkeyRows());
@@ -6561,6 +6727,7 @@ void App::showLauncher(const QString& asked, const std::optional<taskbar::Spot>&
     m_boxPressGrace.stop();
     m_launcherShown.start();
     m_frontTakenBack = 0;
+    m_pinnedStacking.inFront();
     applyLauncherPin(); // left not topmost by a pin of before, perhaps
     m_idleTrim->used();
     if (!launcherShown()) { // what a screenshot of the history pastes into (jt, Enter)
@@ -6581,7 +6748,12 @@ void App::showLauncher(const QString& asked, const std::optional<taskbar::Spot>&
         toFront(m_window);
         if (refuseFrontForTest() == RefuseFront::No)
             m_window->requestActivate();
-        m_launcher->handleShown(); // refreshed (something was opened meanwhile), all typed selected
+        // Asked for with words or as the panel: shown anew. Else only back
+        // in front, its list as it was left (Launcher::handleBroughtForward).
+        if (query.isEmpty() && !asPanel)
+            m_launcher->handleBroughtForward();
+        else
+            m_launcher->handleShown();
         if (!query.isEmpty())
             emit m_launcher->caretRequested(static_cast<int>(query.size()), false);
         if (m_triggers)
@@ -6720,7 +6892,7 @@ void App::showClipboard()
         // screen leaves it for any window shown, and what its leaving does to
         // the front is told from the package (GitHub #452).
         const ForegroundFacts over = foreground::facts();
-        m_clipOver = {::GetTickCount64(), over.coversMonitor, over.exclusiveFullScreen};
+        m_clipOver = {.at = ::GetTickCount64(), .fullScreen = over.coversMonitor, .exclusive = over.exclusiveFullScreen};
         m_clipboard->setTarget(foreground);
         m_clipboard->setPinned(false); // as it opens, whatever closed it last (a close of Qt's own)
         m_clipboard->setActive(true); // under the launcher's search box, it folds its rows away (Main.qml)
@@ -6738,7 +6910,10 @@ void App::showClipboard()
             // put it (GitHub #376), on the monitor with the mouse as the
             // launcher: always the same place, the same size.
             const HWND target = paste::usableTarget(foreground);
-            const std::optional<QRect> caret = target && byCaret ? m_textCaret->find(target, kCaretWait) : std::nullopt;
+            // A game in exclusive full screen has no caret to wait for.
+            const bool overGame = panelTakesFocus(over);
+            const std::optional<QRect> caret
+                = target && byCaret && !overGame ? m_textCaret->find(target, kCaretWait) : std::nullopt;
             if (m_settings.clipboardOpenAt == u"last") {
                 QScreen* screen = QGuiApplication::screenAt(QCursor::pos());
                 m_clipPlacement->placeOn(screen ? screen : QGuiApplication::primaryScreen());
@@ -6764,7 +6939,16 @@ void App::showClipboard()
                 m_clipboard->setTarget(front);
             const bool shellFlyout = win::isShellFlyout(front);
             m_clipDisplayWanted = shellFlyout && m_clipDisplay && m_clipDisplay->ready();
-            keepFocus = routed && (startKeyRouting(routed) || shellFlyout);
+            // Over a game in exclusive full screen it takes the focus instead:
+            // nothing shows over that screen, and Windows 10 leaves the game
+            // there for a window that asks for nothing, the panel up unseen
+            // with the game's keys (GitHub #452). Taking the focus brings the
+            // game out of full screen, on every Windows alike; a paste or Esc
+            // gives it the front back (Clipboard::dismiss).
+            m_clipOver.focusTaken = overGame && routed && front == foreground;
+            keepFocus = !m_clipOver.focusTaken && routed && (startKeyRouting(routed) || shellFlyout);
+            if (m_clipOver.focusTaken)
+                m_clipboard->setTargetLeft(true);
             if (shellFlyout && !m_clipDisplayWanted)
                 avoidClipboardShellFlyout(front);
         }
@@ -6800,10 +6984,17 @@ void App::showClipboard()
         return;
     }
     m_clipWindow->show();
-    toFront(m_clipWindow);
+    const bool inFront = toFront(m_clipWindow) != win::Front::Refused;
     m_clipWindow->requestActivate();
     if (m_triggers)
         m_triggers->showDone();
+    if (!m_clipOver.focusTaken)
+        return;
+    diagnostics::record(u"clipboard-over-exclusive"_s, {{u"front"_s, inFront}});
+    // Refused the front: the game keeps its screen and its keys, and the
+    // panel would stay up where nobody sees it.
+    if (!inFront)
+        hideClipboard(true, "front-refused");
 }
 
 bool App::clipboardInCharge() const
@@ -7575,6 +7766,7 @@ void App::hideClipboard(bool launcherToo, const char* why)
             {u"active"_s, m_clipWindow->isActive()},
             {u"over_full_screen"_s, m_clipOver.fullScreen},
             {u"over_exclusive"_s, m_clipOver.exclusive},
+            {u"focus_taken"_s, m_clipOver.focusTaken},
             {u"target_minimized"_s, targetMinimized},
             {u"target_gone"_s, target && !::IsWindow(target)}});
     if (m_clipDisplay) m_clipDisplay->hide();
@@ -7582,11 +7774,12 @@ void App::hideClipboard(bool launcherToo, const char* why)
     // Out as the launcher goes (弹出动画): a picture of it fades where it was
     // (GitHub #377); the window itself goes at once, so the focus, the keys
     // and a paste go on as ever. Not when it was never seen, nor behind the
-    // display (cloaked: fadeOutCopy shows nothing). Nor over a full-screen
-    // window that minimized itself for it: that one comes back next (a paste,
-    // Esc), and the picture would be over it as it takes full screen again
-    // (GitHub #452).
-    const bool overLeftFullScreen = targetMinimized && (m_clipOver.fullScreen || m_clipOver.exclusive);
+    // display (cloaked: fadeOutCopy shows nothing). Nor over a game that left
+    // full screen for it (minimized itself, or lost the focus to it): that one
+    // comes back next (a paste, Esc), and the picture would be over it as it
+    // takes full screen again (GitHub #452).
+    const bool overLeftFullScreen
+        = m_clipOver.focusTaken || (targetMinimized && (m_clipOver.fullScreen || m_clipOver.exclusive));
     if (m_clipRevealedAt && m_settings.openAnimation && Placement::animationsOn() && !overLeftFullScreen) {
         const quint64 fadeSeq = ++m_clipFadeSeq;
         QPointer<App> self(this);
@@ -7867,7 +8060,9 @@ void App::launcherLostFront()
             return;
         m_launcher->systemCommandDone();
     }
-    if (m_launcher->pinned()) { // stays up, behind nothing (topmost), until Esc
+    if (m_launcher->pinned()) { // stays up until Esc: over every window, or among them (PinnedStacking)
+        if (m_pinnedStacking.lostFront(PinnedStacking::Clock::now()))
+            applyLauncherPin(); // not to what it opened: a click elsewhere
         cancelTypingSelection();
         m_typingOrigin = {}; // used elsewhere now: a folder opened later is not for that tab
         m_boxPressGrace.stop();
@@ -8371,9 +8566,21 @@ void App::applyLauncherPin()
     if (!m_window || !m_window->handle())
         return;
     win::setTaskbarWindow(m_window, m_launcher->pinned() && !m_prewarming.load());
-    const bool topmost = !m_launcher->pinned() || m_settings.pinnedOnTop;
-    ::SetWindowPos(reinterpret_cast<HWND>(m_window->winId()), topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    win::setOnTop(m_window, m_pinnedStacking.onTop(m_launcher->pinned(), m_settings.pinnedOnTop));
+    if (m_preview)
+        m_preview->restack(); // with it: beside it still, and covered when it is
+}
+
+// Pinned, it stays as something is opened from it. What was opened is what
+// the user asked to see: the launcher (and its preview) stands back among the
+// other windows for it, kept over them or not, and is over them again once
+// it is in front itself (PinnedStacking).
+void App::launcherOpenedSomething()
+{
+    if (!launcherShown() || !m_launcher->pinned())
+        return;
+    m_pinnedStacking.opened(PinnedStacking::Clock::now());
+    applyLauncherPin();
 }
 
 void App::launcherPinnedChanged()
@@ -9551,7 +9758,10 @@ void App::createPluginHost()
     });
     m_pluginHost = std::make_unique<plugin::Host>(options);
     m_pluginKeyRelay = std::make_unique<PluginHotkeys>([this](const QString& owner, const QString& key) {
-        m_pluginHost->notify(owner, u"hotkey"_s, {{u"key"_s, key}}, true);
+        if (owner == kCommandKeysOwner)
+            commandHotkey(key);
+        else
+            m_pluginHost->notify(owner, u"hotkey"_s, {{u"key"_s, key}}, true);
     });
     {
         PluginUpdates::Options updateOptions;
@@ -9893,6 +10103,7 @@ void App::pluginsChanged()
         folders.insert(e.id, e.dir);
     FileIconProvider::setPluginFolders(std::move(folders));
     pluginPicturesChanged(); // one installed or taken away
+    applyCommandHotkeys(); // its commands' shortcuts with it
     const bool update = localSendNeedsUpdate(m_pluginHost->catalog());
     if (m_clipboard)
         m_clipboard->setLanSendAvailable(m_pluginHost->catalog().enabled(u"winshun.localsend"_s) && !update, update);
@@ -9976,6 +10187,7 @@ void App::applyPlugins()
     shellmenu::applyLanSend(catalog.enabled(u"winshun.localsend"_s) && !update);
     applyScreenshots(); // and 截图历史
     restorePrintScreen();
+    applyCommandHotkeys(); // the keywords in place: what the shortcuts type
 }
 
 void App::refreshMcpStatus()

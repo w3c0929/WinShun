@@ -397,12 +397,45 @@ void SettingsEditor::setThumbnails(bool on)
     commit();
 }
 
-void SettingsEditor::setRowDeleteButton(bool on)
+void SettingsEditor::setRowActions(const QStringList& order)
 {
-    if (m_settings.rowDeleteButton == on)
+    const QStringList normal = rowactions::normalized(order);
+    if (m_settings.rowActions == normal)
         return;
-    m_settings.rowDeleteButton = on;
+    m_settings.rowActions = normal;
     commit();
+}
+
+void SettingsEditor::toggleRowAction(const QString& id)
+{
+    const QString known = rowactions::known(id);
+    if (known.isEmpty())
+        return;
+    QStringList order = m_settings.rowActions;
+    if (!order.removeOne(known))
+        order.append(known); // shown again: at the end, where there is room for it
+    setRowActions(order);
+}
+
+void SettingsEditor::moveRowAction(const QString& id, int by)
+{
+    QStringList order = m_settings.rowActions;
+    const qsizetype from = order.indexOf(rowactions::known(id));
+    const qsizetype to = from + by;
+    if (from < 0 || to < 0 || to >= order.size())
+        return;
+    order.move(from, to);
+    setRowActions(order);
+}
+
+QStringList SettingsEditor::rowActionChoices() const
+{
+    QStringList all = m_settings.rowActions; // those shown, in their order; then the rest
+    for (const QStringView id : rowactions::kKnown) {
+        if (!all.contains(id))
+            all.append(id.toString());
+    }
+    return all;
 }
 
 void SettingsEditor::setWebSuggestions(bool on)
@@ -517,6 +550,14 @@ void SettingsEditor::setPinnedOnTop(bool on)
     if (m_settings.pinnedOnTop == on)
         return;
     m_settings.pinnedOnTop = on;
+    commit();
+}
+
+void SettingsEditor::setKeepPinned(bool on)
+{
+    if (m_settings.keepPinned == on)
+        return;
+    m_settings.keepPinned = on;
     commit();
 }
 
@@ -2941,16 +2982,15 @@ void SettingsEditor::removeFileType(int index)
     if (index < 0 || index >= m_settings.fileTypes.size())
         return;
     m_settings.fileTypes.removeAt(index);
+    if (index < m_settings.folderChipAt) // 文件夹 stays after the same kind
+        --m_settings.folderChipAt;
     commit();
 }
 
-void SettingsEditor::moveFileType(int index, int delta)
+void SettingsEditor::moveStripChip(int from, int to)
 {
-    const qsizetype to = index + delta;
-    if (index < 0 || index >= m_settings.fileTypes.size() || to < 0 || to >= m_settings.fileTypes.size())
-        return;
-    m_settings.fileTypes.move(index, to);
-    commit();
+    if (m_settings.moveStripChip(from, to))
+        commit();
 }
 
 QVariantList SettingsEditor::quickFilters() const
@@ -3070,6 +3110,7 @@ void SettingsEditor::resetFileTypes()
 {
     m_settings.fileTypes = Settings::defaultFileTypes();
     m_settings.folderKeyword = Settings{}.folderKeyword;
+    m_settings.folderChipAt = Settings{}.folderChipAt;
     commit();
 }
 
@@ -3590,6 +3631,16 @@ QVariantList SettingsEditor::shares() const
             tone = u"error"_s;
             status = error.value();
         }
+        // Left out by 排除目录 (the drive mapped to it excluded, say): it is
+        // not read, and the card says why nothing of it is found.
+        const bool excluded = m_settings.excludesShare(share.path);
+        if (excluded) {
+            tone = u"idle"_s;
+            busy = false;
+            signIn = false;
+            // Two lines: at the usual width one line ended with its last word alone on the next.
+            status = tr("在“排除目录”里，不搜索") + u'\n' + tr("要搜索它，先到“文件夹”页把它移出排除目录");
+        }
         QString contentStatus = tr("打开后，电脑空闲时读取文件内容；离线时也能搜到");
         if (share.content && !m_settings.contentSearch) {
             contentStatus = tr("内容搜索已关闭，不读取文件内容");
@@ -3603,12 +3654,13 @@ QVariantList SettingsEditor::shares() const
             {u"path"_s, share.path},
             {u"name"_s, shareTitle(share)},
             {u"wsl"_s, isWsl},
-            {u"startable"_s, isWsl && !starting && it != m_shareStatuses.end()
+            {u"startable"_s, isWsl && !starting && !excluded && it != m_shareStatuses.end()
                 && (it->problem == share::Problem::WslStopped || m_wslStartProblems.contains(share.path))},
             {u"tone"_s, tone},
             {u"status"_s, status},
             {u"signIn"_s, signIn},
-            {u"suspect"_s, it != m_shareStatuses.end() && it->state == State::Suspect},
+            {u"excluded"_s, excluded},
+            {u"suspect"_s, !excluded && it != m_shareStatuses.end() && it->state == State::Suspect},
             {u"busy"_s, busy},
             {u"content"_s, share.content},
             {u"contentStatus"_s, contentStatus},

@@ -182,6 +182,8 @@ set_tests_properties(tst_pluginhomepage PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
 # A command's keywords typed in its card (GitHub #282): several words, a
 # quote refused with the reason under the box, the plugin's own typed again,
 # none, and 默认, each followed to the INI and to the catalog's index.
+# Then the command's own shortcut (GitHub #466): recorded, refused with the
+# reason under the row, cleared; the INI and where the recorder stands.
 add_test(NAME tst_pluginkeywords COMMAND $<TARGET_FILE:WinShun>
     --preview-plugins "${CMAKE_CURRENT_BINARY_DIR}/plugin-keywords.png" --keyword-check --scale 1.5)
 set_tests_properties(tst_pluginkeywords PROPERTIES RUN_SERIAL TRUE TIMEOUT 90
@@ -359,6 +361,14 @@ target_link_libraries(tst_previewplacement PRIVATE Qt6::Core Qt6::Test)
 set_target_properties(tst_previewplacement PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_previewplacement COMMAND tst_previewplacement -o -,txt)
 set_tests_properties(tst_previewplacement PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+qt_add_executable(tst_pinnedstacking tst_pinnedstacking.cpp)
+target_include_directories(tst_pinnedstacking PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
+target_link_libraries(tst_pinnedstacking PRIVATE Qt6::Core Qt6::Test)
+set_target_properties(tst_pinnedstacking PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_pinnedstacking COMMAND tst_pinnedstacking -o -,txt)
+set_tests_properties(tst_pinnedstacking PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 qt_add_executable(tst_launchernavigation tst_launchernavigation.cpp)
@@ -1047,7 +1057,7 @@ set_tests_properties(tst_clipimage PROPERTIES
 qt_add_executable(tst_cliplifecycle tst_cliplifecycle.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/ClipboardWatcher.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/TextRecognizer.cpp
-    ${PROJECT_SOURCE_DIR}/src/app/platform/PaddleOcr.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/platform/PaddleOcr.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/OcrTable.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/OcrFiles.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/CrashRecord.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/CodeAddress.cpp
@@ -1251,6 +1261,7 @@ set_tests_properties(tst_proxy PROPERTIES
 # pictures and fall back immediately for offline programs. Never executes a command.
 qt_add_executable(tst_commandicons tst_commandicons.cpp
     ${PROJECT_SOURCE_DIR}/src/app/FileIconProvider.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/ThumbnailProvider.cpp
     ${PROJECT_SOURCE_DIR}/src/app/SiteIconImage.cpp
     ${PROJECT_SOURCE_DIR}/src/app/SvgIcon.cpp
     ${PROJECT_SOURCE_DIR}/src/app/SystemTheme.cpp
@@ -1345,13 +1356,14 @@ target_include_directories(tst_siteicon PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
 target_link_libraries(tst_siteicon PRIVATE Qt6::Gui Qt6::Svg Qt6::Test)
 
 # The words in pictures: PP-OCRv6 through ONNX Runtime, the real models.
-qt_add_executable(tst_ocr tst_ocr.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/PaddleOcr.cpp
+qt_add_executable(tst_ocr tst_ocr.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/PaddleOcr.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/OcrTable.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/OcrFiles.cpp
     ${PROJECT_SOURCE_DIR}/src/capture/CaptureOcr.cpp)
 target_include_directories(tst_ocr PRIVATE ${PROJECT_SOURCE_DIR}/src/app/platform)
 target_include_directories(tst_ocr PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
 target_link_libraries(tst_ocr PRIVATE winshun_options wscapture Qt6::Qml Qt6::Test onnxruntime_headers)
 set_target_properties(tst_ocr PROPERTIES QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+target_compile_definitions(tst_ocr PRIVATE WINSHUN_TABLE_MODEL="${WS_TABLE_MODEL}") # tableReadWithModel
 
 # The larger reading model a user may install (ocr::preciseModel), for the
 # test that reads Japanese with it: fetched once per build folder.
@@ -1364,7 +1376,7 @@ qt_add_executable(tst_ocrpackage tst_ocrpackage.cpp
     ${PROJECT_SOURCE_DIR}/src/capture/CaptureOcr.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/OcrPackage.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/OcrFiles.cpp
-    ${PROJECT_SOURCE_DIR}/src/app/platform/PaddleOcr.cpp
+    ${PROJECT_SOURCE_DIR}/src/app/platform/PaddleOcr.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/OcrTable.cpp
     ${PROJECT_SOURCE_DIR}/src/app/platform/Http.cpp)
 target_include_directories(tst_ocrpackage PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
 target_link_libraries(tst_ocrpackage PRIVATE winshun_options wscore wscapture miniz Qt6::Gui Qt6::Qml Qt6::Network Qt6::Test onnxruntime_headers winhttp)
@@ -1487,6 +1499,18 @@ add_test(NAME tst_shellmenu COMMAND tst_shellmenu)
 set_tests_properties(tst_shellmenu PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
+# The shell's own context menu on results (platform/ShellContextMenu): the
+# menu for files of one folder and of several, and a command of it run on
+# scratch files (deleted for good, nothing of the user's touched). It loads
+# the shell extensions installed on this PC, as the launcher does.
+qt_add_executable(tst_shellcontext tst_shellcontext.cpp ${PROJECT_SOURCE_DIR}/src/app/platform/ShellContextMenu.cpp)
+target_include_directories(tst_shellcontext PRIVATE ${PROJECT_SOURCE_DIR}/src/app)
+target_link_libraries(tst_shellcontext PRIVATE winshun_options Qt6::Gui Qt6::Test comctl32 imm32 ole32 shell32 shlwapi user32)
+set_target_properties(tst_shellcontext PROPERTIES WIN32_EXECUTABLE FALSE QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+add_test(NAME tst_shellcontext COMMAND tst_shellcontext)
+set_tests_properties(tst_shellcontext PROPERTIES RUN_SERIAL TRUE
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
 # The MCP server (src/mcp): the protocol, the tools on a hand-made index, the
 # pipe, and the relay WinShunMcp.exe, whose path it is told; and the
 # plugins' commands as tools (plugin::AiBridge), with plugin_fake.exe through
@@ -1530,7 +1554,7 @@ qt_add_executable(tst_semantic tst_semantic.cpp
     ${PROJECT_SOURCE_DIR}/src/semantic-plugin/Chunker.cpp ${PROJECT_SOURCE_DIR}/src/semantic-plugin/Store.cpp
     ${PROJECT_SOURCE_DIR}/src/semantic-plugin/Embedder.cpp)
 target_include_directories(tst_semantic PRIVATE ${PROJECT_SOURCE_DIR}/src/semantic-plugin ${PROJECT_SOURCE_DIR}/src/plugins-sdk)
-target_link_libraries(tst_semantic PRIVATE winshun_options Qt6::Test winhttp)
+target_link_libraries(tst_semantic PRIVATE winshun_options Qt6::Test Qt6::Network winhttp)
 
 # winshun.localsend's pieces (src/localsend-plugin, the wslocalsend library):
 # names from other devices made safe, files written whole or not at all,
@@ -1658,6 +1682,20 @@ target_compile_definitions(tst_translate PRIVATE WINSHUN_TRANSLATE_MANIFEST="${P
 set_target_properties(tst_translate PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME tst_translate COMMAND tst_translate)
 set_tests_properties(tst_translate PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+# winshun.localmodel's pieces (src/localmodel-plugin, the wslocalmodel
+# library), with no model: GGUF files of the test's own, the recommended
+# models against the manifest, llama-server's arguments and log, the relay
+# on 127.0.0.1 (passed on, refused, answered itself), the engine without a
+# model, and a download that breaks off and goes on, against local servers.
+qt_add_executable(tst_localmodel tst_localmodel.cpp)
+target_include_directories(tst_localmodel PRIVATE ${PROJECT_SOURCE_DIR}/src/plugins-sdk)
+target_link_libraries(tst_localmodel PRIVATE wslocalmodel Qt6::Test)
+target_compile_definitions(tst_localmodel PRIVATE WINSHUN_LOCALMODEL_MANIFEST="${PROJECT_SOURCE_DIR}/src/localmodel-plugin/package/plugin.json")
+set_target_properties(tst_localmodel PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME tst_localmodel COMMAND tst_localmodel)
+set_tests_properties(tst_localmodel PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
 # The backup service (src/app/Backup) as Win顺's tools backup_export and

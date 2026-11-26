@@ -3797,12 +3797,29 @@ private slots:
         QVERIFY(directoryLinkTarget(target.toStdWString()).empty()); // no link
         QVERIFY(directoryLinkTarget((t + u"\\missing"_s).toStdWString()).empty());
 
+        // A test's link leads to test data only: a real disk, its volume, the
+        // home folder and the folder of all temporary files are refused, and
+        // nothing is made for them.
+        wchar_t realVolume[64] = {};
+        QVERIFY(::GetVolumeNameForVolumeMountPointW((t.left(2) + u"\\"_s).toStdWString().c_str(), realVolume, 64));
+        for (const QString& real : {t.left(2) + u"\\"_s, QString::fromWCharArray(realVolume), QDir::homePath(), QDir::tempPath()}) {
+            QTest::ignoreMessage(QtCriticalMsg, QRegularExpression(u"^makeJunction: refused.*"_s));
+            QVERIFY2(!makeJunction(t + u"\\拒绝"_s, real), qPrintable(real));
+            QVERIFY(!QFileInfo::exists(t + u"\\拒绝"_s));
+        }
+
         // A volume mounted in a folder: by its drive letter when it has one.
-        wchar_t volume[64] = {};
-        QVERIFY(::GetVolumeNameForVolumeMountPointW((t.left(2) + u"\\"_s).toStdWString().c_str(), volume, 64));
-        const QString mounted = made << t + u"\\卷"_s;
-        QVERIFY(makeJunction(mounted, QString::fromWCharArray(volume))); // "\\?\Volume{…}\"
-        QCOMPARE(QString::fromStdWString(directoryLinkTarget(mounted.toStdWString())), t.left(2).toUpper());
+        // Only a scratch volume is ever mounted (TestJunction.h): a link to a
+        // real disk is one recursive removal away from emptying it.
+        if (const QString scratch = testScratchVolume(); scratch.isEmpty()) {
+            qInfo("No WINSHUN_TEST_SCRATCH_VOLUME: a mounted volume is not tried");
+        } else {
+            wchar_t volume[64] = {};
+            QVERIFY(::GetVolumeNameForVolumeMountPointW((scratch + u"\\"_s).toStdWString().c_str(), volume, 64));
+            const QString mounted = made << t + u"\\卷"_s;
+            QVERIFY(makeJunction(mounted, QString::fromWCharArray(volume))); // "\\?\Volume{…}\"
+            QCOMPARE(QString::fromStdWString(directoryLinkTarget(mounted.toStdWString())), scratch);
+        }
 
         // Symbolic links (mklink /d), where this account may make them
         // (Developer Mode, or elevated): relative and to a share.
@@ -4020,7 +4037,10 @@ private slots:
     // One disk, no elevation; each verdict is counted in the diagnostics.
     void directoryLinksToIndexedDisk()
     {
-        QTemporaryDir tree;
+        // The link to a whole disk is only made on a scratch volume, with
+        // the tree on it (TestJunction.h): never to the disk of %TEMP%.
+        const QString scratch = testScratchVolume();
+        QTemporaryDir tree((scratch.isEmpty() ? QDir::tempPath() : scratch) + u"/tst_core-XXXXXX"_s);
         QTemporaryDir store;
         QVERIFY(tree.isValid() && store.isValid());
         MadeLinks made; // after the folders: removed as links, never through them
@@ -4041,8 +4061,11 @@ private slots:
         QVERIFY(addLinkAttributes(system, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM));
         // The target is not changed by that: it is still a plain folder.
         QVERIFY(!(::GetFileAttributesW(other.toStdWString().c_str()) & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)));
-        const QString whole = made << t + u"\\links\\整盘"_s;
-        QVERIFY(makeJunction(whole, root + u"\\"_s));
+        const QString whole = t + u"\\links\\整盘"_s;
+        if (!scratch.isEmpty()) {
+            made << whole;
+            QVERIFY(makeJunction(whole, root + u"\\"_s));
+        }
         const QString up = made << t + u"\\docs\\上级"_s; // to the folder it is in
         QVERIFY(makeJunction(up, t + u"\\docs"_s));
         const QString back = made << t + u"\\docs\\sub\\回去"_s; // to a folder far above
@@ -4121,14 +4144,15 @@ private slots:
             if (!details.value(u"read"_s).toArray().contains(root))
                 continue;
             read = true;
-            QCOMPARE(details.value(u"found"_s).toInteger(), 8);
+            const int wholeDisk = scratch.isEmpty() ? 0 : 1; // made on a scratch volume only
+            QCOMPARE(details.value(u"found"_s).toInteger(), 7 + wholeDisk);
             // Each one for its own reason, not for another's.
             QCOMPARE(results.value(u"walked"_s).toInteger(), 1);
             QCOMPARE(results.value(u"system-link"_s).toInteger(), 2); // hidden only; hidden and system
-            QCOMPARE(results.value(u"whole-disk"_s).toInteger(), 1);
+            QCOMPARE(results.value(u"whole-disk"_s).toInteger(), wholeDisk);
             QCOMPARE(results.value(u"loop"_s).toInteger(), 2);
             QCOMPARE(results.value(u"tool-folder"_s).toInteger(), 2);
-            QCOMPARE(results.size(), 5);
+            QCOMPARE(results.size(), 4 + wholeDisk);
         }
         QVERIFY2(read && madeSince, text.constData());
     }
@@ -7652,6 +7676,170 @@ private slots:
         QVERIFY(index.findPath(L"C:\\a") != kNoEntry);
     }
 
+    // With nobody at the computer a share is read as wide as ever. With
+    // someone there, as many folders at a time as make the pass faster, and
+    // one where it is read again by itself: each one more made that person's
+    // file manager wait once more on the same NAS.
+    void sharePassWidth()
+    {
+        using Limit = share::Width::Limit;
+        QCOMPARE(ShareIndexer::passWidth(16, true, false, true), (Limit {16, false})); // building, nobody there
+        QCOMPARE(ShareIndexer::passWidth(16, false, false, true), (Limit {8, false})); // read again
+        QCOMPARE(ShareIndexer::passWidth(16, false, true, true), (Limit {8, false}));
+        QCOMPARE(ShareIndexer::passWidth(16, true, false, false), (Limit {16, true})); // building, someone there
+        QCOMPARE(ShareIndexer::passWidth(16, false, true, false), (Limit {8, true})); // 立即核对
+        QCOMPARE(ShareIndexer::passWidth(16, false, false, false), (Limit {1, true})); // by itself
+        QCOMPARE(ShareIndexer::passWidth(64, false, false, false), (Limit {1, true}));
+        QCOMPARE(ShareIndexer::passWidth(1, false, false, true), (Limit {2, false})); // never fewer than a verification had
+        QCOMPARE(ShareIndexer::passWidth(1, true, false, false), (Limit {1, true}));
+    }
+
+    // With a gate one wide, eight threads read the folders in the order one
+    // thread does: none holds a folder it took long before its turn.
+    void crawlerGateKeepsTheOrder()
+    {
+        const std::wstring path = L"\\\\nas\\tree";
+        const Crawler crawler({});
+        const auto read = [&](int threads, bool gated) {
+            FileIndex index;
+            EntryId root = kNoEntry;
+            {
+                auto lock = index.writeLock();
+                root = ShareIndexer::ensureRoot(index, path);
+            }
+            std::mutex mutex;
+            std::vector<std::wstring> order;
+            share::Width width([] { return share::Width::Limit {1, false}; });
+            const Crawler::Gate gate {[&](std::stop_token stopped) { return width.enter(stopped); },
+                [&](std::optional<std::size_t> items) { width.leave(items); }};
+            std::stop_source stop;
+            crawler.sync(index, {{root, path, EntryFlag::Remote}}, threads, false, stop.get_token(),
+                [&](const Crawler::Root& dir, DirListing& out) {
+                    {
+                        std::lock_guard lock(mutex);
+                        order.push_back(dir.path);
+                    }
+                    out.clear();
+                    if (std::ranges::count(dir.path, L'\\') < 6) { // three levels of four folders
+                        for (const char* name : {"a", "b", "c", "d"})
+                            crawler.addToListing(out, dir, name, {}, EntryFlag::Remote | EntryFlag::Directory, true, 0, 0);
+                    }
+                    crawler.addToListing(out, dir, "file.txt", {}, EntryFlag::Remote, false, 0, 0);
+                    return true;
+                }, nullptr, nullptr, gated ? &gate : nullptr);
+            return order;
+        };
+        const std::vector<std::wstring> one = read(1, false);
+        QCOMPARE(one.size(), std::size_t {1 + 4 + 16 + 64});
+        QCOMPARE(read(8, true), one);
+    }
+
+    // A share read again every hour waits, once its time has come, for
+    // nobody to be at the computer, two hours at most. Other passes do not.
+    void sharePassDue()
+    {
+        using namespace std::chrono_literals;
+        QVERIFY(!ShareIndexer::passDue(-1s, false, true)); // not yet
+        QVERIFY(!ShareIndexer::passDue(-1s, true, true));
+        QVERIFY(ShareIndexer::passDue(0s, false, false)); // after the start, or to make sure: at its time
+        QVERIFY(ShareIndexer::passDue(0s, true, true)); // nobody there
+        QVERIFY(!ShareIndexer::passDue(0s, true, false)); // someone there: later
+        QVERIFY(!ShareIndexer::passDue(119min, true, false));
+        QVERIFY(ShareIndexer::passDue(119min, true, true)); // ... when they have left
+        QVERIFY(ShareIndexer::passDue(2h, true, false)); // or now, read gently (passWidth)
+    }
+
+    // share::WidthTrial against servers that answer in known ways, while what
+    // is read changes under it (now folders the server has in memory, now not).
+    void shareWidthTrial_data()
+    {
+        QTest::addColumn<int>("server");
+        QTest::addColumn<int>("settled");
+        QTest::newRow("one after another (a NAS with slow disks)") << 0 << 1;
+        QTest::newRow("side by side (Windows)") << 1 << 16;
+        QTest::newRow("four side by side") << 2 << 4;
+        QTest::newRow("a fifth faster each time it is twice as wide: not worth it") << 3 << 1;
+    }
+
+    void shareWidthTrial()
+    {
+        QFETCH(int, server);
+        QFETCH(int, settled);
+        const auto rate = [server](int width) -> double { // folders a second
+            switch (server) {
+            case 0: return 100;
+            case 1: return 100.0 * width;
+            case 2: return 100.0 * std::min(width, 4);
+            default: return 100.0 * std::pow(1.2, std::log2(width));
+            }
+        };
+        share::WidthTrial trial(16);
+        QCOMPARE(trial.width(), 1);
+        const int windows = 400;
+        int wider = 0; // windows read wider than pays
+        for (int i = 0; i < windows; ++i) {
+            if (i == 16 && server == 1)
+                QCOMPARE(trial.width(), 16); // found out in 16 windows
+            wider += trial.width() > settled;
+            trial.window(rate(trial.width()) * (1.0 + 0.5 * std::sin(i / 7.0)) * 0.5, 0.5);
+        }
+        QCOMPARE(trial.settled(), settled);
+        QVERIFY2(wider * 10 <= windows, qPrintable(u"%1 of %2 windows wider than pays"_s.arg(wider).arg(windows)));
+
+        share::WidthTrial one(1); // nothing to try
+        for (int i = 0; i < 50; ++i)
+            one.window(100, 0.5);
+        QCOMPARE(one.width(), 1);
+    }
+
+    // share::Width lets in as many readers as its limit says, asks for the
+    // limit again as the pass goes, and gives up waiting when the pass stops.
+    void shareWidthLetsInAsManyAsItsLimit()
+    {
+        std::atomic<int> most {3};
+        share::Width width([&] { return share::Width::Limit {most.load(), false}; }, std::chrono::milliseconds(1));
+        std::atomic<int> reading {0};
+        std::atomic<int> widest {0};
+        std::stop_source stop;
+        const auto read = [&](int folders) {
+            for (int i = 0; i < folders; ++i) {
+                if (!width.enter(stop.get_token()))
+                    return;
+                const int now = ++reading;
+                int seen = widest.load();
+                while (now > seen && !widest.compare_exchange_weak(seen, now)) { }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                --reading;
+                width.leave(10);
+            }
+        };
+        const auto readers = [&](int threads, int folders) {
+            std::vector<std::jthread> pool;
+            for (int i = 0; i < threads; ++i)
+                pool.emplace_back(read, folders);
+        };
+        readers(8, 20);
+        QCOMPARE(widest.load(), 3);
+        QCOMPARE(width.widest(), 3);
+
+        most = 1; // someone is back at the computer
+        read(20); // ... which the end of a window finds out
+        widest = 0;
+        readers(8, 10);
+        QCOMPARE(widest.load(), 1);
+        QVERIFY(width.mean() < 3.0);
+
+        QVERIFY(width.enter(stop.get_token())); // the one place
+        bool entered = true;
+        {
+            std::jthread waiting([&] { entered = width.enter(stop.get_token()); });
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            stop.request_stop();
+        }
+        QVERIFY(!entered);
+        width.leave(0);
+    }
+
     // Excluded names count from the share on: a server called like an
     // excluded folder is no reason to leave its shares out.
     void uncExcludedPath()
@@ -7661,6 +7849,16 @@ private slots:
         QVERIFY(crawler.isExcludedPath(L"\\\\nas\\docs\\#recycle\\b.txt"));
         QVERIFY(crawler.isExcludedPath(L"\\\\nas\\docs\\a\\docs\\b.txt"));
         QVERIFY(crawler.isExcludedPath(L"\\\\nas\\docs\\private\\b.txt"));
+
+        // A share excluded whole (a drive mapped to it, written as "Z:\"):
+        // the share itself, all in it, and a folder of it added on its own.
+        // By its path: a share only named like an excluded folder stays.
+        const Crawler whole(CrawlRules {{L"\\\\NAS\\Video"}, {L"docs"}, {}, {}});
+        QVERIFY(whole.isExcludedPath(L"\\\\nas\\video"));
+        QVERIFY(whole.isExcludedPath(L"\\\\nas\\video\\rushes\\a.mov"));
+        QVERIFY(!whole.isExcludedPath(L"\\\\nas\\video2\\a.mov"));
+        QVERIFY(!whole.isExcludedPath(L"\\\\nas\\docs"));
+        QVERIFY(!whole.isExcludedPath(L"\\\\nas\\docs\\a.txt"));
     }
 
     // GitHub #406: Win顺's data folder is left out, the plugins in it are not.
@@ -18003,6 +18201,24 @@ private slots:
         PanelFrontMove later = left; // long after it opened: not its doing
         later.shownMs = kFullScreenExitMs + 1;
         QVERIFY(!leftFullScreenForPanel(later));
+    }
+
+    // GitHub #452: over a game in exclusive full screen the clipboard opens
+    // with the focus (Windows 10 leaves the game there for a window without it).
+    void panelFocusOverExclusive()
+    {
+        ForegroundFacts game;
+        game.program = u"Game.exe"_s;
+        game.coversMonitor = true;
+        game.exclusiveFullScreen = true;
+        QVERIFY(panelTakesFocus(game));
+        ForegroundFacts borderless = game; // covers its monitor only: a window shows over it
+        borderless.exclusiveFullScreen = false;
+        QVERIFY(!panelTakesFocus(borderless));
+        ForegroundFacts shell = game; // the desktop, a window of ours: no program
+        shell.program.clear();
+        QVERIFY(!panelTakesFocus(shell));
+        QVERIFY(!panelTakesFocus({}));
     }
 
     void hiddenForTypingRule()

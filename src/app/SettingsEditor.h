@@ -231,7 +231,11 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool regexMode READ regexMode WRITE setRegexMode NOTIFY changed FINAL)
     Q_PROPERTY(QString fuzzyMode READ fuzzyMode WRITE setFuzzyMode NOTIFY changed FINAL) // off | fallback | on
     Q_PROPERTY(bool thumbnails READ thumbnails WRITE setThumbnails NOTIFY changed FINAL)
-    Q_PROPERTY(bool rowDeleteButton READ rowDeleteButton WRITE setRowDeleteButton NOTIFY changed FINAL)
+    // A result row's buttons (Settings::rowActions): those shown, in their
+    // order; all there are, those shown first; and whether it is as it came.
+    Q_PROPERTY(QStringList rowActions READ rowActions WRITE setRowActions NOTIFY changed FINAL)
+    Q_PROPERTY(QStringList rowActionChoices READ rowActionChoices NOTIFY changed FINAL)
+    Q_PROPERTY(bool rowActionsDefault READ rowActionsDefault NOTIFY changed FINAL)
     Q_PROPERTY(bool webSuggestions READ webSuggestions WRITE setWebSuggestions NOTIFY changed FINAL)
     Q_PROPERTY(bool webFallback READ webFallback WRITE setWebFallback NOTIFY changed FINAL)
     Q_PROPERTY(QString webBrowser READ webBrowser WRITE setWebBrowser NOTIFY changed FINAL)
@@ -250,6 +254,7 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(bool clearOnOpen READ clearOnOpen WRITE setClearOnOpen NOTIFY changed FINAL)
     Q_PROPERTY(bool reopenWhereLeft READ reopenWhereLeft WRITE setReopenWhereLeft NOTIFY changed FINAL)
     Q_PROPERTY(bool pinnedOnTop READ pinnedOnTop WRITE setPinnedOnTop NOTIFY changed FINAL)
+    Q_PROPERTY(bool keepPinned READ keepPinned WRITE setKeepPinned NOTIFY changed FINAL)
     Q_PROPERTY(bool englishOnOpen READ englishOnOpen WRITE setEnglishOnOpen NOTIFY changed FINAL)
     Q_PROPERTY(int clipboardFillSeconds READ clipboardFillSeconds WRITE setClipboardFillSeconds NOTIFY changed FINAL) // seconds, 0: off
     Q_PROPERTY(QString numberKeys READ numberKeys WRITE setNumberKeys NOTIFY changed FINAL) // ctrl | alt | off
@@ -364,6 +369,8 @@ class SettingsEditor : public QObject {
     Q_PROPERTY(QVariantList quickFilters READ quickFilters NOTIFY changed FINAL)
     Q_PROPERTY(bool fileTypesDefault READ fileTypesDefault NOTIFY changed FINAL)
     Q_PROPERTY(QString folderKeyword READ folderKeyword NOTIFY changed FINAL)
+    // Where 文件夹 stands among them in the strip (Settings::folderChipAt).
+    Q_PROPERTY(int folderChipAt READ folderChipAt NOTIFY changed FINAL)
     // Counts the sites' icons that arrived: a binding on webIconUrl() reads it
     // to be asked again (without the list made anew, and a form open in it lost).
     Q_PROPERTY(int siteIconsArrived READ siteIconsArrived NOTIFY siteIconArrived FINAL)
@@ -741,6 +748,8 @@ public:
     HealthMonitor* monitor() const { return m_monitor; }
     void setMonitor(HealthMonitor* monitor);
     Q_INVOKABLE void giveMemoryBack() { emit giveBackMemoryRequested(); }
+    // The window, open, put away the pages left behind (SettingsWindow.putPagesAway).
+    Q_INVOKABLE void pagesPutAway() { emit pagesPutAwayWhileOpen(); }
     QString contentIndexStatus() const { return m_contentIndexStatus; }
     void setContentIndexStatus(const QString& status); // "已收录 … 个文件"; set by the app
     QString renderer() const { return m_settings.renderer; }
@@ -920,8 +929,13 @@ public:
     void setFuzzyMode(const QString& mode);
     bool thumbnails() const { return m_settings.thumbnails; }
     void setThumbnails(bool on);
-    bool rowDeleteButton() const { return m_settings.rowDeleteButton; }
-    void setRowDeleteButton(bool on);
+    QStringList rowActions() const { return m_settings.rowActions; }
+    void setRowActions(const QStringList& order);
+    QStringList rowActionChoices() const;
+    bool rowActionsDefault() const { return m_settings.rowActions == rowactions::defaults(); }
+    Q_INVOKABLE void toggleRowAction(const QString& id); // shown (at the end) or not
+    Q_INVOKABLE void moveRowAction(const QString& id, int by); // among those shown: -1 left, 1 right
+    Q_INVOKABLE void resetRowActions() { setRowActions(rowactions::defaults()); }
     bool webSuggestions() const { return m_settings.webSuggestions; }
     void setWebSuggestions(bool on);
     bool webFallback() const { return m_settings.webFallback; }
@@ -951,6 +965,8 @@ public:
     bool reopenWhereLeft() const { return m_settings.reopenWhereLeft; }
     bool pinnedOnTop() const { return m_settings.pinnedOnTop; }
     void setPinnedOnTop(bool on);
+    bool keepPinned() const { return m_settings.keepPinned; }
+    void setKeepPinned(bool on);
     void setReopenWhereLeft(bool on);
     bool englishOnOpen() const { return m_settings.englishOnOpen; }
     void setEnglishOnOpen(bool on);
@@ -1058,7 +1074,10 @@ public:
 
     QVariantList webShortcuts() const;
     QVariantList fileTypes() const;
-    bool fileTypesDefault() const { return m_settings.fileTypes == Settings::defaultFileTypes() && m_settings.folderKeyword == u"folder"; }
+    bool fileTypesDefault() const
+    {
+        return m_settings.fileTypes == Settings::defaultFileTypes() && m_settings.folderKeyword == u"folder" && m_settings.folderChipAt == 0;
+    }
     // Each returns what is wrong ("已有这个类型"), empty when done.
     Q_INVOKABLE QString addFileType(const QString& name, const QString& extensions);
     Q_INVOKABLE QString renameFileType(int index, const QString& name);
@@ -1067,8 +1086,10 @@ public:
     Q_INVOKABLE QString setFileTypeFolder(int index, const QString& text);
     Q_INVOKABLE QString chooseFileTypeFolder(int index);
     QString folderKeyword() const { return m_settings.folderKeyword; }
+    int folderChipAt() const { return m_settings.folderChipAt; }
     Q_INVOKABLE void removeFileType(int index);
-    Q_INVOKABLE void moveFileType(int index, int delta); // up (-1) or down (1) the strip
+    // A chip of the strip after 不限 (文件夹 or a kind) to another place (Settings::moveStripChip).
+    Q_INVOKABLE void moveStripChip(int from, int to);
     Q_INVOKABLE void resetFileTypes();
     // The search panel's quick filters: [{name, query}]. Each returns what
     // is wrong ("已有这个名字", a query that cannot be read), empty when done.
@@ -1311,6 +1332,7 @@ signals:
     void contentIndexStatusChanged();
     void monitorChanged();
     void giveBackMemoryRequested();
+    void pagesPutAwayWhileOpen();
     void indexFolderChanged();
     void recordingHotkeyChanged(); // the app suspends its hotkeys meanwhile
     void autostartChanged();

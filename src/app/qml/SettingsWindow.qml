@@ -339,7 +339,12 @@ Window {
     // 按键一览 shown: its sections all made at once (else one at a time, filling).
     property bool shortcutsWanted: false
     onShortcutsWantedChanged: if (shortcutsWanted) makeShortcuts(shortcutSections.length)
-    onCurrentPageChanged: if (currentPage === keysPage && currentTab === keysListTab) shortcutsWanted = true
+    onCurrentPageChanged: {
+        if (currentPage === keysPage && currentTab === keysListTab)
+            shortcutsWanted = true
+        if (leftPagesIdle)
+            leftPages.restart() // half a minute from the last move
+    }
     onCurrentTabChanged: if (currentPage === keysPage && currentTab === keysListTab) shortcutsWanted = true
 
     // Closed a while ago (App, half a minute after the window was hidden): the
@@ -348,14 +353,47 @@ Window {
     // of them once the search was used, stayed for as long as Win顺 ran:
     // ~250 MB at 150% (GitHub #459, 587 MB of 窗口和数据 on a larger screen).
     function unloadPages(): void {
-        if (visible)
+        if (!visible)
+            putPagesAway(false)
+    }
+    // Open, too: the pages left behind go half a minute after the last move
+    // to another one, all but the one on show. They stayed for as long as the
+    // window was open, which is hours when it is left open to look at 运行状况
+    // (GitHub #467: 250 to 430 MB of 窗口和数据 with the window open). A page
+    // gone back to is made again (20–120 ms) where it was left (navHistory).
+    // Not while the search has them (it looks in every page), nor during a
+    // dialog or a hotkey being recorded.
+    property int leftPagesMs: 30000
+    property bool leftPagesGone: false // putPagesAway(true) put some away, and has not said so yet
+    readonly property bool leftPagesIdle: visible && !searching && !fillFast && navPending < 0 && !modalOpen
+                                          && !editor.recordingHotkey
+    onLeftPagesIdleChanged: leftPagesIdle ? leftPages.restart() : leftPages.stop()
+    Timer {
+        id: leftPages
+        interval: window.leftPagesMs
+        onTriggered: window.putPagesAway(true)
+    }
+    // One page per turn of the event loop: `shown`, all but the one on show
+    // (stopped by anything that ends leftPagesIdle); hidden, all but the first.
+    function putPagesAway(shown: bool): void {
+        if (shown ? !leftPagesIdle : visible)
             return
-        for (let i = pageSlots.length - 1; i > 0; --i) {
+        const kept = shown ? currentPage : 0
+        if (shown)
+            fillTimer.stop() // the search's filling, left unfinished: not made again behind this
+        for (let i = pageSlots.length - 1; i >= 0; --i) {
+            if (i === kept || (shown && i === navHovered)) // pointed at: about to be gone to (hoverNav)
+                continue
             if (pageSlots[i].unload()) {
                 allPagesLoaded = false
-                Qt.callLater(window.unloadPages)
+                leftPagesGone = shown
+                Qt.callLater(window.putPagesAway, shown)
                 return
             }
+        }
+        if (leftPagesGone) { // their memory back now, not when the window is next left (App, IdleTrim.freed)
+            leftPagesGone = false
+            editor.pagesPutAway()
         }
         if (keysSlot.item === null) { // 按键一览's sections went with their page: made again as on a first opening
             shortcutsWanted = false
@@ -5302,15 +5340,23 @@ Window {
                 }
 
                 SettingRow {
-                    title: qsTr("显示删除按钮")
-                    keywords: qsTr("删除;垃圾桶;回收站;误删;按钮;delete;trash;recycle").split(";")
-                    description: qsTr("文件和文件夹的结果行末尾显示删除按钮（点两次，移到回收站）；关闭后仍可在右键菜单中移到回收站")
+                    objectName: "rowActionsRow"
+                    title: qsTr("结果行按钮")
+                    keywords: qsTr("按钮;快捷命令;快捷按钮;自定义;顺序;删除;垃圾桶;回收站;误删;复制;路径;终端;预览;收藏;管理员;delete;trash;copy;terminal;button;action").split(";")
+                    description: qsTr("鼠标停在结果上或选中它时，行末尾出现的按钮：选要哪些，排成什么顺序。按钮只在用得上的结果上出现；不显示的，右键菜单里都还有")
 
-                    ToggleSwitch {
-                        objectName: "rowDeleteButtonToggle"
+                    FlatButton {
+                        objectName: "rowActionsReset"
                         dpr: window.dpr
-                        checked: window.editor.rowDeleteButton
-                        onToggled: (on) => window.editor.rowDeleteButton = on
+                        visible: !window.editor.rowActionsDefault
+                        text: qsTr("恢复默认")
+                        onClicked: window.editor.resetRowActions()
+                    }
+
+                    body: RowActionsEditor {
+                        width: parent.width
+                        settings: window.editor
+                        dpr: window.dpr
                     }
                 }
 
@@ -5514,10 +5560,23 @@ Window {
                     }
                 }
 
+                SettingRow { // feedback 2026-11-26: results gone through one after another
+                    title: qsTr("一直钉住搜索框")
+                    keywords: qsTr("钉住;一直;保持;不消失;不收起;不关闭;连续打开;Ctrl+T;pin;keep open;stay open").split(";")
+                    description: qsTr("不用每次按 Ctrl+T：打开结果、点别的窗口，搜索框都不收起，按 Esc 才关。适合连着查看好几个结果；Ctrl+T 可以临时取消，Win顺 重新启动后又是钉住的")
+
+                    ToggleSwitch {
+                        objectName: "keepPinnedSwitch"
+                        dpr: window.dpr
+                        checked: window.editor.keepPinned
+                        onToggled: (on) => window.editor.keepPinned = on
+                    }
+                }
+
                 SettingRow { // feedback 2026-11-16
                     title: qsTr("钉住时在最前")
                     keywords: qsTr("钉住;置顶;最前;盖住;遮挡;Ctrl+T;pin;topmost;always on top").split(";")
-                    description: qsTr("按 Ctrl+T 钉住后，搜索框一直盖在别的窗口上面；关掉时点别的窗口会把它盖住，按打开 Win顺 的快捷键再回到前面")
+                    description: qsTr("按 Ctrl+T 钉住后，搜索框盖在别的窗口上面，从它打开的文件和程序除外；关掉时点别的窗口会把它盖住，按打开 Win顺 的快捷键再回到前面")
 
                     ToggleSwitch {
                         objectName: "pinnedOnTopSwitch"
@@ -7221,7 +7280,7 @@ Window {
                     title: qsTr("保留重复项")
                     keywords: qsTr("重复;去重;合并;多次复制;再次复制;允许重复;Ditto;duplicate").split(";")
                     description: qsTr("同样的内容再复制一次，也记成新的一条；关闭时只留一条，移到最前")
-                    tip: qsTr("紧接着复制同样的内容（比如连按两次 Ctrl+C）仍只记一条。从剪贴板里粘贴出去不算复制，不会多出一条")
+                    tip: qsTr("连着复制同样的内容也各记一条。只有半秒内的重复才算同一次复制（有的程序复制一次会写两遍剪贴板）。从剪贴板里粘贴出去不算复制，不会多出一条")
 
                     ToggleSwitch {
                         dpr: window.dpr
@@ -7311,7 +7370,7 @@ Window {
                     title: qsTr("粘贴后保持位置")
                     keywords: qsTr("位置;顺序;排序;跳到最前;置顶;不动;固定顺序;粘贴后").split(";")
                     description: qsTr("从列表里粘贴一条后留在原来的位置，不跳到最前面")
-                    tip: qsTr("重新复制同样的内容仍会排到最前。粘贴过的条目右下角带蓝色对勾，也不会因“保留天数”到期而被删")
+                    tip: qsTr("重新复制同样的内容仍会排到最前（开着“保留重复项”时是在最前新记一条）。粘贴过的条目右下角带蓝色对勾，也不会因“保留天数”到期而被删")
 
                     ToggleSwitch {
                         dpr: window.dpr

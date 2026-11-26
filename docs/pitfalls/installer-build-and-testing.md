@@ -26,6 +26,7 @@
 
 - **应用内更新后回到管理员身份（#400）**：`App::elevateOnceUpdated` 原先只要窗口开着就无限静默等待且不记日志 → 逻辑收口至 `update::ElevationWait`：等升级助手最多 10 分钟，结束后无窗即重启，窗口刚关等 2 秒，窗口持续开满 1 分钟则发通知“Win顺 已更新”供点击提权重启（设置开着带 `--settings`）；记录 `elevation-after-update-waiting` 与 `elevation-after-update`，发布前用 `tools/verify-installed-upgrade.ps1 -Mode InApp` 实测完整链路。
 - **便携版管理员直读升级回滚（#274）**：旧版升级助手 `WinShunUpdate.exe` 只等它启动的初始进程建好 `MessageWindow`，新版若启动即自行提权并退出初始进程，旧助手会误判失败并换回旧版 → 新版见到互斥量 `Local\WinShun.Updating` 存在时留在初始进程/原权限完成启动，等助手退出后再由 `App::elevateOnceUpdated` 提权；任何启动自交接逻辑都须顾及外部等待者，且修在助手里的逻辑要到下个版本才生效。
+- **安全软件扫描新下载被当成“安装包没通过检查”（0.48.0 用户反馈）**：下载与 SHA-256 都对，但改名为 `.exe` 的瞬间安全软件会带写/删权限打开它扫描，`HeldFile` 原先只用 `FILE_SHARE_READ` 打开一次，遇 `ERROR_SHARING_VIOLATION` 就判失败、删包并报“没有通过检查” → 新文件的独占打开、改名替换一律经 `update::transientHold()`（`ACCESS_DENIED`/`SHARING_VIOLATION`/`LOCK_VIOLATION`）等最多 `kHoldWait`（30 秒，可被取消）；仍失败、文件不见（被删/隔离）或报 `ERROR_VIRUS_INFECTED`/`DELETED` 时（`blockedOnThisComputer()`）提示“被这台电脑上的程序拦下了”并给“打开下载页”，只有哈希或版本资源真不对才说“没有通过检查”；日志写明 Windows 错误码与实际哈希/版本。同类“刚写完就打开或改名”的代码都要这样等。
 - **`RUNASADMIN` 兼容标记导致错误 740（#68 / #274 / #111）**：`HKCU`/`HKLM\...\AppCompatFlags\Layers` 含 `RUNASADMIN` 时，普通权限 `CreateProcess`/`CreateProcessWithTokenW` 一律报 740 → 安装器 `PrepareToInstall` 先 `RemoveRunAsAdmin`（仅删该词）；升级助手 `start()` 遇 740 回退 `ShellExecuteEx`（用户取消 UAC 返回 `ERROR_CANCELLED` 时保留新版）；必须普通权限运行的自身助手（如拖放圆盘）由 `shell::startUnelevated` 遇 740 且目标在本目录时注入 `__COMPAT_LAYER=RunAsInvoker` + `WINSHUN_AS_INVOKER`，`main()` 首行 `shell::dropInvokerLayer()` 用 `_wputenv_s` 清除两者防传给孙进程（绝不对外部程序套用）。
 
 ### Scoop 打包与更新
@@ -84,6 +85,35 @@
 - **探针跳过 `aboutToQuit` 崩溃与退出期警告查栈**：探针直接析构 `App` 时，插件宿主若延迟到自身析构才 `shutdown()`，插件退出回调会落到声明在后已析构的 `App` 成员上（`0xC0000374`/`0xC0000005`） → `App::~App()` 首行即幂等调用宿主 `shutdown()`；抓退出崩栈在启动后 `cdb -p <pid>` 附加；查退出期 Qt 警告可在消息处理器临时用 `CaptureStackBackTrace` + `SymFromAddrW`（`RelWithDebInfo` + `/bigobj`）定位对象。
 - **`QTRY_VERIFY` / `QTRY_COMPARE` 表达式严禁副作用**：`QTRY_*` 循环成功后会再次求值做超时诊断和最终 `QVERIFY`，如 `::DeleteFileW(path)` 二次调用返回 FALSE 会多等两倍超时并误判失败 → 所有 `QTRY_*` 表达式须幂等（如 `QFile::remove(p) || !QFileInfo::exists(p)`）。
 - **`IdleOpenProbe` 与插件探针运行约束**：带尾反斜杠加引号的参数（`"C:\;F:\"`）会转义引号吞掉后续参数；后台编译会令呼出耗时翻倍并出现 600–700 ms 输入法毛刺；插件库探针若不检查索引加载成功，失败空模型送入卡片会制造次生警告 → 命令行路径一律正斜杠，剔除整机 CPU > 30% 样本并新旧交替跑；插件探针须断言数据角色且日志零 QML 警告。
+
+### 测试与清理的文件安全
+
+递归删除不认目录链接：`QTemporaryDir` 析构、`QDir::removeRecursively()`、`Remove-Item -Recurse`、`rmdir /s`、`shutil.rmtree` 遇到联接或挂载点会走进去，把它指向的内容当成自己的删掉，不经回收站。一个指向真实盘根的测试联接，曾因此清空了用户的桌面和 `AppData` 下的大批目录。下面每一条都是硬规则，不是建议。
+
+**一、链接只能指向测试自己建的数据**
+
+- 测试里的联接、符号链接、挂载点，目标只允许在这三处：`%TEMP%` 之内（不含 `%TEMP%` 本身）、`WINSHUN_TEST_OTHER_DISK_DIR` 之内、`WINSHUN_TEST_SCRATCH_VOLUME` 指定的专用测试卷。绝不指向真实盘的根目录或卷名（`C:\`、`\\?\Volume{…}\`）、用户目录、`Program Files`、`Windows`、源码树。
+- 建联接一律用 `tests/TestJunction.h` 的 `makeJunction()`：它用 `testOwnsLinkTarget()` 检查目标，不合规就拒绝并报 `makeJunction: refused`。不得绕过它另写 `FSCTL_SET_REPARSE_POINT`、`cmd /c mklink` 或 PowerShell `New-Item -ItemType Junction`。直接调 `CreateSymbolicLinkW` 只允许相对目标（落在测试树内）或不存在的 UNC 路径。
+- 需要“整盘目标”“文件夹里挂了一个卷”这类用例时，只在专用测试卷上做：建一个 `.vhd`，挂载后把盘符填进 `WINSHUN_TEST_SCRATCH_VOLUME`（`testScratchVolume()` 会拒绝系统盘、`%TEMP%` 所在盘、用户目录所在盘和源码所在盘）。没设这个变量时，这部分断言跳过并在日志里写明，不拿真实盘顶替。
+- 这样即使测试被杀、`MadeLinks` 没来得及运行、残留目录后来被别的清理程序扫到，被删的也只是测试数据。
+
+**二、链接先于目录被删，按链接删**
+
+- 测试建的每个链接在创建之前登记到 `MadeLinks`（`made << 路径`），且 `MadeLinks` 声明在所有 `QTemporaryDir` 之后，析构时先用 `RemoveDirectoryW` 只删链接本身。
+- 对一个可能是链接的路径做“先清掉再重建”时，先 `removeLinkOnly()`，它返回 `false`（是普通目录）才允许递归删。
+- 手工或脚本清理测试残留：先列出目录内全部重解析点（`Get-ChildItem -Recurse -Force -Attributes ReparsePoint`），逐个 `[IO.Directory]::Delete(链接, $false)` 非递归删除，再列一遍确认为 0，最后才递归删目录。不用 `cmd /c rmdir /s`，不用 Windows PowerShell 5.1 的 `Remove-Item -Recurse` 处理含链接的目录。
+
+**三、递归删除只针对自己建的、核对过的路径**
+
+- 删除对象必须是本次任务自己创建的目录，位于 `build/`、`dist/`、`.worktrees/`、`%TEMP%` 下自己的子目录或会话的 scratchpad 之内。
+- 删前把路径解析成绝对路径并打印核对；路径由变量拼出时先断言变量非空、结果以预期前缀开头（空变量会把 `"$dir\"` 变成盘根）。目标本身是链接时不递归删。
+- 新写或改过“建链接、递归删除、卷操作”的测试，第一次运行必须设 `QTEST_FUNCTION_TIMEOUT=60000`，并在运行前把它的清理路径从头读一遍：每个链接指向哪里，谁在什么时候删它。
+
+**四、出现异常就停，按文件级证据核查，不凭印象报平安**
+
+- 这类测试出现超时、卡住、清理耗时异常、临时目录残留，立即结束测试进程，不重跑，不继续别的任务。
+- 核查要看文件，不看目录还在不在：目录在不等于里面的文件在。至少做三件事：对每个链接目标（含桌面、文档、`AppData`）统计文件数并看有没有成批的空目录；找出事发时刻之后才新建的目录（被删后由程序重建）；提权读 USN 日志里该时间段的删除记录（`fsutil usn readjournal C: csv`）。
+- 无法证明没有删除时，当场如实告诉用户“可能已经删除了文件”，并提醒三件事：尽量停止往该盘写入、先查卷影副本和同步盘回收站、尽快做只读恢复扫描。删除后的头几个小时是恢复机会最大的时候，错误的“没事”结论会把它耗掉。
 
 ### 真实输入界面实测与 PowerShell 陷阱
 

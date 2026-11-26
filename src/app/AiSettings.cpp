@@ -749,10 +749,13 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Results/Thumbnails", QT_TRANSLATE_NOOP("AiSettings", "显示图片缩略图"), "results", 1,
                     "A picture, video or PDF shows its thumbnail as its icon."},
         &Settings::thumbnails));
-    add(boolean({"Results/DeleteButton", QT_TRANSLATE_NOOP("AiSettings", "显示删除按钮"), "results", 1,
-                    "A file's or folder's row has a delete button (clicked twice, to the Recycle Bin) among its "
-                    "buttons. Off: none; the right-click menu still has Move to Recycle Bin."},
-        &Settings::rowDeleteButton));
+    add(list({"Results/RowActions", QT_TRANSLATE_NOOP("AiSettings", "结果行按钮"), "results", 1,
+                 "The buttons at the right end of a result's row, in the order they show, left to right: admin (run as "
+                 "administrator), reveal (open location), terminal, copy (the file), copyPath, delete (clicked twice, to "
+                 "the Recycle Bin), preview, copyName, favorite (add to or remove from the favorites). The first six "
+                 "are the default. A button shows only on rows it applies to; one left out is still in the right-click "
+                 "menu. An empty list: no buttons."},
+        &Settings::rowActions, ListKind::RowActions));
     add(choice({"Results/PreviewWith", QT_TRANSLATE_NOOP("AiSettings", "预览文件"), "results", 1,
                    "Which viewer the result preview uses."},
         &Settings::previewWith,
@@ -821,8 +824,11 @@ std::vector<Entry> buildCatalog()
     add(boolean({"Launcher/ReopenWhereLeft", QT_TRANSLATE_NOOP("AiSettings", "回到上次的位置"), "results", 2,
                     "When the search box opens again with the same words, the row it was left on is selected and the list is as far down as it was, instead of starting on the first row."},
         &Settings::reopenWhereLeft));
+    add(boolean({"Launcher/KeepPinned", QT_TRANSLATE_NOOP("AiSettings", "一直钉住搜索框"), "results", 2,
+                    "The search box is pinned from the start, as after Ctrl+T: it stays up when a result is opened or another window is clicked, and closes on Esc. Ctrl+T still unpins it until WinShun starts again."},
+        &Settings::keepPinned));
     add(boolean({"Launcher/PinnedOnTop", QT_TRANSLATE_NOOP("AiSettings", "钉住时在最前"), "results", 2,
-                    "Pinned (Ctrl+T), the search box stays over every other window. Off: another window clicked covers it like any window, and the shortcut brings it back to the front."},
+                    "Pinned (Ctrl+T), the search box stays over every other window, except what is opened from it (a file, a program), which comes up in front. Off: another window clicked covers it like any window, and the shortcut brings it back to the front."},
         &Settings::pinnedOnTop));
     add(boolean({"Launcher/EnglishOnOpen", QT_TRANSLATE_NOOP("AiSettings", "打开时切换为英文输入"), "results", 2,
                     "Each time the search box opens, a Chinese input method there goes into its English mode, so letters and pinyin initials go straight into the search. Switching back in the box is kept for that opening; on closing it is put back as it was."},
@@ -930,7 +936,8 @@ std::vector<Entry> buildCatalog()
         &Settings::clipboardKeepPlace));
     add(boolean({"Clipboard/KeepDuplicates", QT_TRANSLATE_NOOP("AiSettings", "保留重复项"), "clipboard", 0,
                     "Copying again what was copied before adds a new entry on top and leaves the old one where it is "
-                    "(Ditto's allow duplicates); off: the old entry moves to the top. The same thing copied twice in a row is one entry either way."},
+                    "(Ditto's allow duplicates); off: the old entry moves to the top. On, the same thing copied twice in a row is two entries too; "
+                    "only a repeat within half a second is the same copy."},
         &Settings::clipboardDuplicates));
     add(boolean({"Clipboard/PreviewRestore", QT_TRANSLATE_NOOP("AiSettings", "剪贴板再次打开时恢复预览"), "clipboard", 0,
                     "A side preview left open when the clipboard window closes opens again with it next time; off: it closes with the window."},
@@ -1235,6 +1242,17 @@ QStringList normalizedItems(ListKind kind, const QString& raw, QString& error)
         if (patterns.isEmpty())
             error = u"'%1' is not a file name; write one like ~$* or Thumbs.db, without a folder."_s.arg(raw);
         return patterns;
+    }
+    case ListKind::RowActions: {
+        const QString id = rowactions::known(raw);
+        if (id.isEmpty()) {
+            QStringList all;
+            for (const QStringView known : rowactions::kKnown)
+                all.append(known.toString());
+            error = u"'%1' is not a row button; the buttons are %2."_s.arg(raw, all.join(u", "_s));
+            return {};
+        }
+        return {id};
     }
     case ListKind::Names: {
         const QString name = Settings::excludedFolderName(raw);
@@ -1702,6 +1720,8 @@ QString listItemsName(ListKind k)
         return u"full folder paths such as D:\\Games"_s;
     case ListKind::LocalFolders:
         return u"full paths of folders on this PC's own disks such as D:\\Work (no network paths)"_s;
+    case ListKind::RowActions:
+        return u"row button names (admin, reveal, terminal, copy, copyPath, delete, preview, copyName, favorite), in the order they show"_s;
     }
     return {};
 }

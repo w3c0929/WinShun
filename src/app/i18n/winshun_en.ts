@@ -1115,8 +1115,8 @@
         <translation>Scope tabs</translation>
     </message>
     <message>
-        <source>显示删除按钮</source>
-        <translation>Show the delete button</translation>
+        <source>结果行按钮</source>
+        <translation>Row buttons</translation>
     </message>
     <message>
         <source>内置预览</source>
@@ -1197,6 +1197,10 @@
     <message>
         <source>钉住时在最前</source>
         <translation>Stay on top when pinned</translation>
+    </message>
+    <message>
+        <source>一直钉住搜索框</source>
+        <translation>Keep the search box pinned</translation>
     </message>
     <message>
         <source>一直显示</source>
@@ -2023,8 +2027,12 @@
         <translation>Search the clipboard</translation>
     </message>
     <message>
-        <source>直接打拼音：tupian → 图片</source>
+        <source>打拼音：tupian → 图片</source>
         <translation>Type pinyin: tupian → 图片</translation>
+    </message>
+    <message>
+        <source>打拼音能找到中文；要用输入法，点一下搜索框</source>
+        <translation>Pinyin finds Chinese; click the search box for the input method</translation>
     </message>
     <message>
         <source>松开粘贴</source>
@@ -2975,12 +2983,12 @@
         <translation>File types</translation>
     </message>
     <message>
-        <source>类型;扩展名;后缀;筛选;前缀;快捷键;搜索范围;目录;folder;filter;type;extension</source>
-        <translation>type;extension;suffix;filter;prefix;shortcut;search scope;directory;folder</translation>
+        <source>类型;扩展名;后缀;筛选;前缀;快捷键;搜索范围;目录;顺序;排序;拖动;folder;filter;type;extension;order</source>
+        <translation>type;extension;suffix;filter;prefix;shortcut;search scope;directory;order;sort;drag;folder</translation>
     </message>
     <message>
-        <source>前缀不区分大小写，留空停用。点文件夹图标可绑定一个文件夹（含子文件夹）；例如 cw + csv，输入“cw:”直接列出该范围的 CSV。Ctrl+Tab 仍可切换类型。</source>
-        <translation>Prefixes are case-insensitive; leave blank to disable. Click the folder icon to bind a folder and its subfolders. For example, cw + csv lets “cw:” list CSV files in that scope. Ctrl+Tab still switches types.</translation>
+        <source>前缀不区分大小写，留空停用。点文件夹图标可绑定一个文件夹（含子文件夹）；例如 cw + csv，输入“cw:”直接列出该范围的 CSV。拖动左边的把手调整顺序（文件夹也能移动），搜索框下的类型条上按住类型左右拖动也可以。Ctrl+Tab 按这个顺序切换。</source>
+        <translation>Prefixes are case-insensitive; leave blank to disable. Click the folder icon to bind a folder and its subfolders. For example, cw + csv lets “cw:” list CSV files in that scope. Drag a row by its handle on the left to change the order (Folders moves too), or hold a type in the strip under the search box and drag it sideways. Ctrl+Tab follows this order.</translation>
     </message>
     <message>
         <source>恢复默认</source>
@@ -4316,8 +4324,8 @@
         <translation>Not set</translation>
     </message>
     <message>
-        <source>关键字（多个用空格分开）</source>
-        <translation>Keywords (several: put spaces between)</translation>
+        <source>关键字（多个用空格分开）；快捷键在任何地方按下，直接打开搜索框并填好关键字（录制时按 Backspace 清除）</source>
+        <translation>Keywords (several: put spaces between). A shortcut, pressed anywhere, opens the search box with the keyword typed (Backspace while recording clears it)</translation>
     </message>
     <message>
         <source>再试一次</source>
@@ -4872,6 +4880,10 @@ Installing first renames it to %2, left beside the plugin; no file is deleted.</
         <translation>User guide</translation>
     </message>
     <message>
+        <source>使用说明 · %1</source>
+        <translation>User guide · %1</translation>
+    </message>
+    <message>
         <source>关闭（Esc / Q）</source>
         <translation>Close (Esc / Q)</translation>
     </message>
@@ -5292,6 +5304,14 @@ Installing first renames it to %2, left beside the plugin; no file is deleted.</
         <source>打开</source>
         <translation>Open</translation>
     </message>
+    <message>
+        <source>放大</source>
+        <translation>Enlarge</translation>
+    </message>
+    <message>
+        <source>还原</source>
+        <translation>Restore</translation>
+    </message>
 </context>
 <context>
     <name>QCoreApplication::App</name>
@@ -5456,6 +5476,93 @@ Send suggestions and problems on our website</translation>
     </message>
 </context>
 <context>
+    <name>RowActionsEditor</name>
+    <message>
+        <source>管理员运行</source>
+        <translation>Run as admin</translation>
+    </message>
+    <message>
+        <source>以管理员身份运行（只在程序上出现）</source>
+        <translation>Run as administrator (on programs only)</translation>
+    </message>
+    <message>
+        <source>打开位置</source>
+        <translation>Open location</translation>
+    </message>
+    <message>
+        <source>打开所在位置</source>
+        <translation>Open file location</translation>
+    </message>
+    <message>
+        <source>终端</source>
+        <translation>Terminal</translation>
+    </message>
+    <message>
+        <source>在终端中打开，Shift+点击以管理员身份</source>
+        <translation>Open in Terminal; Shift+click as administrator</translation>
+    </message>
+    <message>
+        <source>复制</source>
+        <translation>Copy</translation>
+    </message>
+    <message>
+        <source>复制文件或文件夹，可在资源管理器中粘贴</source>
+        <translation>Copy the file or folder, to paste in File Explorer</translation>
+    </message>
+    <message>
+        <source>复制路径</source>
+        <translation>Copy path</translation>
+    </message>
+    <message>
+        <source>复制完整路径</source>
+        <translation>Copy full path</translation>
+    </message>
+    <message>
+        <source>删除</source>
+        <translation>Delete</translation>
+    </message>
+    <message>
+        <source>删除（点两次，移到回收站）</source>
+        <translation>Delete (click twice; to the Recycle Bin)</translation>
+    </message>
+    <message>
+        <source>预览</source>
+        <translation>Preview</translation>
+    </message>
+    <message>
+        <source>不打开文件，在旁边预览内容</source>
+        <translation>Look at the file beside the box, without opening it</translation>
+    </message>
+    <message>
+        <source>复制名称</source>
+        <translation>Copy name</translation>
+    </message>
+    <message>
+        <source>复制文件名</source>
+        <translation>Copy the file name</translation>
+    </message>
+    <message>
+        <source>收藏</source>
+        <translation>Favorite</translation>
+    </message>
+    <message>
+        <source>加入收藏夹，已收藏的再点一次移除</source>
+        <translation>Add to favorites; click again on a favorite to remove it</translation>
+    </message>
+    <message>
+        <source>显示的按钮，从左到右；拖动调整顺序，点一下取消显示</source>
+        <translation>Buttons shown, left to right: drag to reorder, click to take one off</translation>
+    </message>
+    <message>
+        <source>现在结果行上没有按钮；点下面的按钮把它加上</source>
+        <translation>Rows have no buttons now; click one below to add it</translation>
+    </message>
+    <message>
+        <source>没有显示的，点一下加到最后</source>
+        <translation>Not shown: click to add at the end</translation>
+    </message>
+</context>
+<context>
     <name>ResultRow</name>
     <message>
         <source>运行</source>
@@ -5464,6 +5571,22 @@ Send suggestions and problems on our website</translation>
     <message>
         <source>打开设置</source>
         <translation>Open settings</translation>
+    </message>
+    <message>
+        <source>预览</source>
+        <translation>Preview</translation>
+    </message>
+    <message>
+        <source>复制名称</source>
+        <translation>Copy name</translation>
+    </message>
+    <message>
+        <source>加入收藏夹</source>
+        <translation>Add to favorites</translation>
+    </message>
+    <message>
+        <source>从收藏夹移除</source>
+        <translation>Remove from favorites</translation>
     </message>
     <message>
         <source>在终端中打开（Shift+点击以管理员身份）</source>
@@ -5492,6 +5615,14 @@ Send suggestions and problems on our website</translation>
     <message>
         <source>收藏</source>
         <translation>Favorite</translation>
+    </message>
+    <message>
+        <source>已打开</source>
+        <translation>Opened</translation>
+    </message>
+    <message>
+        <source>已打开 · %1</source>
+        <translation>Opened · %1</translation>
     </message>
     <message>
         <source>空文件夹</source>
@@ -7219,16 +7350,16 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Show thumbnails</translation>
     </message>
     <message>
-        <source>显示删除按钮</source>
-        <translation>Show the delete button</translation>
+        <source>结果行按钮</source>
+        <translation>Row buttons</translation>
     </message>
     <message>
-        <source>删除;垃圾桶;回收站;误删;按钮;delete;trash;recycle</source>
-        <translation>delete;trash;recycle bin;remove;button;accident</translation>
+        <source>按钮;快捷命令;快捷按钮;自定义;顺序;删除;垃圾桶;回收站;误删;复制;路径;终端;预览;收藏;管理员;delete;trash;copy;terminal;button;action</source>
+        <translation>button;action;quick command;customize;order;delete;trash;recycle bin;accident;copy;path;terminal;preview;favorite;administrator</translation>
     </message>
     <message>
-        <source>文件和文件夹的结果行末尾显示删除按钮（点两次，移到回收站）；关闭后仍可在右键菜单中移到回收站</source>
-        <translation>Rows of files and folders end with a delete button (click twice; to the Recycle Bin). Off: Move to Recycle Bin stays in the right-click menu</translation>
+        <source>鼠标停在结果上或选中它时，行末尾出现的按钮：选要哪些，排成什么顺序。按钮只在用得上的结果上出现；不显示的，右键菜单里都还有</source>
+        <translation>The buttons at the end of a result's row while the mouse is on it or it is selected: which ones, and in which order. A button shows only on results it applies to; one left out stays in the right-click menu</translation>
     </message>
     <message>
         <source>缩略图;预览;图片;照片;视频;PDF;thumbnail;preview</source>
@@ -9179,6 +9310,18 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>When it opens again it stops on the row you last selected and the list scrolls there; off: it starts at the first row. Has no effect while “Clear the search each time it opens” is on</translation>
     </message>
     <message>
+        <source>一直钉住搜索框</source>
+        <translation>Keep the search box pinned</translation>
+    </message>
+    <message>
+        <source>钉住;一直;保持;不消失;不收起;不关闭;连续打开;Ctrl+T;pin;keep open;stay open</source>
+        <translation>pin;always;keep;stay;does not close;keep open;stay open;one after another;Ctrl+T</translation>
+    </message>
+    <message>
+        <source>不用每次按 Ctrl+T：打开结果、点别的窗口，搜索框都不收起，按 Esc 才关。适合连着查看好几个结果；Ctrl+T 可以临时取消，Win顺 重新启动后又是钉住的</source>
+        <translation>No Ctrl+T each time: the search box stays up when you open a result or click another window, and closes on Esc. Good for going through several results in a row; Ctrl+T unpins it for now, and it is pinned again after WinShun restarts</translation>
+    </message>
+    <message>
         <source>钉住时在最前</source>
         <translation>Stay on top when pinned</translation>
     </message>
@@ -9187,8 +9330,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>pin;stay on top;front;cover;obscure;Ctrl+T;topmost;always on top</translation>
     </message>
     <message>
-        <source>按 Ctrl+T 钉住后，搜索框一直盖在别的窗口上面；关掉时点别的窗口会把它盖住，按打开 Win顺 的快捷键再回到前面</source>
-        <translation>After you pin the search box with Ctrl+T, it stays over other windows; off: clicking another window covers it, and the shortcut that opens WinShun brings it back to the front</translation>
+        <source>按 Ctrl+T 钉住后，搜索框盖在别的窗口上面，从它打开的文件和程序除外；关掉时点别的窗口会把它盖住，按打开 Win顺 的快捷键再回到前面</source>
+        <translation>After you pin the search box with Ctrl+T, it stays over other windows, except the files and programs opened from it; off: clicking another window covers it, and the shortcut that opens WinShun brings it back to the front</translation>
     </message>
     <message>
         <source>字母直达用的键</source>
@@ -9299,8 +9442,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>Copying the same content again adds a new entry; when off, only one is kept and moved to the top</translation>
     </message>
     <message>
-        <source>紧接着复制同样的内容（比如连按两次 Ctrl+C）仍只记一条。从剪贴板里粘贴出去不算复制，不会多出一条</source>
-        <translation>Copying the same content twice in a row (such as pressing Ctrl+C twice) still records it once. Pasting from the clipboard is not a copy and adds no entry</translation>
+        <source>连着复制同样的内容也各记一条。只有半秒内的重复才算同一次复制（有的程序复制一次会写两遍剪贴板）。从剪贴板里粘贴出去不算复制，不会多出一条</source>
+        <translation>Copying the same content twice in a row adds an entry each time. Only a repeat within half a second counts as the same copy (some programs write the clipboard twice for one copy). Pasting from the clipboard is not a copy and adds no entry</translation>
     </message>
     <message>
         <source>剪贴板大小</source>
@@ -9907,8 +10050,8 @@ Double-click grip: expand/collapse search panel</translation>
         <translation>The tab the clipboard shows each time it opens; right-click a tab to set it there too</translation>
     </message>
     <message>
-        <source>重新复制同样的内容仍会排到最前。粘贴过的条目右下角带蓝色对勾，也不会因“保留天数”到期而被删</source>
-        <translation>Recopying the same content will still bring it to the top. Pasted items show a blue checkmark in the bottom-right corner and will not be deleted when retention days expire</translation>
+        <source>重新复制同样的内容仍会排到最前（开着“保留重复项”时是在最前新记一条）。粘贴过的条目右下角带蓝色对勾，也不会因“保留天数”到期而被删</source>
+        <translation>Recopying the same content will still bring it to the top (with “Keep duplicates” on, as a new entry there). Pasted items show a blue checkmark in the bottom-right corner and will not be deleted when retention days expire</translation>
     </message>
     <message>
         <source>按住修饰键每按一次往下选一条，松开粘贴</source>
@@ -11421,6 +11564,26 @@ Double-click grip: expand/collapse search panel</translation>
     <message>
         <source>剪贴板条目的快捷键不可用</source>
         <translation>A clipboard entry's shortcut is unavailable</translation>
+    </message>
+    <message>
+        <source>插件命令的快捷键不可用</source>
+        <translation>A plugin command's shortcut is unavailable</translation>
+    </message>
+    <message>
+        <source>这个命令现在没有可用的关键字，快捷键打不开它，请先设好关键字。</source>
+        <translation>This command has no keyword in use, so the shortcut cannot open it. Give it a keyword first.</translation>
+    </message>
+    <message>
+        <source>%1 已用于剪贴板里的一条内容，请换一个。</source>
+        <translation>%1 is already a clipboard entry's shortcut. Please choose another.</translation>
+    </message>
+    <message>
+        <source>%1 已用于“%2”，请换一个。</source>
+        <translation>%1 is already the shortcut of “%2”. Please choose another.</translation>
+    </message>
+    <message>
+        <source>最多 %1 个命令可以设快捷键，这一个没有生效。</source>
+        <translation>Up to %1 commands can have a shortcut; this one is not in effect.</translation>
     </message>
     <message>
         <source>%1 已用于“%2”，请换一个，或先去掉那一条的快捷键。</source>
@@ -14074,6 +14237,10 @@ Content index: %5</translation>
         <translation>To open the settings page: Ctrl+Enter</translation>
     </message>
     <message>
+        <source>要接着看别的结果？按 Ctrl+T 钉住，打开后搜索框不收起</source>
+        <translation>Checking several results? Ctrl+T pins the box so it stays after opening</translation>
+    </message>
+    <message>
         <source>%1已经是这样了</source>
         <translation>%1 is already set that way</translation>
     </message>
@@ -14750,20 +14917,8 @@ Content index: %5</translation>
         <translation>Move to Recycle Bin</translation>
     </message>
     <message>
-        <source>系统菜单仅支持同目录多选，已复制当前项；跨目录批量操作请用 Win顺 右键菜单</source>
-        <translation>The system menu only supports multi-select within one folder, so only the current item was copied; use WinShun&apos;s right-click menu across folders</translation>
-    </message>
-    <message>
-        <source>系统菜单仅支持同目录多选，已剪切当前项</source>
-        <translation>The system menu only supports multi-select within one folder, so only the current item was cut</translation>
-    </message>
-    <message>
-        <source>系统菜单仅支持同目录多选，已复制当前项路径；跨目录请用 Win顺 右键菜单</source>
-        <translation>The system menu only supports multi-select within one folder, so only the current item&apos;s path was copied; use WinShun&apos;s right-click menu across folders</translation>
-    </message>
-    <message>
-        <source>系统菜单仅支持同目录多选，已仅操作当前项；跨目录批量删除请用 Win顺 右键菜单</source>
-        <translation>The system menu only supports multi-select within one folder, so only the current item was affected; use WinShun&apos;s right-click menu to delete across folders</translation>
+        <source>Windows 没能给出选中这几项共用的菜单，这次只处理了当前这一项</source>
+        <translation>Windows gave no menu for these items together; only the current one was handled this time</translation>
     </message>
     <message numerus="yes">
         <source>加入收藏夹（%Ln 项）</source>
@@ -17435,6 +17590,14 @@ Content index: %5</translation>
         <translation>Indexed in a moment</translation>
     </message>
     <message>
+        <source>在“排除目录”里，不搜索</source>
+        <translation>In Excluded folders: not searched</translation>
+    </message>
+    <message>
+        <source>要搜索它，先到“文件夹”页把它移出排除目录</source>
+        <translation>To search it, take it out of Excluded folders on the Folders page</translation>
+    </message>
+    <message>
         <source>上次核对 %1（用时 %2）</source>
         <translation>last checked %1 (took %2)</translation>
     </message>
@@ -17938,6 +18101,10 @@ Content index: %5</translation>
     <message>
         <source>下载的安装包没有通过检查（已删除），没有安装。请重试。</source>
         <translation>The downloaded package didn’t pass the check (it was deleted) and wasn’t installed. Try again.</translation>
+    </message>
+    <message>
+        <source>更新已经下载好，但被这台电脑上的程序拦下了（多半是安全软件删除、隔离或一直占着它），这次没有更新，旧版本照常可用。可以在安全软件里放行后重试，或打开下载页手动下载。</source>
+        <translation>The update was downloaded, but a program on this PC stopped it (most likely security software that deleted, quarantined or kept hold of it), so nothing was updated and this version still works. Allow it in your security software and try again, or download it from the download page.</translation>
     </message>
     <message>
         <source>安装程序没能启动，旧版本照常可用。请重试。</source>

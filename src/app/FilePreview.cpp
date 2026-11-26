@@ -12,6 +12,7 @@
 #include "platform/ComWorker.h"
 #include "platform/ExternalPreview.h"
 #include "platform/PreviewHost.h"
+#include "platform/WindowEffects.h"
 #include "VideoView.h"
 
 #include <QCoreApplication>
@@ -647,6 +648,17 @@ bool FilePreview::owns(HWND window) const
     return (m_window && window == reinterpret_cast<HWND>(m_window->winId())) || (m_host && m_host->owns(window));
 }
 
+void FilePreview::setEnlarged(bool on)
+{
+    if (m_enlarged == on)
+        return;
+    m_enlarged = on;
+    m_side = PreviewSide::None; // back at its own size, its side is chosen afresh
+    emit enlargedChanged();
+    if (m_open && !m_external && !m_embedded && m_window && m_window->isVisible())
+        showWindow(m_kind == Picture || m_kind == Video ? m_imageSize : QSize());
+}
+
 void FilePreview::openFile()
 {
     if (!m_item.path.isEmpty())
@@ -995,20 +1007,24 @@ void FilePreview::showWindow(QSize wanted)
     const QRect place = placeBeside(wanted);
     if (place.isValid() && m_window->geometry() != place)
         m_window->setGeometry(place);
-    const auto hwnd = reinterpret_cast<HWND>(m_window->winId());
     if (!m_window->isVisible()) {
         // Not activated: the launcher keeps the focus (and so stays open).
         m_window->setProperty("_q_showWithoutActivating", true);
         m_window->show();
         m_window->setProperty("_q_showWithoutActivating", QVariant());
     }
-    // Beside the launcher: just under it, both on top of other windows.
-    // Over its far side (no room beside it): in front of it.
-    if (m_overLauncher)
-        ::SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-    else if (m_launcher && m_launcher->isVisible())
-        ::SetWindowPos(hwnd, reinterpret_cast<HWND>(m_launcher->winId()), 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    restack();
+}
+
+// Beside the launcher: just under it. Over its far side (no room beside it):
+// in front of it. Among the windows the launcher is among: over every other
+// one, or, pinned and not kept so (or standing back for what it opened,
+// PinnedStacking), covered with it by the window in front.
+void FilePreview::restack()
+{
+    if (m_embedded || !m_window || !m_window->isVisible())
+        return;
+    win::stackBy(m_window, m_launcher, m_overLauncher);
     placeHandler(); // the handler's popup just above it again
 }
 
@@ -1023,6 +1039,11 @@ QRect FilePreview::placeBeside(QSize wanted)
         return {};
     const QRect area = screen->availableGeometry();
     const QRect launcher = m_launcher && m_launcher->isVisible() ? m_launcher->geometry() : QRect();
+    if (m_enlarged) { // one size for every file: nothing jumps as the arrows go through them
+        const QRect rect = enlargedPreview(area, launcher);
+        m_overLauncher = rect.intersects(launcher);
+        return rect;
+    }
     using previewplacement::kGap;
     constexpr int kHeader = 64; // the header row and a margin, about
     constexpr int kPad = 32;

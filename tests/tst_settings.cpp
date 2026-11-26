@@ -114,10 +114,10 @@ private slots:
         QVERIFY(!settings.mergeFileScope);
         QVERIFY(!settings.appsTab);
         settings.appsTab = true;
-        QVERIFY(settings.rowDeleteButton); // GitHub #316: there unless turned off
+        QCOMPARE(settings.rowActions, ws::rowactions::defaults()); // GitHub #316: delete among them unless taken out
         QVERIFY(!settings.scopeButton); // GitHub #185: the tabs side by side unless chosen
         settings.scopeButton = true;
-        settings.rowDeleteButton = false;
+        settings.rowActions = {u"preview"_s, u"reveal"_s, u"copyName"_s};
         QCOMPARE(settings.queryHistoryKeys, u"ctrl"_s);
         settings.mergeFileScope = true;
         settings.queryHistoryKeys = u"alt"_s;
@@ -126,7 +126,7 @@ private slots:
         restored.load();
         QVERIFY(restored.mergeFileScope);
         QVERIFY(restored.appsTab);
-        QVERIFY(!restored.rowDeleteButton);
+        QCOMPARE(restored.rowActions, (QStringList {u"preview"_s, u"reveal"_s, u"copyName"_s}));
         QVERIFY(restored.scopeButton);
         QCOMPARE(restored.queryHistoryKeys, u"alt"_s);
         restored.queryHistoryKeys = u"off"_s;
@@ -137,6 +137,41 @@ private slots:
         QVERIFY(restored.saveChecked());
         settings.load();
         QCOMPARE(settings.queryHistoryKeys, u"ctrl"_s);
+    }
+
+    // The row's buttons (Results/RowActions): the old delete switch read once,
+    // names written by hand put right, none at all kept as a choice.
+    void rowActionsPreference()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        const auto put = [](const QString& key, const QVariant& value) {
+            QSettings(ws::Settings::filePath(), QSettings::IniFormat).setValue(key, value);
+        };
+        const auto has = [](const QString& key) { return QSettings(ws::Settings::filePath(), QSettings::IniFormat).contains(key); };
+        put(u"Results/DeleteButton"_s, false); // as a build before the choice left it
+        ws::Settings settings;
+        settings.load();
+        QCOMPARE(settings.rowActions, (QStringList {u"admin"_s, u"reveal"_s, u"terminal"_s, u"copy"_s, u"copyPath"_s}));
+        QVERIFY(settings.saveChecked());
+        QVERIFY(!has(u"Results/DeleteButton"_s));
+        settings.load();
+        QCOMPARE(settings.rowActions, (QStringList {u"admin"_s, u"reveal"_s, u"terminal"_s, u"copy"_s, u"copyPath"_s}));
+
+        settings.rowActions = ws::rowactions::defaults();
+        QVERIFY(settings.saveChecked());
+        QVERIFY(!has(u"Results/RowActions"_s)); // as it comes: not written, so it follows a later default
+
+        settings.rowActions.clear();
+        QVERIFY(settings.saveChecked());
+        settings.rowActions = ws::rowactions::defaults();
+        settings.load();
+        QVERIFY(settings.rowActions.isEmpty());
+
+        put(u"Results/RowActions"_s, QStringList {u"Delete"_s, u"nonsense"_s, u" preview "_s, u"delete"_s});
+        settings.load();
+        QCOMPARE(settings.rowActions, (QStringList {u"delete"_s, u"preview"_s}));
     }
 
     void logoRightClickPreference()
@@ -313,6 +348,51 @@ private slots:
         QVERIFY(settings.settingsHotkey.isEmpty());
         QCOMPARE(settings.panelHotkey, u"Ctrl+Alt+F"_s);
         QCOMPARE(settings.hotkey, u"Alt+Space"_s);
+    }
+
+    // A plugin command's own shortcut (GitHub #466): kept with the plugin's
+    // section as Hotkey.<command>, only while set; those of the plugins
+    // that are on are the ones to register.
+    void commandHotkeyPreference()
+    {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        ws::Settings settings;
+        settings.load();
+        QVERIFY(settings.commandHotkeys().isEmpty());
+        ws::PluginConfig& on = settings.pluginConfig(u"winshun.bookmarks"_s);
+        on.enabled = true;
+        on.hotkeys = {{u"bookmarks"_s, u"Ctrl+Alt+B"_s}, {u"history"_s, u"Alt+H"_s}};
+        ws::PluginConfig& off = settings.pluginConfig(u"winshun.translate"_s);
+        off.hotkeys = {{u"tr"_s, u"Ctrl+Alt+T"_s}};
+        QVERIFY(settings.saveChecked());
+        {
+            QSettings ini(ws::Settings::filePath(), QSettings::IniFormat);
+            QCOMPARE(ini.value(u"Plugin.winshun.bookmarks/Hotkey.bookmarks"_s).toString(), u"Ctrl+Alt+B"_s);
+        }
+
+        ws::Settings restored;
+        restored.load();
+        QCOMPARE(restored.plugin(u"winshun.bookmarks")->hotkeys, on.hotkeys);
+        QCOMPARE(restored.plugin(u"winshun.translate")->hotkeys, off.hotkeys); // kept while the plugin is off
+        const QList<ws::Settings::CommandHotkey> wanted {
+            {u"winshun.bookmarks"_s, u"bookmarks"_s, u"Ctrl+Alt+B"_s}, {u"winshun.bookmarks"_s, u"history"_s, u"Alt+H"_s}};
+        QCOMPARE(restored.commandHotkeys(), wanted);
+
+        // Cleared: gone from the file, not kept as an empty value; one typed
+        // into the file with spaces around it is read without them.
+        restored.pluginConfig(u"winshun.bookmarks"_s).hotkeys.removeFirst();
+        QVERIFY(restored.saveChecked());
+        {
+            QSettings ini(ws::Settings::filePath(), QSettings::IniFormat);
+            QVERIFY(!ini.contains(u"Plugin.winshun.bookmarks/Hotkey.bookmarks"_s));
+            ini.setValue(u"Plugin.winshun.bookmarks/Hotkey.history"_s, u" Alt+J "_s);
+            ini.setValue(u"Plugin.winshun.bookmarks/Hotkey.bookmarks"_s, QString());
+        }
+        settings.load();
+        const QList<std::pair<QString, QString>> kept {{u"history"_s, u"Alt+J"_s}};
+        QCOMPARE(settings.plugin(u"winshun.bookmarks")->hotkeys, kept);
     }
 
     void trayClickActionPreferences()
@@ -1275,6 +1355,93 @@ private slots:
         QCOMPARE(hidden.excludedNames, std::vector<std::wstring> {L"node_modules"});
     }
 
+    // A folder excluded by a mapped drive's letter ("Z:\rushes", "Z:\") is the
+    // share's: network places are indexed by their UNC paths, and the letter
+    // matched nothing there, so what was excluded was still found. A share
+    // excluded whole, or inside an excluded folder, is not read at all.
+    // Only a newly created key for an unused drive letter is touched: no
+    // connection is made, no existing mapping changed.
+    void excludedOnMappedDrive()
+    {
+        QString drive;
+        std::wstring key;
+        HKEY mapping = nullptr;
+        const DWORD drives = ::GetLogicalDrives();
+        for (wchar_t letter = L'Z'; letter >= L'D'; --letter) {
+            if (drives & (DWORD {1} << (letter - L'A')))
+                continue;
+            key = L"Network\\" + std::wstring(1, letter);
+            DWORD disposition = 0;
+            if (::RegCreateKeyExW(HKEY_CURRENT_USER, key.c_str(), 0, nullptr, 0, KEY_SET_VALUE, nullptr, &mapping, &disposition)
+                != ERROR_SUCCESS)
+                continue;
+            if (disposition == REG_CREATED_NEW_KEY) {
+                drive = QString(QChar(letter)) + u':';
+                break;
+            }
+            ::RegCloseKey(mapping);
+            mapping = nullptr;
+        }
+        QVERIFY2(mapping, "No unused drive letter for an isolated mapping");
+        const auto cleanup = qScopeGuard([&] {
+            ::RegCloseKey(mapping);
+            ::RegDeleteKeyW(HKEY_CURRENT_USER, key.c_str());
+        });
+        const std::wstring remote = L"\\\\wsnas-test\\Video";
+        QCOMPARE(::RegSetValueExW(mapping, L"RemotePath", 0, REG_SZ, reinterpret_cast<const BYTE*>(remote.c_str()),
+                     static_cast<DWORD>((remote.size() + 1) * sizeof(wchar_t))), ERROR_SUCCESS);
+
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        ws::Settings settings;
+        settings.load();
+        settings.shares = {{u"\\\\wsnas-test\\Video"_s, {}}, {u"\\\\wsnas-test\\Docs"_s, {}}};
+        const auto has = [](const std::vector<std::wstring>& list, const wchar_t* item) {
+            return std::ranges::any_of(list, [&](const std::wstring& s) { return ws::win32::equalsIgnoreCase(s, item); });
+        };
+        const auto sharePaths = [&] {
+            QStringList paths;
+            for (const ws::ShareConfig& share : settings.shareOptions().shares)
+                paths.append(QString::fromStdWString(share.path));
+            return paths;
+        };
+
+        // A folder on the drive: its share's folder, in the rules and as the key.
+        settings.excludedPaths = {drive + u"\\rushes\\"_s};
+        QVERIFY(has(settings.crawlRules().excludedPaths, L"\\\\wsnas-test\\Video\\rushes"));
+        QCOMPARE(QString::fromStdWString(ws::Settings::excludedCompareKey(drive + u"\\rushes"_s)), u"\\\\wsnas-test\\Video\\rushes"_s);
+        QVERIFY(ws::Crawler(settings.crawlRules()).isExcludedPath(L"\\\\wsnas-test\\Video\\rushes\\a.mov"));
+        QVERIFY(!settings.excludesShare(u"\\\\wsnas-test\\Video"_s));
+        QCOMPARE(sharePaths(), (QStringList {u"\\\\wsnas-test\\Video"_s, u"\\\\wsnas-test\\Docs"_s}));
+
+        // The whole drive: its share is left out, the other one stays.
+        settings.excludedPaths = {drive + u'\\'};
+        QVERIFY(has(settings.crawlRules().excludedPaths, L"\\\\wsnas-test\\Video"));
+        QVERIFY(settings.excludesShare(u"\\\\wsnas-test\\Video"_s));
+        QVERIFY(!settings.excludesShare(u"\\\\wsnas-test\\Docs"_s));
+        QCOMPARE(sharePaths(), QStringList {u"\\\\wsnas-test\\Docs"_s});
+        // ... and stays a whole drive for Everything's way of excluding.
+        settings.everythingCompat = true;
+        QVERIFY(has(settings.crawlRules().excludedPaths, L"\\\\wsnas-test\\Video"));
+        QVERIFY(settings.hiddenRules().excludedPaths.empty());
+        QCOMPARE(sharePaths(), QStringList {u"\\\\wsnas-test\\Docs"_s});
+        settings.everythingCompat = false;
+
+        // Written as the share itself, or as a folder a share was added in.
+        settings.excludedPaths = {u"\\\\wsnas-test\\docs"_s};
+        QCOMPARE(sharePaths(), QStringList {u"\\\\wsnas-test\\Video"_s});
+        settings.shares = {{u"\\\\wsnas-test\\Docs\\Team\\2026"_s, {}}};
+        settings.excludedPaths = {u"\\\\wsnas-test\\Docs\\Team"_s};
+        QVERIFY(settings.excludesShare(u"\\\\wsnas-test\\Docs\\Team\\2026"_s));
+        QVERIFY(sharePaths().isEmpty());
+
+        // A name rule is for the folders in a share, not for the share added by its path.
+        settings.excludedPaths.clear();
+        settings.excludedNames = {u"2026"_s};
+        QCOMPARE(sharePaths(), QStringList {u"\\\\wsnas-test\\Docs\\Team\\2026"_s});
+    }
+
     // GitHub #406: Win顺's own data folder stays out of the index, the
     // plugins installed in it do not (ranked with the program folders).
     void ownFolderKeepsItsPlugins()
@@ -1565,6 +1732,56 @@ private slots:
         QCOMPARE(loaded.fileTypes, types);
         QCOMPARE(loaded.folderKeyword, u"dir"_s);
         QVERIFY(loaded.showModifiedTime);
+    }
+
+    // The strip's order after 不限: 文件夹 among the kinds (folderChipAt), any of
+    // them moved anywhere, the kinds' own order with it; saved, and kept
+    // inside the list when the file says otherwise.
+    void stripOrder()
+    {
+        const auto kind = [](const QString& name) { return ws::FileType {name, {name}}; };
+        const auto names = [](const ws::Settings& s) {
+            QStringList list;
+            for (const ws::FileType& type : s.fileTypes)
+                list.append(type.name);
+            list.insert(s.folderChipAt, u"文件夹"_s);
+            return list;
+        };
+        ws::Settings settings;
+        settings.fileTypes = {kind(u"文档"_s), kind(u"图片"_s), kind(u"视频"_s)};
+        QCOMPARE(settings.folderChipAt, 0);
+        QVERIFY(settings.moveStripChip(0, 2)); // 文件夹 after 图片
+        QCOMPARE(names(settings), (QStringList {u"文档"_s, u"图片"_s, u"文件夹"_s, u"视频"_s}));
+        QCOMPARE(settings.folderChipAt, 2);
+        QVERIFY(settings.moveStripChip(3, 0)); // 视频 first: 文件夹 stays after 图片
+        QCOMPARE(names(settings), (QStringList {u"视频"_s, u"文档"_s, u"图片"_s, u"文件夹"_s}));
+        QCOMPARE(settings.folderChipAt, 3);
+        QVERIFY(settings.moveStripChip(1, 2)); // a kind past a kind
+        QCOMPARE(names(settings), (QStringList {u"视频"_s, u"图片"_s, u"文档"_s, u"文件夹"_s}));
+        QVERIFY(!settings.moveStripChip(1, 1));
+        QVERIFY(!settings.moveStripChip(-1, 0));
+        QVERIFY(!settings.moveStripChip(0, 4)); // four places
+        QCOMPARE(names(settings), (QStringList {u"视频"_s, u"图片"_s, u"文档"_s, u"文件夹"_s}));
+
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        ws::Settings::useProfile(profile.path());
+        settings.save();
+        ws::Settings loaded;
+        loaded.load();
+        QCOMPARE(names(loaded), names(settings));
+        {
+            QSettings ini(ws::Settings::filePath(), QSettings::IniFormat);
+            ini.setValue(u"Results/FolderChipAt"_s, 9); // past the kinds: after the last
+        }
+        loaded.load();
+        QCOMPARE(loaded.folderChipAt, 3);
+        {
+            QSettings ini(ws::Settings::filePath(), QSettings::IniFormat);
+            ini.setValue(u"Results/FolderChipAt"_s, -2);
+        }
+        loaded.load();
+        QCOMPARE(loaded.folderChipAt, 0);
     }
 
     // [QuickFilters]: saved as written; a file edited by hand is tidied.
@@ -1956,6 +2173,7 @@ private slots:
         QVERIFY(!fresh.defaultSystemMenu);
         QVERIFY(!fresh.favoriteTiles);
         QVERIFY(fresh.pinnedOnTop);
+        QVERIFY(!fresh.keepPinned);
         QVERIFY(fresh.previewFollowsPointer);
         QVERIFY(fresh.previewRestore); // GitHub #258: a preview left open comes back, unless turned off
         QVERIFY(!fresh.clipboardPreviewRestore); // the clipboard's closes with it (GitHub #174), unless turned on
@@ -1970,6 +2188,7 @@ private slots:
             s.defaultSystemMenu = true;
             s.favoriteTiles = true;
             s.pinnedOnTop = false;
+            s.keepPinned = true;
             s.previewFollowsPointer = false;
             s.previewRestore = false;
             s.clipboardPreviewRestore = true;
@@ -1983,6 +2202,7 @@ private slots:
             QVERIFY(back.defaultSystemMenu);
             QVERIFY(back.favoriteTiles);
             QVERIFY(!back.pinnedOnTop);
+            QVERIFY(back.keepPinned);
             QVERIFY(!back.previewFollowsPointer);
             QVERIFY(!back.previewRestore);
             QVERIFY(back.clipboardPreviewRestore);

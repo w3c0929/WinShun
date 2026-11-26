@@ -5,6 +5,7 @@
 #include "Favorites.h"
 #include "LauncherNavigation.h"
 #include "ResultModel.h"
+#include "RowActions.h"
 #include "QueryHistory.h"
 #include "PanelColumns.h"
 #include "ContentPane.h"
@@ -144,6 +145,8 @@ class Launcher : public QObject {
     Q_PROPERTY(bool showModified READ showModified NOTIFY resultOptionsChanged FINAL)
     Q_PROPERTY(bool showFileSize READ showFileSize NOTIFY resultOptionsChanged FINAL)
     Q_PROPERTY(QString folderKeyword READ folderKeyword NOTIFY fileTypesChanged FINAL)
+    // Where 文件夹 stands among the kinds in the strip (Settings::folderChipAt).
+    Q_PROPERTY(int folderChipAt READ folderChipAt NOTIFY fileTypesChanged FINAL)
     // A click on a row only selects it; a double click (or Enter) opens it
     // (Settings::doubleClickToOpen, GitHub #44).
     Q_PROPERTY(bool doubleClickToOpen READ doubleClickToOpen NOTIFY resultOptionsChanged FINAL)
@@ -157,8 +160,8 @@ class Launcher : public QObject {
     Q_PROPERTY(bool letterJump READ letterJump NOTIFY resultOptionsChanged FINAL) // Settings::letterJump
     Q_PROPERTY(QString letterJumpKey READ letterJumpKey NOTIFY resultOptionsChanged FINAL) // auto | ctrl | alt | shift
     Q_PROPERTY(QString letterJumpKeys READ letterJumpKeys NOTIFY resultOptionsChanged FINAL)
-    // A file's row has a delete button among its buttons (the settings, GitHub #316).
-    Q_PROPERTY(bool rowDeleteButton READ rowDeleteButton NOTIFY resultOptionsChanged FINAL)
+    // A row's buttons: which show, in which order (the settings, rowactions::kKnown).
+    Q_PROPERTY(QStringList rowActions READ rowActions NOTIFY resultOptionsChanged FINAL)
     Q_PROPERTY(bool shortcutHelp READ shortcutHelp NOTIFY resultOptionsChanged FINAL)
     Q_PROPERTY(bool footerHints READ footerHints NOTIFY resultOptionsChanged FINAL)
     Q_PROPERTY(bool pureSearch READ pureSearch NOTIFY resultOptionsChanged FINAL)
@@ -635,8 +638,8 @@ public:
     void setLetterJump(bool on, const QString& key, const QString& keys);
     QString letterJumpKey() const { return m_letterJumpKey; }
     QString letterJumpKeys() const { return m_letterJumpKeys; }
-    bool rowDeleteButton() const { return m_rowDeleteButton; }
-    void setRowDeleteButton(bool shown);
+    QStringList rowActions() const { return m_rowActions; }
+    void setRowActions(const QStringList& order);
     bool shortcutHelp() const { return m_shortcutHelp; }
     bool footerHints() const { return m_footerHints; }
     void setKeyboardHints(bool help, bool footer);
@@ -711,6 +714,14 @@ public:
     // frame, keep catalog/registry refreshes and same-query re-searches off
     // the critical reveal path until finishShownRefresh() runs after reveal.
     void handleShown(bool deferBackgroundWork = false);
+    // Pinned and up all the while, back in front (its shortcut, from behind
+    // what was opened from it): the list as it was left, its rows, their
+    // order, the row and how far down. Searching again put the file just
+    // opened first and the selection on the first row: the place in a list
+    // gone through one result after another was lost each time (feedback
+    // 2026-11-26). With nothing typed it is the start list, shown anew
+    // (handleShown): what was opened meanwhile belongs in it.
+    void handleBroughtForward();
     void finishShownRefresh();
     void handleHidden();
     void retranslate(); // the language changed: status, placeholder, rows
@@ -828,7 +839,9 @@ public:
     void setFileTypeCounts(QVariantList counts);
     // A count as a chip's tag has room for: 9999, then "1万", "1.2万", "35万" ("12k", "1.2M" in English).
     Q_INVOKABLE QString countLabel(qint64 count) const;
-    void setFileTypes(const FileTypes& types); // named (Settings::namedFileTypes)
+    // Named (Settings::namedFileTypes), with 文件夹's place among them (Settings::folderChipAt).
+    void setFileTypes(const FileTypes& types, int folderChipAt = 0);
+    int folderChipAt() const { return m_folderChipAt; }
     void setFolderKeyword(const QString& keyword);
     QString folderKeyword() const { return m_folderKeyword; }
     // 全部 also finds apps, and Windows' settings and switches (Request::apps, places).
@@ -840,9 +853,13 @@ public:
     // (fileTypes); in 文件 (or 文件夹) from any scope.
     static constexpr int kFoldersChip = -2;
     Q_INVOKABLE void chooseFileType(int type);
-    // Ctrl+Tab in 文件: the next chip (Ctrl+Shift+Tab the one before), round (不限, 文件夹, then the kinds).
+    // Ctrl+Tab in 文件: the next chip (Ctrl+Shift+Tab the one before), round (不限, then
+    // 文件夹 and the kinds in the strip's order).
     Q_INVOKABLE void cycleFileType(int delta);
     Q_INVOKABLE void editFileTypes(); // the strip's +: fileTypeSettingsRequested
+    // A chip dragged to another place in the strip, the places counted after 不限:
+    // fileChipMoveRequested, the app changes the setting (Settings::moveStripChip).
+    Q_INVOKABLE void moveFileChip(int from, int to) { emit fileChipMoveRequested(from, to); }
     // The strip's choice, to keep between runs: "folders", a kind's id
     // ("pictures") or "name:<its name>" for one of the user's own, or empty
     // (不限). Set after setFileTypes; in 文件 it applies at once.
@@ -981,6 +998,7 @@ signals:
     void scopeChanged();
     void statusChanged();
     void shown();
+    void broughtForward(); // handleBroughtForward: the keyboard in the field, nothing else touched
     void resultsReplaced(); // results for a new query: select the first row
     void namesShown(); // a name search finished and its rows are in the model
     void typingAwaitedChanged();
@@ -1004,6 +1022,7 @@ signals:
     void trayAppsChanged();
     void webSettingsRequested(); // the settings window, on its 网页搜索 page
     void fileTypeSettingsRequested(); // ... on its 结果列表 page, at the file types
+    void fileChipMoveRequested(int from, int to);
     void fileTypeChanged();
     void galleryChanged();
     void queryErrorChanged();
@@ -1237,6 +1256,10 @@ private:
     // Opened: into the history, if it is kept. `query`: the text the list it
     // was opened from is for (m_shownText); none when it was not found by typing.
     void remember(const QString& path, const QString& query = {});
+    // A file or folder of the list opened: tagged 已打开 there while the same
+    // words are searched for (ResultModel::markOpened). Not from the start
+    // list (nothing typed: what it lists was all opened before).
+    void markOpened(const SearchResult& r);
     bool canRememberAdmin(const SearchResult& r) const; // the setting on, and a row that can run as administrator
     bool adminRemembered(const SearchResult& r) const; // its Enter runs as administrator
     void rememberWindow(const SearchResult& window); // switched to: the folder it shows, if it is a file manager's (GitHub #231)
@@ -1500,6 +1523,8 @@ private:
     int m_currentRow = -1;
     QVariantMap m_keyHints; // see keyHints
     FileTypes m_fileTypes;
+    int m_folderChipAt = 0; // see folderChipAt
+    FileTypes m_countedTypes; // the kinds the last count asked for was made with (onTypeCounts)
     QString m_folderKeyword = QStringLiteral("folder");
     bool m_searchApps = true;
     bool m_searchPlaces = true;
@@ -1621,7 +1646,7 @@ private:
     bool m_letterJump = false;
     QString m_letterJumpKey = QStringLiteral("auto");
     QString m_letterJumpKeys = QStringLiteral("ASDFGHJKLQWERTYUIOPZXCVBNM");
-    bool m_rowDeleteButton = true;
+    QStringList m_rowActions = rowactions::defaults();
     bool m_shortcutHelp = true;
     bool m_footerHints = true;
     bool m_pureSearch = false;
@@ -1713,6 +1738,16 @@ private:
     int m_tabBeforePreview = 1; // the details' tab Alt+P left for 预览 (匹配 at first): Alt+P again goes back
     void setPreviewWanted(bool on);
     bool m_switchPageTold = false; // "要打开设置页：Ctrl+Enter", said once for good (state.ini)
+    // A file opened, unpinned, and with which words: back soon with the same,
+    // the footer says what pinning is for (tellPinHint), kPinHints times at
+    // most (state.ini).
+    static constexpr int kPinHints = 2;
+    QElapsedTimer m_lookedAt;
+    QString m_lookedQuery;
+    QString m_openedWords; // the words searched for as the rows tagged 已打开 were opened (markOpened)
+    int m_pinHintsTold = kPinHints;
+    void setPinHintsTold(int told);
+    void tellPinHint();
     // Toggles waiting for their state (Switches::Outcome::Waiting), by switch id.
     QHash<QString, SearchResult> m_switchWaiting;
     QString m_clickedSwitch; // the last click that switched, by path ...

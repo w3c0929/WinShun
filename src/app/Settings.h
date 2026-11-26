@@ -2,6 +2,7 @@
 
 #include "ContentIndex.h"
 #include "Crawler.h"
+#include "RowActions.h"
 #include "SearchTypes.h"
 #include "ShareIndexer.h"
 #include "WebShortcut.h"
@@ -64,6 +65,10 @@ struct PluginConfig {
     QString id;
     bool enabled = false; // Enabled=; plugins start out off
     QList<std::pair<QString, QString>> keywords; // Keyword.<command>=: the user's keyword for a command (empty: none)
+    // Hotkey.<command>=: the user's shortcut for a command, anywhere: the
+    // launcher opens with the command's keyword typed (GitHub #466). Only
+    // those set are kept.
+    QList<std::pair<QString, QString>> hotkeys;
     QList<std::pair<QString, QString>> settings; // Setting.<key>=: a declared setting's value, as text (never a password: the Credential Manager keeps those)
     // Confirmed=: the permissions the user said yes to when turning it on;
     // a version asking for more is asked about again.
@@ -260,6 +265,9 @@ struct Settings {
     bool showFileSize = false; // compact results too; size sorting always shows it (GitHub #80)
     bool typeCounts = true; // 文件's type chips say how many of what is typed each kind has
     QString folderKeyword = QStringLiteral("folder"); // :folder in the search box
+    // Where 文件夹 stands among the kinds in 文件's strip, after 不限: 0
+    // before the first kind … fileTypes.size() after the last (Results/FolderChipAt).
+    int folderChipAt = 0;
     // A click on a result only selects it; a double click or Enter opens it
     // (GitHub #44: a stray click opened things). Off: a click opens.
     bool doubleClickToOpen = false;
@@ -273,7 +281,10 @@ struct Settings {
     // Opt in to the former behavior: in 全部, Tab browses a favorite folder.
     bool tabEntersFavoriteFolder = false;
     bool thumbnails = true; // a picture, video, PDF found shows its thumbnail for an icon
-    bool rowDeleteButton = true; // a file's row has a delete button among its buttons (GitHub #316)
+    // The buttons at the right end of a result's row: which, and in which
+    // order (rowactions::kKnown). Without "delete", none has a delete button
+    // (GitHub #316); the right-click menu keeps every one of them.
+    QStringList rowActions = rowactions::defaults();
     // 全部 also finds apps, and Windows' settings pages, Control Panel items
     // and switches; off, it finds names and content only (SearchEngine::Request).
     bool searchApps = true;
@@ -314,10 +325,14 @@ struct Settings {
     // Opened again on the same words, on the row it was left on and as far
     // down the list (feedback 2026-11-17); off: the first row, as ever (#361).
     bool reopenWhereLeft = false;
-    // Pinned (Ctrl+T), the search box stays over every other window; off: a
-    // window clicked covers it, as any other (feedback 2026-11-16), and the
-    // shortcut brings it back to the front.
+    // Pinned (Ctrl+T), the search box stays over every other window but what
+    // is opened from it (PinnedStacking); off: a window clicked covers it, as
+    // any other (feedback 2026-11-16), and the shortcut brings it back to the front.
     bool pinnedOnTop = true;
+    // The search box is pinned from the start, without Ctrl+T each time
+    // Win顺 starts: it stays as results are opened one after another, and goes
+    // on Esc (feedback 2026-11-26). Ctrl+T still unpins it until the next start.
+    bool keepPinned = false;
     // Each time the launcher opens, its input method goes into English mode:
     // letters and pinyin initials find most names (GitHub #201). Switched
     // back in the box, it stays so for that opening; put back on closing.
@@ -426,6 +441,10 @@ struct Settings {
     FileTypes fileTypes;
     static FileTypes defaultFileTypes();
     FileTypes namedFileTypes() const; // each with its name, a built-in one's in the language shown
+    // Moves a chip of 文件's strip from place `from` to place `to`, the places
+    // counted after 不限 (文件夹 at folderChipAt, the kinds around it): the
+    // kinds' order and folderChipAt. False when there is no such place or it stays.
+    bool moveStripChip(int from, int to);
     // "jpg, .PNG *.gif" → {"jpg", "png", "gif"}: lower case, no dots, each once.
     static QStringList fileExtensions(const QString& text);
     // "~$*; Thumbs.db，*.tmp~" → {"~$*", "Thumbs.db", "*.tmp~"}: one name or
@@ -447,6 +466,16 @@ struct Settings {
     static QString normalizedHotkey(const QString& shortcut);
     // Win顺's own shortcuts that work anywhere (registered with Windows), set or not.
     QStringList globalHotkeys() const { return {hotkey, panelHotkey, settingsHotkey, clipboardHotkey, folderMenuHotkey, pastePlainHotkey}; }
+    // The shortcuts of plugins' commands (PluginConfig::hotkeys), of the
+    // plugins that are on: (plugin, command, keys), in the order kept.
+    struct CommandHotkey {
+        QString plugin;
+        QString command;
+        QString keys;
+
+        bool operator==(const CommandHotkey&) const = default;
+    };
+    QList<CommandHotkey> commandHotkeys() const;
     // The rule for a shortcut a person (settings window) or AI sets: Ctrl, Alt
     // or Win held with its key, or a function key (F1 to F24) alone or with
     // Shift. A bare letter, Enter, Space, PrintScreen or Shift+letter would
@@ -748,8 +777,13 @@ struct Settings {
     // If `text` contains %VAR% and expands cleanly to a different path with no
     // unresolved %VAR% remaining, returns that expanded path; otherwise empty.
     static QString resolvedEnvPath(const QString& text);
-    // Normalized expanded comparison key for an excluded folder path.
+    // Normalized expanded comparison key for an excluded folder path: as the
+    // index names the folder, so one on a mapped drive is its share's
+    // ("Z:\rushes" -> "\\nas\video\rushes").
     static std::wstring excludedCompareKey(const QString& path);
+    // Whether a share (NetworkShare::path) lies in a folder of excludedPaths,
+    // or is one: it is then not read (shareOptions() leaves it out).
+    bool excludesShare(const QString& share) const;
     // GitHub #52: the first time only the chosen folders are indexed, a list
     // never set (indexFoldersChosen) is taken for good as it is: the
     // account's known folders as load() found them, or as changed since.

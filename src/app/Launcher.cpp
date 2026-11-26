@@ -118,6 +118,22 @@ static SortOrder columnOrder(Launcher::Sort sort)
 
 namespace {
 
+// A plugin's link into Win顺's settings: "winshun:settings" is its own card,
+// "winshun:settings/plugin/<id>" another plugin's (capability settingsLinks:
+// the local models' row opening Translate's card). The card's plugin, or
+// empty for a link that is not one (handed to the shell as before).
+QString settingsCardOf(const QString& url, const QString& own)
+{
+    if (url.compare(u"winshun:settings", Qt::CaseInsensitive) == 0)
+        return own;
+    if (url.startsWith(ws::kPluginSettingsCommand, Qt::CaseInsensitive)) {
+        const QString id = url.mid(ws::kPluginSettingsCommand.size());
+        if (plugin::validPluginId(id))
+            return id;
+    }
+    return {};
+}
+
 // Files 内容 reads at once. Opening a file waits for the antivirus to scan
 // it, so throughput grows well past the processor count: about 2x at 16
 // threads over 6, and little more beyond 32 (measured with Defender).
@@ -128,6 +144,22 @@ constexpr qsizetype kShownExtensions = 3; // named in the search box and the sta
 // The most a content size limit can be set to (Settings: roundedSizeMB), the
 // limit for the files asked for after being left out (searchLeftOut "large").
 constexpr std::int64_t kLargestFile = 4096ll << 20;
+
+// The strip's numbers (all, folders, then one for each of `counted`) for the
+// kinds `kinds`: each kind keeps its own wherever it stands now, -1 (no
+// number) for a kind not counted. Empty when there are none.
+QVariantList countsInOrder(const QVariantList& counts, const FileTypes& counted, const FileTypes& kinds)
+{
+    if (counts.size() != counted.size() + 2)
+        return {};
+    QVariantList list {counts[0], counts[1]};
+    list.reserve(kinds.size() + 2);
+    for (const FileType& kind : kinds) {
+        const qsizetype at = counted.indexOf(kind);
+        list.append(at >= 0 ? counts[at + 2] : QVariant(qint64 {-1}));
+    }
+    return list;
+}
 
 // The hints' kinds (leftOutHints), and a drive's root from its kind.
 constexpr QLatin1StringView kLargeHint("large");
@@ -2013,6 +2045,7 @@ void Launcher::setSwitches(Switches* switches, const QString& stateFile)
     }
     m_contentPane->loadPreferences(stateFile);
     m_switchPageTold = !stateFile.isEmpty() && QSettings(stateFile, QSettings::IniFormat).value(u"Hints/SwitchPage"_s).toBool();
+    m_pinHintsTold = stateFile.isEmpty() ? kPinHints : QSettings(stateFile, QSettings::IniFormat).value(u"Hints/PinAfterOpen"_s).toInt();
     m_previewWanted = !stateFile.isEmpty() && QSettings(stateFile, QSettings::IniFormat).value(u"Launcher/PreviewOpen"_s).toBool();
     m_results.setSwitches(switches);
     refreshKeyHints();
@@ -2145,11 +2178,11 @@ void Launcher::setNumberHints(const QString& hints)
     emit resultOptionsChanged();
 }
 
-void Launcher::setRowDeleteButton(bool shown)
+void Launcher::setRowActions(const QStringList& order)
 {
-    if (m_rowDeleteButton == shown)
+    if (m_rowActions == order)
         return;
-    m_rowDeleteButton = shown;
+    m_rowActions = order;
     emit resultOptionsChanged();
 }
 
@@ -2486,7 +2519,19 @@ void Launcher::handleShown(bool deferBackgroundWork)
         search(); // new query, changed settings, or updated recent history
     emit historyChanged(); // things were opened since
     refreshFrequentApps(!deferBackgroundWork);
+    if (!deferSearch)
+        tellPinHint(); // else after that search, which clears what the footer says (finishShownRefresh)
     emit shown();
+}
+
+void Launcher::handleBroughtForward()
+{
+    if (searchText().isEmpty()) {
+        handleShown();
+        return;
+    }
+    m_queryHistory.resetNavigation();
+    emit broughtForward();
 }
 
 void Launcher::finishShownRefresh()
@@ -2506,6 +2551,7 @@ void Launcher::finishShownRefresh()
     if (std::exchange(m_deferredSearchRefresh, false)) {
         m_searchWhy = "deferred open refresh";
         search();
+        tellPinHint();
     }
 }
 
@@ -3467,6 +3513,10 @@ bool Launcher::matchesShownRows() const
 void Launcher::search(bool more)
 {
     m_deferredSearchRefresh = false;
+    if (!m_openedWords.isEmpty() && searchText() != m_openedWords) { // other words: another search, nothing of it opened yet
+        m_results.clearOpened();
+        m_openedWords.clear();
+    }
     const char* why = std::exchange(m_searchWhy, nullptr);
     const bool wasReplacing = m_replacePending && m_replaceClock.isValid();
     m_flash.clear();
@@ -3682,9 +3732,11 @@ void Launcher::search(bool more)
     // 文件 (and 文件夹): what is typed counted for each kind on the strip. The
     // numbers there stay until this search's come: no blink at every letter.
     const bool counting = m_typeCounts && (m_scope == Files || m_scope == Folders) && !request.text.trimmed().isEmpty();
+    m_countedTypes.clear();
     if (counting) {
         for (const FileType& type : m_fileTypes)
             request.countTypes.append({type.extensions, type.folder.isEmpty() ? QStringList() : QStringList {type.folder}});
+        m_countedTypes = m_fileTypes;
     }
     m_requestId = m_engine->submit(std::move(request)); // also stops a running content scan
     m_nameRequestId = m_requestId;
@@ -4471,15 +4523,13 @@ void Launcher::onTypeCounts(quint64 id, const NameTypeCounts& counts)
 {
     if (id != m_nameRequestId || id != m_countRequestId)
         return; // superseded
-    // As many as there are kinds now (they may have been edited meanwhile); none: no numbers.
+    // For the kinds as they are now (they may have been edited or moved meanwhile).
     QVariantList list;
-    if (counts.types.size() == m_fileTypes.size()) {
-        list.reserve(counts.types.size() + 2);
-        list << counts.all << counts.folders;
-        for (const qint64 count : counts.types)
-            list << count;
-    }
-    setFileTypeCounts(std::move(list));
+    list.reserve(counts.types.size() + 2);
+    list << counts.all << counts.folders;
+    for (const qint64 count : counts.types)
+        list << count;
+    setFileTypeCounts(countsInOrder(list, m_countedTypes, m_fileTypes));
 }
 
 void Launcher::setFileTypeCounts(QVariantList counts)
@@ -4653,10 +4703,36 @@ void Launcher::setPinned(bool on)
         return;
     m_pinned = on;
     emit pinnedChanged();
+    if (on)
+        setPinHintsTold(kPinHints); // found: nothing more to tell (tellPinHint)
     // Said in the footer as well: Ctrl+T leaves no other trace near the keys (short,
     // so the key hints keep their room).
     if (m_window && m_window->isVisible())
         flash(on ? tr("已钉住") : tr("已取消钉住")); // what pinning means is in the pin button's tip
+}
+
+void Launcher::setPinHintsTold(int told)
+{
+    if (m_pinHintsTold == told)
+        return;
+    m_pinHintsTold = told;
+    if (!m_stateFile.isEmpty())
+        QSettings(m_stateFile, QSettings::IniFormat).setValue(u"Hints/PinAfterOpen"_s, told);
+}
+
+// A file opened from here, and here again within the minute with the same
+// words still typed: going through the results one after another, the box
+// closing each time. That is what pinning is for, and Ctrl+T is not found by
+// itself; said in the footer, kPinHints times at most, never once it was pinned.
+void Launcher::tellPinHint()
+{
+    constexpr qint64 kBackWithin = 60'000;
+    const bool back = m_lookedAt.isValid() && m_lookedAt.elapsed() < kBackWithin && !m_query.isEmpty() && m_query == m_lookedQuery;
+    m_lookedAt.invalidate();
+    if (!back || m_pinned || m_pinHintsTold >= kPinHints)
+        return;
+    setPinHintsTold(m_pinHintsTold + 1);
+    flash(tr("要接着看别的结果？按 Ctrl+T 钉住，打开后搜索框不收起"), 8s);
 }
 
 void Launcher::setClosing(bool on)
@@ -5250,7 +5326,7 @@ void Launcher::refreshKeyHints()
                     second = p.actions[1].title;
                 }
             } else {
-                enter = p.openKind == PluginRow::OpenKind::Url ? (p.openTarget.compare(u"winshun:settings", Qt::CaseInsensitive) == 0 ? tr("打开设置") : tr("打开网址"))
+                enter = p.openKind == PluginRow::OpenKind::Url ? (!settingsCardOf(p.openTarget, p.pluginId).isEmpty() ? tr("打开设置") : tr("打开网址"))
                     : p.openKind == PluginRow::OpenKind::Path ? tr("打开")
                     : !p.searchQuery.isEmpty()                ? tr("搜索")
                     : plugin::isHintRow(*r)                   ? tr("进入")
@@ -5531,10 +5607,23 @@ QVariantList Launcher::fileTypes() const
     return types;
 }
 
-void Launcher::setFileTypes(const FileTypes& types)
+void Launcher::setFileTypes(const FileTypes& types, int folderChipAt)
 {
-    if (types == m_fileTypes)
+    folderChipAt = std::clamp(folderChipAt, 0, static_cast<int>(types.size()));
+    if (types == m_fileTypes) {
+        if (folderChipAt != m_folderChipAt) { // 文件夹 alone moved: the strip and Ctrl+Tab
+            m_folderChipAt = folderChipAt;
+            emit fileTypesChanged();
+        }
         return;
+    }
+    m_folderChipAt = folderChipAt;
+    // Only put in another order (a chip dragged): the same files, nothing to list again.
+    const bool reordered = types.size() == m_fileTypes.size()
+        && std::ranges::all_of(types, [&](const FileType& type) { return m_fileTypes.contains(type); });
+    // The numbers on the chips go with their kinds; a kind new or edited has none until counted again.
+    const QVariantList counts = countsInOrder(m_fileTypeCounts, m_fileTypes, types);
+    const bool recount = m_countRequestId != 0 && counts.contains(QVariant(qint64 {-1}));
     // The kind chosen stays chosen where it went (moved up, renamed: by its
     // id or name); gone, any kind.
     QStringList chosen;
@@ -5545,6 +5634,7 @@ void Launcher::setFileTypes(const FileTypes& types)
     for (int type : m_contentTypes)
         contentChosen.append(fileTypeKey(m_fileTypes[type]));
     m_fileTypes = types;
+    setFileTypeCounts(counts);
     QList<int> contentTypes;
     for (const QString& key : contentChosen) {
         if (const int type = fileTypeIndex(key); type >= 0)
@@ -5570,8 +5660,9 @@ void Launcher::setFileTypes(const FileTypes& types)
     emit folderChipsChanged(); // 内容's strip names its kinds
     updateQueryPrefix();
     emit scopeChanged(); // the placeholder names the kind
-    // Its extensions changed: listed again (a refresh when they did not).
-    if ((m_fileType >= 0 || (m_scope == Content && (contentMoved || !m_contentTypes.isEmpty()))) && m_window && m_window->isVisible())
+    // Its extensions changed: listed again (a refresh when they did not); counted again for a kind without its number.
+    if (!reordered && (m_fileType >= 0 || recount || (m_scope == Content && (contentMoved || !m_contentTypes.isEmpty())))
+        && m_window && m_window->isVisible())
         search();
 }
 
@@ -5745,9 +5836,10 @@ void Launcher::chooseFileType(int type)
 
 void Launcher::cycleFileType(int delta)
 {
-    QList<int> chips {-1, kFoldersChip};
+    QList<int> chips {-1};
     for (int i = 0; i < m_fileTypes.size(); ++i)
         chips.append(i);
+    chips.insert(1 + m_folderChipAt, kFoldersChip);
     const int at = std::max(0, static_cast<int>(chips.indexOf(m_scope == Folders ? kFoldersChip : m_scope == All ? -1 : m_fileType)));
     const int count = static_cast<int>(chips.size());
     chooseFileType(chips[((at + delta) % count + count) % count]);
@@ -6296,6 +6388,14 @@ void Launcher::setPreview(FilePreview* preview)
     });
     // 打开 in the preview's header: as Enter on that file's row.
     connect(preview, &FilePreview::closedByUser, this, [this] { setPreviewWanted(false); });
+    // Enlarged or not, as it was left (state.ini): a screen its own size is
+    // too small on stays so.
+    if (!m_stateFile.isEmpty())
+        preview->setEnlarged(QSettings(m_stateFile, QSettings::IniFormat).value(u"Launcher/PreviewEnlarged"_s).toBool());
+    connect(preview, &FilePreview::enlargedChanged, this, [this, preview] {
+        if (!m_stateFile.isEmpty())
+            QSettings(m_stateFile, QSettings::IniFormat).setValue(u"Launcher/PreviewEnlarged"_s, preview->enlarged());
+    });
     connect(preview, &FilePreview::openRequested, this, [this](const QString& path) {
         for (int row = 0; row < m_results.count(); ++row) {
             const SearchResult* r = m_results.at(row);
@@ -6897,6 +6997,11 @@ void Launcher::perform(const SearchResult& result, Action action, bool fileCheck
             contentopen::open(r.path, r.line, reportFailure(r.name)); // at the matching line, in an editor that can
         else if (action != Open || !r.isDir || !m_folderOpener || !m_folderOpener(r.path))
             shell::open(r.path, action == RunAsAdmin, reportFailure(r.name));
+        markOpened(r);
+        if (action == Open && !m_pinned) { // back soon with the same words: tellPinHint
+            m_lookedAt.start();
+            m_lookedQuery = m_query;
+        }
         emit dismissRequested();
         break;
     case Reveal:
@@ -7411,6 +7516,7 @@ void Launcher::performMany(const SearchResults& items, Action action, const Serv
                 if (!exists(r.path) || (admin && (r.isDir || !shell::canRunAsAdministrator(r.path))))
                     continue;
                 shell::open(r.path, admin, reportFailure(r.name));
+                markOpened(r);
             }
             remember(r.path, m_shownText);
             ++started;
@@ -7562,6 +7668,18 @@ void Launcher::clearHistory()
     m_results.setSelection({});
     search(); // the list of recent ones empties, "最近" goes from the rest
     flash(tr("已清除搜索和最近使用记录"));
+}
+
+void Launcher::markOpened(const SearchResult& r)
+{
+    const QString words = searchText();
+    if (words.isEmpty() || r.isApp() || r.path.isEmpty())
+        return;
+    if (words != m_openedWords) {
+        m_results.clearOpened();
+        m_openedWords = words;
+    }
+    m_results.markOpened(r.path);
 }
 
 void Launcher::remember(const QString& path, const QString& query)
@@ -8252,17 +8370,13 @@ void Launcher::runSystemMenu(const QStringList& paths, std::optional<QPointF> gl
             }
         });
     }
-    // What Win顺's own menu says for the like of it; when the shell fell back to
-    // the clicked item alone (multi-select across folders), tell the user honestly.
+    // What Win顺's own menu says for the like of it. Should the shell have
+    // given no menu for the selection together (items of several folders
+    // have one too, GitHub #464: this is its failing), the menu was the
+    // clicked item's alone, and a command that stays here says so.
     if (choice.singleFallback && paths.size() > 1) {
-        if (choice.verb == L"copy")
-            flash(tr("系统菜单仅支持同目录多选，已复制当前项；跨目录批量操作请用 Win顺 右键菜单"), std::chrono::seconds(4));
-        else if (choice.verb == L"cut")
-            flash(tr("系统菜单仅支持同目录多选，已剪切当前项"), std::chrono::seconds(4));
-        else if (choice.verb == L"copyaspath")
-            flash(tr("系统菜单仅支持同目录多选，已复制当前项路径；跨目录请用 Win顺 右键菜单"), std::chrono::seconds(4));
-        else if (choice.verb == L"delete")
-            flash(tr("系统菜单仅支持同目录多选，已仅操作当前项；跨目录批量删除请用 Win顺 右键菜单"), std::chrono::seconds(4));
+        if (shellcontext::keepsLauncher(choice.verb))
+            flash(tr("Windows 没能给出选中这几项共用的菜单，这次只处理了当前这一项"), std::chrono::seconds(4));
     } else if (choice.verb == L"copy") {
         flash(paths.size() == 1 ? tr("已复制，可在资源管理器中粘贴")
                                 : tr("已复制 %Ln 项，可在资源管理器中粘贴", nullptr, static_cast<int>(paths.size())));
@@ -9021,9 +9135,10 @@ void Launcher::performPlugin(const SearchResult& result, Action action)
         }
         case PluginRow::OpenKind::Url: {
             // "winshun:settings": Win顺's own settings at the plugin's card
-            // (a row saying what to set up); never handed to the shell.
-            if (p.openTarget.compare(u"winshun:settings", Qt::CaseInsensitive) == 0) {
-                emit pluginSettingsRequested(p.pluginId);
+            // (a row saying what to set up), or another plugin's
+            // (settingsCardOf); never handed to the shell.
+            if (const QString card = settingsCardOf(p.openTarget, p.pluginId); !card.isEmpty()) {
+                emit pluginSettingsRequested(card);
                 emit dismissRequested();
                 return;
             }
@@ -9169,8 +9284,10 @@ void Launcher::applyEffects(const QString& pluginId, const QList<ws::plugin::Eff
             shell::copyText(e.text);
             break;
         case plugin::Effect::Kind::Open:
-            if (e.open.kind == plugin::Open::Kind::Url && e.open.target.compare(u"winshun:settings", Qt::CaseInsensitive) == 0) {
-                const QString card = !pluginId.isEmpty() ? pluginId : (m_keyword ? m_keyword->pluginId : QString());
+            if (e.open.kind == plugin::Open::Kind::Url
+                && !settingsCardOf(e.open.target, u"-"_s).isEmpty()) { // "-": any card, its own named below
+                const QString own = !pluginId.isEmpty() ? pluginId : (m_keyword ? m_keyword->pluginId : QString());
+                const QString card = settingsCardOf(e.open.target, own);
                 if (!card.isEmpty())
                     emit pluginSettingsRequested(card); // its own card (see performPlugin)
             } else if (pluginOpenAllowed(pluginId, e.open)) {

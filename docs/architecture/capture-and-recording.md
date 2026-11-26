@@ -65,7 +65,7 @@
 
 ### 3.2 智能打码（`SmartRedact`）
 
-- 选区稳定 300 ms 后，`SmartHooks::scan` 将共享冻结图与选区交由 `CaptureOcr` 线程裁剪、灰度化并调 `PaddleOcr::readPieces`，按票号丢弃过期结果。
+- 选区稳定 300 ms 后，`SmartHooks::scan` 将共享冻结图与选区交由 `CaptureOcr` 线程裁剪、灰度化并调 `PaddleOcr::readPieces`，按票号丢弃过期结果。未标注的截图复制、保存或贴图时，这次读到的行经 `Capture::Callbacks::Read` 随图片交出，`CaptureApp::copyImage` 用 `ocrLines` 排成与 `PaddleOcr::read` 相同的文字，作为 `clipboard_add_image` 的 `words` 交给主程序，主程序不再识别同一张图。
 - `findSensitive` 在 GUI 线程规整全角/形近字，匹配手机号、身份证、银行卡（Luhn）、邮箱、常见密钥、`key=value`、本机用户名、可选 IP/MAC 与自定义词，结合灰度图将框边吸附至墨迹边缘；`Shift+B` 作为单步 `AddItems` 批量落框。
 - 马赛克、模糊、纯色、`Smooth` 采样严格限定于**所有打码对象真实形状并集 U 之外**，随机噪声种子随项目保存；`RedactShape::Brush` 无抗锯齿判定、四向最远扫描 64 px。
 
@@ -81,7 +81,8 @@
 
 ### 3.5 OCR、表格复制、二维码与原地翻译
 
-- **OCR 与表格（`CaptureOcr` / `OcrPanel.qml` / `OcrBubble.qml`）**：单低优先级线程运行 `PaddleOcr`（`clamp(核数/2, 1, 4)` 线程，空闲 60 秒卸载模型）；屏 DPR < 1.5 时预放大（最多 2× 且宽 ≤2000 px）。同时生成制表符分隔表格（`CaptureOcr::table`）供直接粘贴进 Excel/WPS；快捷识字弹轻量 `OcrBubble.qml`。
+- **OCR 与表格（`CaptureOcr` / `OcrPanel.qml` / `OcrBubble.qml`）**：单低优先级线程运行 `PaddleOcr`（`clamp(核数/2, 1, 4)` 线程，空闲 60 秒卸载模型）；屏 DPR < 1.5 时预放大（最多 2× 且宽 ≤2000 px）。快捷识字弹轻量 `OcrBubble.qml`。
+- **复制为表格（`PaddleOcr::readTable` / `platform/OcrTable`）**：文字按放大后的图识别，表格结构在原图上找，三级依次尝试，前一级不成立才用后一级：① `table::ruledStructure` 按像素找框线（相邻两行/两列像素亮度差 ≥10 且沿线两侧各自颜色不变的长直段；竖线两端须落在横线上，横线须有一段从一条竖线伸到另一条，文字笔画、链接下划线、色块边缘都过不了），线间方格无线相隔即合并为一格，选区落在外框以内时补上隐含的外边；② 表格模型 SLANet_plus（`table\slanet-plus.onnx`，7.4 MB，随插件包，首次读表格时才加载；长边缩到 488，暗底先反色）给出行列与合并，把握度 < 0.98 或把同一行文字拆进两行（`tornLines`）时不用；③ 原有的按文字空隙分列（`ocrTable`）。`table::filled` 把识别出的行放进格子：跨两格的一行按字符位置切开，格内多行自上而下拼接，表格上下方的文字各占一行。`standsAsTable`（至少两列各有两行字）不成立就不算表格。结果以 `QMimeData` 同时写入制表符文本和 HTML（`rowspan`/`colspan`，前导 0、超过 11 位的数字、`3-4`、`1E5` 加 `mso-number-format:"\@"`），由插件直接放剪贴板。
 - **二维码（`QrCode`）**：静态链接 `zxing-cpp`（仅 QRCode/MicroQRCode，最多 8 个；未检出时 2×/3× 重试且不超过 1200 万像素）。
 - **原地贴图翻译（`TranslateOverlay`）**：`ocrBlocks` 按行高、对齐与段宽合段（跳过倾角 >3°），经宿主 `translate_text` 调 `winshun.translate`。`translatedPicture` 按底色中位数、最远像素字色、字重门槛（深字 `0.085`、浅字深底 `0.105`）与居中边距覆盖重排，经 `PinWindow::setTranslation` 支持 `Tab` 翻面切换；行数不匹配且 ≤24 块时逐块降级重试，超限或未配置服务时新建翻译贴图回退至 OCR 窗口译文区；`translate_text` 答复 `service` 时带 `message`（服务拒绝密钥的 `setup` 行标题），OCR 窗口把它写在“设置翻译服务…”上方，旧宿主没有 `message` 则退回原来的措辞（#444）。
 

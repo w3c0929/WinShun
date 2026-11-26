@@ -2,6 +2,7 @@
 
 #include "AiSettings.h"
 #include "FrameReveal.h"
+#include "PinnedStacking.h"
 #include "Settings.h"
 #include "TriggerJournal.h"
 #include "Win32Util.h"
@@ -50,7 +51,7 @@ class QWinEventNotifier;
 
 namespace ws {
 
-namespace preview { struct DoubleTapActionsProbe; struct IdleOpenProbe; struct ForegroundUseProbe; struct ClipboardAnimationProbe; struct SearchShadowProbe; struct LauncherSettingsProbe; struct EntryHotkeyProbe; }
+namespace preview { struct DoubleTapActionsProbe; struct IdleOpenProbe; struct ForegroundUseProbe; struct ClipboardAnimationProbe; struct SearchShadowProbe; struct LauncherSettingsProbe; struct EntryHotkeyProbe; struct CommandHotkeyProbe; }
 
 namespace piedrop {
 class FileOperations;
@@ -148,6 +149,7 @@ class App : public QObject {
     friend struct preview::SearchShadowProbe;
     friend struct preview::LauncherSettingsProbe;
     friend struct preview::EntryHotkeyProbe;
+    friend struct preview::CommandHotkeyProbe;
 
 public:
     struct StartOptions {
@@ -234,9 +236,11 @@ public:
     void launcherPinnedChanged();
     // Pinned, a window of its own (GitHub #418): on the taskbar and in
     // Alt+Tab, minimized and back as any other (win::setTaskbarWindow), and
-    // topmost only with Settings::pinnedOnTop. Else over every window (its
-    // WindowStaysOnTopHint), and none of the rest.
+    // topmost only with Settings::pinnedOnTop, and not while it stands back
+    // for what was just opened from it (PinnedStacking). Else over every
+    // window (its WindowStaysOnTopHint), and none of the rest.
     void applyLauncherPin();
+    void launcherOpenedSomething(); // pinned: see PinnedStacking
     // --dump <file> from another copy (tests): the launcher's state and rows as JSON.
     void dumpLauncher(const QString& file) const;
     void showClipboard();
@@ -338,6 +342,7 @@ private:
         std::uint64_t at = 0;
         bool fullScreen = false; // a window covering its monitor in front
         bool exclusive = false; // Direct3D's own full screen
+        bool focusTaken = false; // so it opened with the focus, the game out of full screen for it
     };
     ClipOver m_clipOver;
     bool clipboardUnderLauncher() const; // opened from the launcher's search box
@@ -446,6 +451,15 @@ private:
     // does not work goes beside it in the settings, and to a notification
     // when that is new and the settings are not up.
     void applyEntryHotkeys();
+    // The shortcuts of plugins' commands (Settings::commandHotkeys, GitHub
+    // #466): registered through m_pluginKeyRelay, those that can be (the
+    // plugin on, its command with a keyword in use, the keys nobody
+    // else's); why the others do not work goes to the plugin's card
+    // (PluginSettings::setCommandHotkeyErrors). commandHotkey: one was
+    // pressed: the launcher with the command's keyword typed, the words to
+    // go after it; pressed again with that still there, it closes.
+    void applyCommandHotkeys();
+    void commandHotkey(const QString& keys);
     // The settings' list of them (SettingsEditor::clipboardEntryHotkeys):
     // [{id, title, detail, hotkey, error}], the one 设置快捷键 is for first
     // listed too while it has no keys yet.
@@ -903,6 +917,8 @@ private:
     // Pinned (Launcher::pinned), it lost the focus to a press on the box:
     // that press closes it (searchBoxPressed). Since when.
     QElapsedTimer m_pinnedLostToBox;
+    PinnedStacking m_pinnedStacking; // pinned: standing back for what it just opened, or not
+    bool m_keptPinned = false; // Settings::keepPinned as last applied (applySettings)
     QPointer<QQuickItem> m_searchField; // the launcher's (SearchBar.qml): the input method asks it where the caret is
     taskbar::SearchBox::Text m_fieldShown; // what it last reported (mirrorField), for the box
     bool m_deliverTyping = false; // the launcher was asked for by typing in the Start menu or in Explorer
@@ -1091,6 +1107,8 @@ private:
         QString keys;
     };
     std::vector<EntryHotkey> m_entryHotkeys; // registered (applyEntryHotkeys)
+    QList<Settings::CommandHotkey> m_commandHotkeys; // registered (applyCommandHotkeys)
+    QHash<QString, QString> m_commandHotkeyErrors; // "plugin/command" -> why its keys do not work
     QHash<qint64, QString> m_entryHotkeyErrors; // an entry -> why its keys do not work
     // Keys refused as they were recorded (another entry's, Win顺's own): the
     // entry and why, shown beside it until the next keys.

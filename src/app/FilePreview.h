@@ -83,6 +83,11 @@ class FilePreview : public QObject {
     // Loading for seconds (GitHub #307): the place the file is in does not
     // answer (a share gone, a disk asleep, a program holding the read back).
     Q_PROPERTY(bool stalled READ stalled NOTIFY slowChanged FINAL)
+    // The window as large as the screen lets it be instead of the size the
+    // file would like (enlargedPreview): the key in its header, a double
+    // click on the header. Kept from one file to the next, and by whoever
+    // owns it from one run to the next.
+    Q_PROPERTY(bool enlarged READ enlarged WRITE setEnlarged NOTIFY enlargedChanged FINAL)
 
 public:
     enum Kind { Loading, Picture, Text, Handler, Facts, Message, Video };
@@ -120,6 +125,9 @@ public:
     // its frame ready), the launcher it goes beside, the settings.
     void setWindowFactory(std::function<QQuickWindow*()> factory) { m_makeWindow = std::move(factory); }
     void setLauncherWindow(QWindow* launcher);
+    // The launcher went over every other window, or back among them: its
+    // window goes with it, beside (or over) the launcher as before.
+    void restack();
     void setBuiltInOnly(bool on) { m_builtInOnly = on || m_embedded; } // 预览方式: 内置
     void setDark(bool dark);
     // Text files besides the usual ones (the content search's kinds).
@@ -177,6 +185,9 @@ public:
     QString message() const { return m_message; }
     bool slow() const { return m_slow; }
     bool stalled() const { return m_stalled; }
+    bool enlarged() const { return m_enlarged; }
+    void setEnlarged(bool on);
+    Q_INVOKABLE void toggleEnlarged() { setEnlarged(!m_enlarged); }
 
     Q_INVOKABLE void openFile(); // 打开 in the header: as Enter on the row
     // The content area, where a preview handler draws (PreviewBody.qml).
@@ -197,6 +208,7 @@ public:
 signals:
     void contentChanged();
     void slowChanged();
+    void enlargedChanged();
     void closedByUser();
     void openRequested(const QString& path); // 打开: the launcher opens it, as Enter would
 
@@ -255,6 +267,7 @@ private:
     PreviewSide m_side = PreviewSide::None; // placeBeside's side; None: not chosen yet
     QRect m_sideArea; // reset the side only when the monitor/work area changes
     bool m_overLauncher = false; // no room beside it: in front of it
+    bool m_enlarged = false;
     QStringList m_facts;
     QString m_message;
     bool m_slow = false;

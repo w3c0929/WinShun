@@ -15,14 +15,17 @@
 ### 2.1 主搜索框（`Launcher`）
 
 - **输入区内 Logo 与拖动**：主搜索、面板、剪贴板与对话框搜索栏统一内置程序 Logo；左侧 Logo 与顶部横条由 `WindowFrame::addHandle` 登记为拖动把手，`WM_NCLBUTTONDOWN` 经 `DragDetect` 区分拖动与点击。
+- **类型条顺序**：“不限”固定在首位，其后为 `Settings::fileTypes` 的顺序，“文件夹”插在 `Results/FolderChipAt`（0 到类型数）处；类型条拖动（`TypeStrip` 内 `MouseArea` 里的 `DragHandler`，越过拖动距离才从 `MouseArea` 接管，点击不受影响）与设置页把手、上移下移都走 `Settings::moveStripChip`，`Launcher::setFileTypes` 按类型本身搬运已选类型和角标数量，只换顺序时不重搜。拖动中所有标签都显示（让位越过边缘的由视图裁掉），按住停在两端时逐个滚动；松手后标签按新顺序重建，`finishDrag` 先 `row.forceLayout()`，再从当前完整可见的第一个标签起滚到整标签位置并让松手的标签可见。离屏验证 `--preview-results <dir> --type-strip-drag` 与 `--preview-settings <dir> --file-types` 的鼠标经 `qt_handleMouseEvent` 走 `QGuiApplication`；直接 `sendEvent` 的 `QMouseEvent` 没有按下位置，`DragHandler` 会在按下时就误判越过阈值。
 - **文件类型多选与大小**：`selectedFileTypes` 合并多选扩展名并与 `ext:` 取交集（文件夹与其他类型互斥）；`Results/ShowFileSize` 复用 `ResultModel::SizeRole` 不访盘，面板文件夹列由 `FolderSizes` 后台遍历内存索引显示 `≈`。
 - **拖拽出窗口（`dragout::drag`）**：`SHCreateDataObject` 构造完整 PIDL 列表并写 `CF_HDROP` 与 `Preferred DropEffect = Copy`；左键只允许复制/快捷方式（防同盘误移），右键允许移动以弹出目标拖放菜单；管理员拖给普通目标不受 UIPI 阻断；网络共享先探测 1.5 s 防卡界面。
-- **系统右键菜单（`platform/ShellContextMenu`）**：GUI 队列异步弹出 `IContextMenu3`（`Shift` 带 `CMF_EXTENDEDVERBS`），以独立隐藏窗 `WinShun.MenuOwner` 作为外壳命令对话框属主防止启动器隐藏带走确认框；`shellcontext::watchKeys` 绕过中文 IME `VK_PROCESSKEY`。
+- **系统右键菜单（`platform/ShellContextMenu`）**：GUI 队列异步弹出 `IContextMenu3`（`Shift` 带 `CMF_EXTENDEDVERBS`）；同目录多项经 `IShellItemArray::BindToHandler(BHID_SFUIObject)` 取其文件夹的菜单，跨目录多项经 `SHCreateDefaultContextMenu` 以桌面文件夹为父、各项绝对 PIDL 为子、首项的 `IQueryAssociations` 为关联建菜单（#464，资源管理器搜索结果的做法），以独立隐藏窗 `WinShun.MenuOwner` 作为外壳命令对话框属主防止启动器隐藏带走确认框；`shellcontext::watchKeys` 绕过中文 IME `VK_PROCESSKEY`。
 - **普通权限打开边界**：管理员模式默认委托 Explorer `IShellDispatch2::ShellExecute` 打开文件/应用（防继承提权），仅 `Ctrl+Shift+Enter` 走 `runas`；无 Explorer 时用桌面外壳令牌启动，绝不静默提权。
 
 ### 2.2 钉住（`Ctrl+T`）、长文件名提示与对称调宽
 
-- **钉住**：`Launcher::pinned` 设置顶且失焦/打开结果不收起（`Esc` 仍可收起，不写配置）；失焦时再次触发呼出就地拉回前台不重算位置；从任务栏打开后钉住则把输入区迁回启动器。
+- **钉住**：`Launcher::pinned` 设置顶且失焦/打开结果不收起（`Esc` 仍可收起，不写配置）；置顶与否由 `PinnedStacking` 决定：未钉住恒置顶，钉住时按 `Settings::pinnedOnTop`，但从它打开东西（`Launcher::dismissRequested`）后退出置顶层让被打开的窗口在前，自己重新成为前台（点击、快捷键、任务栏按钮）时恢复；打开后 20 s 以上才失去前台视为点了别处，按设置恢复置顶。预览窗用 `win::stackBy` 跟随启动器所在的层（`FilePreview::restack`），不单独置顶。从搜索框粘贴剪贴板条目不算打开，不让位。`Settings::keepPinned`（“一直钉住搜索框”，默认关）在启动和该开关变化时调 `setPinned`（`App::applySettings` 用 `m_keptPinned` 只认这一项的变化，别的设置变动不会把 `Ctrl+T` 临时取消的钉住改回去）。`--probe-runtime <dir> --pinned-stacking-check` 用真实 App 与探针自建窗口核对层级与该开关；失焦时再次触发呼出就地拉回前台不重算位置，且有搜索词时不重新搜索、不回到第一行（`Launcher::handleBroughtForward` 只发 `broughtForward` 让输入框取回焦点；重新搜索会把刚打开的文件排到前面，逐个查看结果时丢失位置；无搜索词时仍走 `handleShown` 刷新起始列表）；从任务栏打开后钉住则把输入区迁回启动器。未钉住时打开文件/文件夹记下时刻与当时的搜索词，60 s 内带同样的词再次呼出即在底栏提示 `Ctrl+T`（`Launcher::tellPinHint`，延迟刷新时等 `finishShownRefresh` 的搜索之后再说，否则被 `search()` 清掉）；`state.ini` 的 `Hints/PinAfterOpen` 计数，最多 2 次，钉住过一次即不再提示。
+- **已打开标记**：`Launcher::markOpened` 在打开文件/文件夹（单个与多选；应用、起始列表不算）时把路径记进 `ResultModel::m_opened`（小写路径，`OpenedRole` → `ResultRow.opened`），与 `空文件夹`/`空文件` 共用文件名后的同一个标签（`nameTag`）。只在搜索词（`searchText()`，不含快速筛选）不变时保留，`search()` 发现词变了即 `clearOpened`；不落盘。
+- **结果行按钮**：`Results/RowActions`（`RowActions.h` 定义可用名称与默认六个）决定行尾按钮显示哪些、什么顺序，经 `Launcher::rowActions` 到 `ResultActions.qml` 的 `order`；按钮仍由 `RowActionsPool` 借给行，全部预先建好，换顺序不新建也不重挂按钮：`sequence` 给出从左到右的次序，每个按钮的 `x` 由 `leftOf()` 按它前面正在显示的按钮算出，各按钮再按行的类型决定出不出现，字母直达按 `sequence` 取。旧的 `Results/DeleteButton=false` 读入时折算成去掉 `delete`，保存后删除旧键；默认值不写入文件。
 - **长文件名提示与调宽**：`Elide.cpp` 保留文件名尾部做中间省略；`NameTip.qml` 为独立无焦点透传置顶窗（防被低窗裁切），`FileFacts` 后台补读创建时间（跳过 UNC）。`WindowFrame::setSideSizing` 在左右 6 逻辑像素返 `HTLEFT`/`HTRIGHT`（不加 `WS_THICKFRAME` 防 Aero Snap），`Placement::beginSizing` 围绕中心对称调宽并存 `state.ini`。
 
 ### 2.3 异步缩略图（`ThumbnailProvider`）
@@ -37,7 +40,7 @@
 
 ### 2.5 文件预览（`Alt+P`、`FilePreview`、`PreviewHost`）
 
-- **调度**：`PreviewWith=auto` 优先调用运行中的 QuickLook（命名管道）或 Seer（`WM_COPYDATA` + 200 ms 节流），否则启内置无焦点工具窗 `PreviewWindow.qml`（`PreviewPlacement.h` 优先左右空侧）。读取走 `ComWorker` 通道池（单文件阻塞 >2 s 切新线程，最多 4 条）。
+- **调度**：`PreviewWith=auto` 优先调用运行中的 QuickLook（命名管道）或 Seer（`WM_COPYDATA` + 200 ms 节流），否则启内置无焦点工具窗 `PreviewWindow.qml`（`PreviewPlacement.h` 优先左右空侧）。标题栏的放大键或双击标题栏切换 `FilePreview::enlarged`（存 `state.ini` 的 `Launcher/PreviewEnlarged`）：放大后不看文件想要的尺寸，`enlargedPreview` 取工作区整高，从搜索框宽度 40% 处（文件名列之后）盖到屏幕右缘，左侧更宽时改放左侧不遮挡；键盘仍归搜索框，换文件尺寸不变。读取走 `ComWorker` 通道池（单文件阻塞 >2 s 切新线程，最多 4 条）。
 - **隔离 STA 预览宿主（`platform/PreviewHost`）**：严格以 `CLSCTX_LOCAL_SERVER` 进程外加载系统 `IPreviewHandler`（防崩溃拖垮主进程），独占 STA 线程建无父无属主 `WS_EX_NOACTIVATE` 弹出浮层叠在预览区上；GUI 仅异步操作；10 s 卡死则丢弃线程并本轮拉黑该处理器；对 `Zone.Identifier` ZoneId 3/4 网传文件拒交 `IPreviewHandler`。
 
 ## 3. 收藏夹、自定义命令、网页搜索与设置

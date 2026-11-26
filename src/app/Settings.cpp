@@ -118,6 +118,7 @@ const QStringList kDefaultPreferredTypes {u"exe"_s, u"bat"_s, u"cmd"_s, u"ps1"_s
 // some defaults are the machine's at the first start (clipboard history,
 // renderer, low memory), which must stay as they were.
 const QString kPreferredTypesKey = u"Results/PreferredTypes"_s;
+const QString kRowActionsKey = u"Results/RowActions"_s;
 const QStringList kTerminals {u"cmd"_s, u"powershell"_s, u"pwsh"_s, u"wt"_s, u"gitbash"_s, u"wsl"_s, u"custom"_s}; // Settings::terminal
 
 // Plain-text formats: the scanner reads their raw bytes. Documents (docx,
@@ -185,13 +186,30 @@ std::wstring normalizeName(const QString& name)
     return QDir::toNativeSeparators(name.trimmed()).toStdWString();
 }
 
+// A share's place, not one of this PC's disks: "\\host\..." or a drive letter
+// mapped to one. By the letter's type as the process's drive map has it, and
+// as Windows remembers it for the user (an elevated Win顺 does not see the
+// user's letters): nothing is read from the network.
+bool onNetwork(std::wstring_view p)
+{
+    if (unc::isUnc(p))
+        return true;
+    if (p.size() < 2 || p[1] != L':' || !std::iswalpha(p[0]))
+        return false;
+    const wchar_t root[] {p[0], L':', L'\\', L'\0'};
+    const UINT type = ::GetDriveTypeW(root);
+    return type == DRIVE_REMOTE || (type == DRIVE_NO_ROOT_DIR && !unc::fromMappedDrive(std::wstring_view(root, 2)).empty());
+}
+
 std::wstring normalizePath(const QString& path)
 {
     std::wstring p = win32::expandEnvironment(QDir::toNativeSeparators(path.trimmed()).toStdWString());
     while (p.size() > 3 && p.back() == L'\\')
         p.pop_back();
     // %TEMP% can be an 8.3 short path (C:\Users\JOHNDO~1\...); the crawler sees long names.
-    if (const DWORD n = ::GetLongPathNameW(p.c_str(), nullptr, 0); n > 0) {
+    // Not asked of a server: one that does not answer would hold whoever asks
+    // (the start, the settings window) for as long as Windows waits for it.
+    if (const DWORD n = onNetwork(p) ? 0 : ::GetLongPathNameW(p.c_str(), nullptr, 0); n > 0) {
         std::wstring full(n, L'\0');
         if (const DWORD written = ::GetLongPathNameW(p.c_str(), full.data(), n); written > 0 && written < n) {
             full.resize(written);
@@ -201,6 +219,27 @@ std::wstring normalizePath(const QString& path)
     if (p.size() == 3 && p[1] == L':' && p[2] == L'\\')
         p.pop_back(); // "C:\" -> "C:"
     return p;
+}
+
+// A folder left out of the search, as the index names it. One on a mapped
+// drive ("Z:\rushes") is the share's ("\\nas\video\rushes"): network places
+// are kept by their UNC paths, whatever letter stands for them today, and
+// the letter would match nothing there.
+struct ExcludedPath {
+    std::wstring path;
+    bool wholeDrive = false; // written as a drive ("D:\", a mapped "Z:\" too)
+};
+
+ExcludedPath excludedPath(const QString& text)
+{
+    ExcludedPath excluded {normalizePath(text)};
+    std::wstring& p = excluded.path;
+    excluded.wholeDrive = p.size() == 2 && p[1] == L':';
+    if (p.size() >= 2 && p[1] == L':' && onNetwork(p)) {
+        if (std::wstring share = unc::fromMappedDrive(p); !share.empty())
+            p = std::move(share);
+    }
+    return excluded;
 }
 
 template <typename T> T readOrDefault(QSettings& s, const QString& key, const T& fallback)
@@ -468,6 +507,8 @@ QList<PluginConfig> readPlugins(QSettings& s)
                 config.ai = s.value(key).toBool();
             else if (key.startsWith(u"Keyword."))
                 config.keywords.append({key.mid(8), value.trimmed()});
+            else if (key.startsWith(u"Hotkey.") && !value.trimmed().isEmpty())
+                config.hotkeys.append({key.mid(7), value.trimmed()});
             else if (key.startsWith(u"Setting."))
                 config.settings.append({key.mid(8), value});
         }
@@ -492,6 +533,8 @@ void writePlugins(QSettings& s, const QList<PluginConfig>& plugins)
             s.setValue(u"Ai"_s, false);
         for (const auto& [command, keyword] : config.keywords)
             s.setValue(u"Keyword."_s + command, keyword);
+        for (const auto& [command, keys] : config.hotkeys)
+            s.setValue(u"Hotkey."_s + command, keys);
         for (const auto& [key, value] : config.settings)
             s.setValue(u"Setting."_s + key, value);
         s.endGroup();
@@ -504,6 +547,18 @@ const PluginConfig* Settings::plugin(QStringView id) const
 {
     const auto it = std::find_if(plugins.cbegin(), plugins.cend(), [&](const PluginConfig& p) { return p.id == id; });
     return it == plugins.cend() ? nullptr : &*it;
+}
+
+QList<Settings::CommandHotkey> Settings::commandHotkeys() const
+{
+    QList<CommandHotkey> all;
+    for (const PluginConfig& config : plugins) {
+        if (!config.enabled)
+            continue;
+        for (const auto& [command, keys] : config.hotkeys)
+            all.append({config.id, command, keys});
+    }
+    return all;
 }
 
 const WebShortcuts& Settings::webShortcutsInUse() const
@@ -540,16 +595,7 @@ QString Settings::sharePath(const QString& text)
 
 bool Settings::isNetworkPath(const QString& path)
 {
-    const std::wstring p = win32::expandEnvironment(QDir::toNativeSeparators(path.trimmed()).toStdWString());
-    if (unc::isUnc(p))
-        return true;
-    if (p.size() < 2 || p[1] != L':' || !std::iswalpha(p[0]))
-        return false;
-    // The letter's type as the process's drive map has it: nothing is read.
-    const wchar_t root[] {p[0], L':', L'\\', L'\0'};
-    const UINT type = ::GetDriveTypeW(root);
-    // An elevated Win顺 does not see the user's mapped letters: as Windows remembers them.
-    return type == DRIVE_REMOTE || (type == DRIVE_NO_ROOT_DIR && !unc::fromMappedDrive(std::wstring(root, 2)).empty());
+    return onNetwork(win32::expandEnvironment(QDir::toNativeSeparators(path.trimmed()).toStdWString()));
 }
 
 std::vector<Settings::KnownFolder> Settings::knownFolders()
@@ -801,6 +847,30 @@ bool Settings::hotkeyAllowed(const QString& shortcut)
     return hotkeys::allowed(shortcut);
 }
 
+bool Settings::moveStripChip(int from, int to)
+{
+    const int count = static_cast<int>(fileTypes.size()) + 1; // the kinds and 文件夹
+    if (from < 0 || from >= count || to < 0 || to >= count || from == to)
+        return false;
+    // The places in order: -1 for 文件夹, a kind's index otherwise.
+    QList<int> places;
+    places.reserve(count);
+    for (int i = 0; i < fileTypes.size(); ++i)
+        places.append(i);
+    places.insert(std::clamp(folderChipAt, 0, count - 1), -1);
+    places.move(from, to);
+    FileTypes moved;
+    moved.reserve(fileTypes.size());
+    for (int i = 0; i < count; ++i) {
+        if (places[i] < 0)
+            folderChipAt = i;
+        else
+            moved.append(fileTypes[places[i]]);
+    }
+    fileTypes = std::move(moved);
+    return true;
+}
+
 FileTypes Settings::namedFileTypes() const
 {
     FileTypes types = fileTypes;
@@ -1019,7 +1089,15 @@ void Settings::load()
     defaultSystemMenu = readOrDefault(s, u"Results/DefaultSystemMenu"_s, d.defaultSystemMenu);
     tabEntersFavoriteFolder = readOrDefault(s, u"Results/TabEntersFavoriteFolder"_s, d.tabEntersFavoriteFolder);
     thumbnails = readOrDefault(s, u"Results/Thumbnails"_s, d.thumbnails);
-    rowDeleteButton = readOrDefault(s, u"Results/DeleteButton"_s, d.rowDeleteButton);
+    // Before there was a choice of buttons there was one switch, for the
+    // delete button (GitHub #316): off, the buttons as they were without it.
+    if (s.contains(kRowActionsKey)) {
+        rowActions = rowactions::normalized(s.value(kRowActionsKey).toStringList());
+    } else {
+        rowActions = d.rowActions;
+        if (!readOrDefault(s, u"Results/DeleteButton"_s, true))
+            rowActions.removeAll(u"delete"_s);
+    }
     searchApps = readOrDefault(s, u"Results/SearchApps"_s, d.searchApps);
     searchSystem = readOrDefault(s, u"Results/SearchSystem"_s, d.searchSystem);
     runningTray = readOrDefault(s, u"Results/RunningTray"_s, d.runningTray);
@@ -1042,6 +1120,7 @@ void Settings::load()
     clearOnOpen = readOrDefault(s, u"Launcher/ClearOnOpen"_s, d.clearOnOpen);
     reopenWhereLeft = readOrDefault(s, u"Launcher/ReopenWhereLeft"_s, d.reopenWhereLeft);
     pinnedOnTop = readOrDefault(s, u"Launcher/PinnedOnTop"_s, d.pinnedOnTop);
+    keepPinned = readOrDefault(s, u"Launcher/KeepPinned"_s, d.keepPinned);
     englishOnOpen = readOrDefault(s, u"Launcher/EnglishOnOpen"_s, d.englishOnOpen);
     clipboardFillSeconds = std::clamp(readOrDefault(s, u"Launcher/ClipboardFill"_s, d.clipboardFillSeconds), 0, 60);
     numberKeys = readOrDefault(s, u"Results/NumberKeys"_s, d.numberKeys).trimmed().toLower();
@@ -1318,6 +1397,8 @@ void Settings::load()
             typeKeywords.insert(type.keyword);
     }
 
+    folderChipAt = std::clamp(readOrDefault(s, u"Results/FolderChipAt"_s, d.folderChipAt), 0, static_cast<int>(fileTypes.size()));
+
     quickFilters = readQuickFilters(s, typeKeywords);
     shares = readShares(s);
     networkVerifyHours = std::clamp(readOrDefault(s, u"Network/VerifyHours"_s, d.networkVerifyHours), 0, 24 * 7);
@@ -1497,12 +1578,17 @@ bool Settings::saveChecked() const
     s.setValue(u"Results/ShowFileSize"_s, showFileSize);
     s.setValue(u"Results/TypeCounts"_s, typeCounts);
     s.setValue(u"Results/FolderKeyword"_s, folderKeyword);
+    s.setValue(u"Results/FolderChipAt"_s, folderChipAt);
     s.setValue(u"Results/DoubleClickToOpen"_s, doubleClickToOpen);
     s.setValue(u"Results/ClickPreviews"_s, clickPreviews);
     s.setValue(u"Results/DefaultSystemMenu"_s, defaultSystemMenu);
     s.setValue(u"Results/TabEntersFavoriteFolder"_s, tabEntersFavoriteFolder);
     s.setValue(u"Results/Thumbnails"_s, thumbnails);
-    s.setValue(u"Results/DeleteButton"_s, rowDeleteButton);
+    s.remove(u"Results/DeleteButton"_s); // Results/RowActions says it since
+    if (rowActions == rowactions::defaults())
+        s.remove(kRowActionsKey);
+    else // none at all is a choice too, and an empty list is not kept as one
+        s.setValue(kRowActionsKey, rowActions.isEmpty() ? QVariant(u"none"_s) : QVariant(rowActions));
     s.setValue(u"Results/SearchApps"_s, searchApps);
     s.setValue(u"Results/SearchSystem"_s, searchSystem);
     s.setValue(u"Results/RunningTray"_s, runningTray);
@@ -1521,6 +1607,7 @@ bool Settings::saveChecked() const
     s.setValue(u"Launcher/ClearOnOpen"_s, clearOnOpen);
     s.setValue(u"Launcher/ReopenWhereLeft"_s, reopenWhereLeft);
     s.setValue(u"Launcher/PinnedOnTop"_s, pinnedOnTop);
+    s.setValue(u"Launcher/KeepPinned"_s, keepPinned);
     s.setValue(u"Launcher/EnglishOnOpen"_s, englishOnOpen);
     s.setValue(u"Launcher/ClipboardFill"_s, clipboardFillSeconds);
     s.setValue(u"Results/NumberKeys"_s, numberKeys);
@@ -1681,23 +1768,14 @@ ContentSizeLimits Settings::contentSizeLimits() const
     return limits;
 }
 
-namespace {
-
-bool isWholeDrive(std::wstring_view path)
-{
-    return path.size() == 2 && path[1] == L':';
-}
-
-} // namespace
-
 CrawlRules Settings::crawlRules() const
 {
     CrawlRules rules;
     for (const QString& p : excludedPaths) {
         if (p.trimmed().isEmpty())
             continue;
-        if (std::wstring path = normalizePath(p); !everythingCompat || isWholeDrive(path))
-            rules.excludedPaths.push_back(std::move(path));
+        if (ExcludedPath excluded = excludedPath(p); !everythingCompat || excluded.wholeDrive)
+            rules.excludedPaths.push_back(std::move(excluded.path));
     }
     // Our own files churn constantly. Not when they are a drive's root (an
     // empty drive chosen for the index): that would leave the whole drive out.
@@ -1737,8 +1815,8 @@ CrawlRules Settings::hiddenRules() const
     for (const QString& p : excludedPaths) {
         if (p.trimmed().isEmpty())
             continue;
-        if (std::wstring path = normalizePath(p); !isWholeDrive(path))
-            rules.excludedPaths.push_back(std::move(path));
+        if (ExcludedPath excluded = excludedPath(p); !excluded.wholeDrive)
+            rules.excludedPaths.push_back(std::move(excluded.path));
     }
     for (const QString& n : excludedNames) {
         if (!n.trimmed().isEmpty())
@@ -1806,7 +1884,19 @@ QString Settings::resolvedEnvPath(const QString& text)
 
 std::wstring Settings::excludedCompareKey(const QString& path)
 {
-    return normalizePath(cleanFolderPath(path));
+    return excludedPath(cleanFolderPath(path)).path;
+}
+
+bool Settings::excludesShare(const QString& share) const
+{
+    // By the folders alone: a name rule is for the folders inside a share,
+    // not for the place the user added by its path.
+    CrawlRules paths;
+    for (const QString& p : excludedPaths) {
+        if (!p.trimmed().isEmpty())
+            paths.excludedPaths.push_back(excludedPath(p).path);
+    }
+    return !paths.excludedPaths.empty() && Crawler(paths).isExcludedPath(share.toStdWString());
 }
 
 std::vector<std::wstring> Settings::indexFolderPaths() const
@@ -1853,9 +1943,15 @@ bool Settings::foldersInEffect(bool walked, bool elevated, bool serviceWanted, n
 ShareIndexer::Options Settings::shareOptions() const
 {
     ShareIndexer::Options o;
-    for (const NetworkShare& n : shares)
-        o.shares.push_back({n.path.toStdWString(), n.name.toStdWString(), n.content, n.scan});
     o.rules = crawlRules();
+    // A share in a folder left out of the search (the drive mapped to it
+    // excluded whole, say) is not read at all: what is excluded wins over what
+    // is added, on a server as on this PC's disks (the settings say so on its card).
+    const Crawler excluded(CrawlRules {o.rules.excludedPaths, {}, {}, {}, {}});
+    for (const NetworkShare& n : shares) {
+        if (std::wstring path = n.path.toStdWString(); !excluded.isExcludedPath(path))
+            o.shares.push_back({std::move(path), n.name.toStdWString(), n.content, n.scan});
+    }
     for (const QString& n : networkExcludedNames) {
         if (!n.trimmed().isEmpty())
             o.rules.excludedNames.push_back(normalizeName(n));

@@ -92,15 +92,16 @@ Win顺 在读取任何设置之前按以下优先级确定目录：
 | `idle-trim` / `key-helper` | `IdleTrim` / `ServiceKeyListener` | 空闲内存交还（归还结束后一条：归还前 `private_mb`、保留热页 `keep_mb`（`HotPages`）、归还后仍驻留 `stayed_mb`，中途被唤醒为 `stopped`）/`held: resumed`；UIAccess 按键助手状态 |
 | `double-tap-near-miss` / `double-tap-dropped` | `KeyListener` / `TapTeller` | 双击未成立原因与干扰类别、延迟/让位丢弃（合计 ≤30/h，不记具体键） |
 | `clipboard-picture-not-read` / `clipboard-key-routing-*` | `Clipboard` / `KeyRouter` | OCR 连崩跳图尺寸；剪贴板按键转发与未接管原因统计 |
-| `clipboard-hidden` | `App::hideClipboard` | 剪贴板面板每次隐藏的原因 `why`（`asked`/`inactive`/`clicked-away`/`routed-front-moved`/`lent-front-moved`/`display-lost-focus`）、显示了多久 `shown_ms`、是否转发按键、打开时前台是否全屏/独占全屏、目标窗口是否已最小化或消失；不记窗口标题与程序名 |
-| `clipboard-kept` | `App::routedForeground` | 面板盖住全屏游戏、游戏因此退出全屏并最小化时面板不收起而接过焦点（#452）：`shown_ms`、是否独占全屏 `over_exclusive`、是否拿到前台 `front`（拿不到则照旧收起，随后有 `clipboard-hidden`） |
+| `clipboard-hidden` | `App::hideClipboard` | 剪贴板面板每次隐藏的原因 `why`（`asked`/`inactive`/`clicked-away`/`routed-front-moved`/`lent-front-moved`/`display-lost-focus`/`front-refused`）、显示了多久 `shown_ms`、是否转发按键、打开时前台是否全屏/独占全屏、是否因此直接拿了焦点 `focus_taken`、目标窗口是否已最小化或消失；不记窗口标题与程序名 |
+| `clipboard-over-exclusive` | `App::showClipboard` | 在独占全屏的游戏上打开：面板不转发按键而直接拿焦点（Windows 10 上不拿焦点的窗口不会让游戏退出全屏，面板看不见，#452）；`front` 为是否拿到前台，拿不到随后有 `clipboard-hidden` `why=front-refused` |
+| `clipboard-kept` | `App::routedForeground` | 面板不抢焦点地盖住全屏窗口（未被识别为独占全屏）、对方因此退出全屏并最小化时面板不收起而接过焦点（#452）：`shown_ms`、是否独占全屏 `over_exclusive`、是否拿到前台 `front`（拿不到则照旧收起，随后有 `clipboard-hidden`） |
 
 ## 3. 检查更新、增量包与发布链路
 
 完整发布步骤、插件库同步与实测门禁见 [docs/releasing.md](../releasing.md)。
 
 - **检查与推送（`Updater` / `core/Release`）**：WinHTTP 请求 `https://lcstp.com/updates/winshun/stable.json`（每 10 分钟，支持 `ETag` / `304`；便携版加 `&package=portable`；`WINSHUN_UPDATE_FEED` 仅允许本机 HTTP 测试）。推送模式由发布说明隐藏标记控制：`<!-- winshun-push now -->` 为立即推送（`Push::Now`，每日提醒）；默认为正常推送（`Push::Normal`，按 `update.ini` 固定随机槽 `RolloutSlot` 在 24 小时内分批提醒，最多每 3 天一次）。
-- **信任链与防篡改（`UpdatePackage` / `HeldFile`）**：无 Authenticode 签名，信任链建立在 **HTTPS 直连 `lcstp.com` + SHA-256 + PE 版本资源匹配**。优先镜像源再原站，单步 30 秒超时、低速切源、上限 400 MB；执行前由 `HeldFile` 禁止写删锁定句柄并复算 SHA-256 至安装/解包结束。
+- **信任链与防篡改（`UpdatePackage` / `HeldFile`）**：无 Authenticode 签名，信任链建立在 **HTTPS 直连 `lcstp.com` + SHA-256 + PE 版本资源匹配**。优先镜像源再原站，单步 30 秒超时、低速切源、上限 400 MB；执行前由 `HeldFile` 禁止写删锁定句柄并复算 SHA-256 至安装/解包结束；安全软件扫描新文件时的短暂占用（打开、改名）最多等 `kHoldWait` 30 秒，仍被占用、删除、隔离或拒绝运行时归为“被这台电脑上的程序拦下”（对话框给“打开下载页”），与哈希/版本不符的“没有通过检查”分开提示。
 - **增量更新（`UpdateDelta` / `tools/delta`）**：发布脚本对最近至多 3 个兼容旧版用 zstd level-19 `--patch-from` 生成增量包（<60% 全量体积且经完整还原逐文件校验），清单通过隐藏注释 `<!-- winshun-delta 1 ... -->` 随同一可信链下发；客户端逐文件验旧哈希与新哈希，任一失败静默回退全量包（`WINSHUN_UPDATE_NODELTA` 可关闭增量）。
 - **按安装形态执行**：
   - **安装版（`AllUsers` / `CurrentUser`）**：普通权限启动 `setup.exe /SILENT …`（`AllUsers` 由 Inno Setup 自弹 UAC 保持 `[Run]` 普通权限），伴随 `WinShunUpdate.exe --watch-setup` 兜底重启旧版；安装脚本先将 `WinShunMcp.exe` 改名再退中转防锁 DLL，被占用文件改名 `.wsold` 挪开。
