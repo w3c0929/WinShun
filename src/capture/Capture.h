@@ -107,6 +107,8 @@ public:
         // OcrTranslate: a pin with them translated in place (the app decides; the window when that cannot be).
         // Also what triggerOcr(OcrPurpose::Translate) (#356) hands over, as its picking ends.
         std::function<void(const QImage&, double dpr, const QRect& where, CaptureSession::Action then)> ocrThen;
+        // 公式识别 (Shift+F): the picture and where it is on the screen (physical; the formula window goes beside it).
+        std::function<void(const QImage&, const QRect& where)> formula;
         // 识别屏幕文字 (triggerOcr, #198): the region picked, to be read and its
         // words copied; it is in no history and is not the last capture.
         std::function<void(const QImage&, double dpr, const QRect& where)> readText;
@@ -222,6 +224,10 @@ public:
     // with a selection, pins that selection immediately; with no selection (or in
     // OCR/translate picking), switches to quick pin picking.
     void triggerPin();
+    // The 贴图 hotkey pressed while a capture is open (#469): what its 贴到屏幕
+    // key does there, the selection (or the window under the pointer) pinned.
+    // False when no capture is open, and the hotkey pins the clipboard as ever.
+    bool pinByHotkey();
     bool busy() const { return m_state != State::Idle || m_countdown || (m_long && m_long->running()) || (m_recorder && m_recorder->active()); }
 
     // 贴上最近一次截图 (the tray menu).

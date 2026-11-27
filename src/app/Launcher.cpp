@@ -5013,6 +5013,9 @@ QJsonObject Launcher::pluginFilters() const
                           : QJsonValue(QDateTime::fromSecsSinceEpoch(value, QTimeZone::UTC).toString(Qt::ISODate));
     };
     QJsonArray kinds;
+    QStringList extensions = fileExtensions();
+    if (listsEveryFile(extensions))
+        extensions.clear(); // every file: no extension to narrow to, as the plugins read it (docs/plugins.md)
     if (m_fileType >= 0 && m_fileType < m_fileTypes.size()) {
         for (int type : selectedFileTypes())
             kinds.append(m_fileTypes[type].id.isEmpty() ? m_fileTypes[type].name : m_fileTypes[type].id);
@@ -5025,7 +5028,7 @@ QJsonObject Launcher::pluginFilters() const
     QJsonObject result {{u"modifiedFrom"_s, time(filter.after)}, {u"modifiedTo"_s, time(filter.before)},
         {u"minSize"_s, filter.minSize == 0 ? QJsonValue(QJsonValue::Null) : QJsonValue(qint64(unpackSize(filter.minSize)))},
         {u"maxSize"_s, filter.maxSize == kUnknownSize ? QJsonValue(QJsonValue::Null) : QJsonValue(qint64(unpackSize(filter.maxSize)))},
-        {u"kinds"_s, kinds}, {u"extensions"_s, QJsonArray::fromStringList(fileExtensions())},
+        {u"kinds"_s, kinds}, {u"extensions"_s, QJsonArray::fromStringList(extensions)},
         {u"folder"_s, m_folderFilter}};
     for (auto it = content.begin(); it != content.end(); ++it)
         result.insert(it.key(), it.value());
@@ -5294,14 +5297,15 @@ void Launcher::refreshKeyHints()
         if (pathtext::splitTyped(m_query).name.isEmpty() && stepBack()) {
             tabKeys = u"Ctrl+Backspace"_s;
             tab = tr("返回上一级");
-        } else if (!m_query.trimmed().isEmpty()) {
+        } else if (!m_query.trimmed().isEmpty() && !keywordAlone()) {
             tab = tr("切换范围");
         }
         break;
     case navigation::TabAction::None: break;
     }
-    // A keyword took the list: Shift+Tab looks for the words as names (GitHub #411).
-    if (tab.isEmpty() && m_keyword) {
+    // A keyword took the list, or leads it typed alone: Shift+Tab looks for
+    // the words as names (GitHub #411, #479).
+    if (tab.isEmpty() && (m_keyword || keywordAlone())) {
         tabKeys = u"Shift+Tab"_s;
         tab = tr("改搜文件名");
     }
@@ -5673,6 +5677,8 @@ QStringList Launcher::fileExtensions() const
         for (int type : selectedFileTypes())
             extensions.append(m_fileTypes[type].extensions);
     }
+    if (listsEveryFile(extensions))
+        return {QString::fromLatin1(kEveryFileExtension)}; // with others chosen too: every file all the same
     extensions.removeDuplicates();
     return extensions;
 }
@@ -5698,6 +5704,8 @@ QStringList Launcher::contentTypeExtensions() const
     QStringList extensions;
     for (int type : m_contentTypes)
         extensions.append(m_fileTypes[type].extensions);
+    if (listsEveryFile(extensions))
+        return {}; // every file: any the content search reads
     extensions.removeDuplicates();
     return extensions;
 }
@@ -8636,14 +8644,33 @@ void Launcher::leaveKeyword()
 
 bool Launcher::searchKeywordAsWords()
 {
-    if (!m_keyword)
-        return false;
     // Only the first word as typed is a keyword (Catalog::match): quoted, it
     // is a word of the name, as any quoted word is.
-    const QString words = m_keyword->words.trimmed();
-    setQuery(u'"' + m_keyword->keyword + u'"' + (words.isEmpty() ? u" "_s : u' ' + words));
+    QString keyword;
+    QString words;
+    if (m_keyword) {
+        keyword = m_keyword->keyword;
+        words = m_keyword->words.trimmed();
+    } else if (keywordAlone()) {
+        keyword = m_query.trimmed();
+    } else {
+        return false;
+    }
+    setQuery(u'"' + keyword + u'"' + (words.isEmpty() ? u" "_s : u' ' + words));
     emit caretRequested(static_cast<int>(m_query.size()), false);
     return true;
+}
+
+bool Launcher::keywordAlone() const
+{
+    if (m_keyword || m_filePrefix || !m_queryError.isEmpty())
+        return false;
+    if (!m_shotKeyword.isEmpty() && m_shotHooks.list && m_scope == All
+        && searchText().compare(m_shotKeyword, Qt::CaseInsensitive) == 0)
+        return true;
+    // Where Merge offers it (startPluginQuery's begin(): 全部, or the panel outside 内容).
+    return m_plugins && m_merge && (m_scope == All || m_panel) && m_scope != Content && m_scope != Apps
+        && m_plugins->catalog().loneKeyword(m_query);
 }
 
 // ---- The screenshot history (jt) ----------------------------------------
@@ -8921,7 +8948,7 @@ void Launcher::onPluginResults(std::uint64_t queryId, const QString& pluginId, c
         filtered.removeIf([&](const plugin::Item& item) {
             if (item.open.kind != plugin::Open::Kind::Path || !pathtext::inChosenFolders(typeFolders, item.open.target))
                 return true;
-            return !extensions.contains(QFileInfo(item.open.target).suffix(), Qt::CaseInsensitive);
+            return !listsEveryFile(extensions) && !extensions.contains(QFileInfo(item.open.target).suffix(), Qt::CaseInsensitive);
         });
     }
     if (m_panel) {
@@ -8958,7 +8985,8 @@ void Launcher::onPluginResults(std::uint64_t queryId, const QString& pluginId, c
             }
             const QStringList extensions = fileExtensions();
             const QString extension = QFileInfo(item.title).suffix().toLower();
-            return !extensions.isEmpty() && !extension.isEmpty() && !extensions.contains(extension, Qt::CaseInsensitive);
+            return !extensions.isEmpty() && !listsEveryFile(extensions) && !extension.isEmpty()
+                && !extensions.contains(extension, Qt::CaseInsensitive);
         });
     }
     m_merge->results(queryId, pluginId, commandId, filtered, partial, replace);

@@ -1510,6 +1510,13 @@ bool CaptureSession::key(int key, Qt::KeyboardModifiers modifiers)
         if (!busy)
             act(static_cast<int>(Action::Qr));
         return true;
+    case Qt::Key_F:
+        // Shift+F: 公式识别 (F alone is the size panel, above).
+        if (!plain || !shift)
+            return false;
+        if (!busy)
+            finish(Action::Formula);
+        return true;
     case Qt::Key_Comma:
     case Qt::Key_Less:
     case Qt::Key_Period:
@@ -1931,9 +1938,20 @@ void CaptureSession::keyReleased(int key)
     s->setFlash(tr("颜色格式：%1").arg(colorFormatName(m_colorFormat).toUpper()));
 }
 
+void CaptureSession::pinByHotkey()
+{
+    if (!m_active)
+        return;
+    // Mid-drag or mid-stroke the key is held back, as the 贴到屏幕 key is.
+    if (m_phase == Phase::Pressed || m_phase == Phase::Dragging || m_phase == Phase::Adjusting
+        || m_phase == Phase::Annotating)
+        return;
+    finish(Action::Pin);
+}
+
 void CaptureSession::act(int action)
 {
-    if (!m_active || action < static_cast<int>(Action::Copy) || action > static_cast<int>(Action::OcrTranslate))
+    if (!m_active || action < static_cast<int>(Action::Copy) || action > static_cast<int>(Action::Formula))
         return;
     if (action == static_cast<int>(Action::Long) || action == static_cast<int>(Action::Record)) {
         // Its picture is the screen's, scrolled: annotations would be lost.

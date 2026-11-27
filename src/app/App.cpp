@@ -1177,6 +1177,7 @@ bool App::startRuntime(const StartOptions& options, bool firstRun, bool clipboar
         const IdleTrim::LastTrim last = m_idleTrim->lastTrim();
         return std::pair<qint64, qint64>(last.atMs, last.megabytes);
     };
+    sources.memoryLoad = &IdleTrim::memoryLoad;
     m_health = std::make_unique<HealthMonitor>(std::move(sources));
     connect(m_index.get(), &IndexService::stateChanged, m_health.get(), &HealthMonitor::poke);
     connect(m_index.get(), &IndexService::activityChanged, m_health.get(), &HealthMonitor::poke);
@@ -2997,6 +2998,28 @@ void App::setUpAppTools()
             }
             shell::openUrl(text);
             done({});
+        }});
+    // 公式识别's model for the screenshot plugin, which may not go on the
+    // network: `action` status, install (the OCR package first when it is
+    // not there) or cancel; the answer is the model's state then
+    // (FormulaModel::state), asked again while it is busy.
+    tools.push_back({u"formula_model"_s, plugin::Permission::Ui,
+        [this](const QString& pluginId, const QString&, const QJsonObject& arguments, std::function<void(mcp::ToolResult)> done) {
+            if (pluginId != kScreenshotPlugin) {
+                done(toolError(u"formula_model is only for winshun.capture"_s));
+                return;
+            }
+            FormulaModel* model = m_ocrPackage->formulaModel();
+            const QString action = arguments.value(u"action"_s).toString(u"status"_s);
+            if (action == u"install")
+                model->download();
+            else if (action == u"cancel")
+                model->cancel();
+            else if (action != u"status") {
+                done(toolError(u"action must be status, install or cancel"_s));
+                return;
+            }
+            done({model->state()});
         }});
     tools.push_back({u"show_ocr_setup"_s, plugin::Permission::Ui,
         [this](const QString&, const QString&, const QJsonObject&, std::function<void(mcp::ToolResult)> done) {
@@ -6381,23 +6404,32 @@ void App::beginTrigger(TriggerSource source, std::uint64_t pressedAt, std::optio
     const std::uint64_t idleMs = lastActive > 0 && pressedAt >= lastActive ? pressedAt - lastActive : 0;
     context.idleSec = lastActive > 0 ? static_cast<std::int64_t>(idleMs / 1000) : -1;
     const std::shared_ptr<HotPages>& pages = clipboard ? m_clipPages : m_launcherPages;
-    if (pages) {
-        const std::size_t hotBytes = pages->bytes();
+    const std::size_t hotBytes = pages ? pages->bytes() : 0;
+    if (pages)
         context.hotMb = static_cast<int>(hotBytes >> 20);
-        if (hotBytes > 0) {
-            // Skip spawning a prefetch thread on immediate warm reopens unless
-            // IdleTrim ran, the window sat idle >= 15 s, or Windows silently
-            // trimmed the working set below the kept pages.
-            bool shouldPrefetch = context.trimmed || idleMs >= 15'000;
-            if (!shouldPrefetch) {
-                PROCESS_MEMORY_COUNTERS counters {};
-                counters.cb = sizeof counters;
-                shouldPrefetch = !::GetProcessMemoryInfo(::GetCurrentProcess(), &counters, sizeof counters)
-                    || counters.WorkingSetSize < hotBytes;
+    // Not on immediate warm reopens unless IdleTrim ran, the window sat idle
+    // >= 15 s, or Windows silently trimmed the working set below the kept pages.
+    bool shouldPrefetch = context.trimmed || idleMs >= 15'000;
+    if (!shouldPrefetch && hotBytes > 0) {
+        PROCESS_MEMORY_COUNTERS counters {};
+        counters.cb = sizeof counters;
+        shouldPrefetch = !::GetProcessMemoryInfo(::GetCurrentProcess(), &counters, sizeof counters)
+            || counters.WorkingSetSize < hotBytes;
+    }
+    // The launcher: then what its first search reads of the file index too
+    // (FileIndex::prefetchSearch), as the window comes. Given back with the
+    // rest, or taken by Windows while it was short of memory, it came from
+    // the disk a page at a time as the search went through it: 4.4 s on a
+    // busy computer (GitHub #471).
+    const std::shared_ptr<FileIndex> index = !clipboard && shouldPrefetch && m_index ? m_index->index() : nullptr;
+    if (shouldPrefetch && (hotBytes > 0 || index)) {
+        std::thread([kept = hotBytes > 0 ? pages->pages() : PageSet(), index] {
+            kept.prefetch();
+            if (index) {
+                const auto lock = index->longReadLock();
+                index->prefetchSearch();
             }
-            if (shouldPrefetch)
-                std::thread([kept = pages->pages()] { kept.prefetch(); }).detach();
-        }
+        }).detach();
     }
     m_recordPages = trimmedAt > m_openingSeenMs[idx] ? pages : nullptr;
     m_triggers->begin(source, pressedAt, context);
@@ -7149,7 +7181,8 @@ void App::routedKey(const KeyRouter::Key& key)
 
 void App::routedForeground(HWND window)
 {
-    if (window == m_keyRouterTarget)
+    // The target's reactivation (paste::reactivate): it has the front back.
+    if (window == m_keyRouterTarget || paste::isStandIn(window))
         return;
     // Activated after all: from now on as any window with the focus, which
     // goes when it loses it. Only if it still is: the event may be old.
@@ -7321,8 +7354,10 @@ void App::launcherRoutedForeground()
 {
     const HWND front = ::GetForegroundWindow();
     const HWND root = front ? ::GetAncestor(front, GA_ROOT) : nullptr;
-    if (!root || root == m_launcherRouting.target)
-        return; // that window still (told again after the refusal), or none for a moment
+    // That window still (told again after the refusal), or none for a moment,
+    // or its reactivation's stand-in (paste::reactivate, a copy made over it).
+    if (!root || root == m_launcherRouting.target || paste::isStandIn(root))
+        return;
     stopLauncherRouting();
     // In front itself after all (a click on it): as any window with the
     // focus from now on. Anything else: as when it loses the focus.
@@ -10035,6 +10070,8 @@ void App::applySwitches()
 {
     if (!m_pluginHost || !m_launcher)
         return;
+    if (m_places) // 关机 and the like come with the plugin (GitHub #477)
+        m_places->setPowerCommands(SwitchPlugin::powerCommands(*m_pluginHost));
     const QString provider = SwitchPlugin::provider(m_pluginHost->catalog());
     if ((m_switchPlugin && m_switchPlugin->id() == provider) || (!m_switchPlugin && provider.isEmpty()))
         return;

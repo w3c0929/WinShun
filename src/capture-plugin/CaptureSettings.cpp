@@ -119,7 +119,7 @@ QString clashBefore(const std::vector<std::pair<QString, const char*>>& own, std
 
 QStringList CaptureOptions::toolbarButtonIds()
 {
-    return {u"undo"_s, u"redo"_s, u"copy"_s, u"save"_s, u"pin"_s, u"ocr"_s, u"translate"_s, u"long"_s, u"record"_s, u"qr"_s, u"delay"_s, u"cancel"_s, u"help"_s};
+    return {u"undo"_s, u"redo"_s, u"copy"_s, u"save"_s, u"pin"_s, u"ocr"_s, u"formula"_s, u"translate"_s, u"long"_s, u"record"_s, u"qr"_s, u"delay"_s, u"cancel"_s, u"help"_s};
 }
 
 QString CaptureOptions::normalizedToolbarHidden(const QString& text)
@@ -187,6 +187,8 @@ CaptureOptions CaptureOptions::load(const QString& file)
     o.historyCount = std::clamp(readOrDefault(s, u"Capture/HistoryCount"_s, d.historyCount), 0, 100);
     const QString format = readOrDefault(s, u"Capture/ColorFormat"_s, d.colorFormat).trimmed().toLower();
     o.colorFormat = format == u"rgb" || format == u"hsl" ? format : u"hex"_s;
+    const QString formula = readOrDefault(s, u"Formula/Format"_s, d.formulaFormat).trimmed().toLower();
+    o.formulaFormat = formula == u"markdown" || formula == u"word" || formula == u"typst" ? formula : u"latex"_s;
     o.sizePresets = capture::sizePresetsText(capture::parseSizePresets(listOrText(s, u"Capture/SizePresets"_s, d.sizePresets)));
     o.pinsHotkey = readOrDefault(s, u"Capture/PinsHotkey"_s, d.pinsHotkey).trimmed();
     o.pinsRestoreHotkey = readOrDefault(s, u"Capture/PinsRestoreHotkey"_s, d.pinsRestoreHotkey).trimmed();
@@ -278,6 +280,7 @@ void CaptureOptions::save(const QString& file) const
     s.setValue(u"Capture/DelaySeconds"_s, delay);
     s.setValue(u"Capture/HistoryCount"_s, historyCount);
     s.setValue(u"Capture/ColorFormat"_s, colorFormat);
+    s.setValue(u"Formula/Format"_s, formulaFormat);
     s.setValue(u"Capture/SizePresets"_s, sizePresets);
     s.setValue(u"Capture/PinsHotkey"_s, pinsHotkey);
     s.setValue(u"Capture/PinsRestoreHotkey"_s, pinsRestoreHotkey);
@@ -402,7 +405,7 @@ QVariantMap CaptureSettings::captureKeys() const
             {u"text"_s, keys.text(a.action)},
             {u"changed"_s, keys.key(a.action) != a.key},
             {u"defaultText"_s, defaults.text(a.action)},
-            {u"conflict"_s, keys.has(a.action) ? hotkeyConflict(keys.key(a.action), false) : QString()},
+            {u"conflict"_s, keys.has(a.action) ? hotkeyConflict(keys.key(a.action), false, a.action) : QString()},
         });
     }
     return map;
@@ -427,7 +430,7 @@ QString CaptureSettings::setCaptureKey(const QString& id, int key, int modifiers
     }
     if (const auto why = m_options.keys.problem(a->action, candidate))
         return *why;
-    if (const QString why = hotkeyConflict(candidate, true); !why.isEmpty())
+    if (const QString why = hotkeyConflict(candidate, true, a->action); !why.isEmpty())
         return why;
     setKey(id, [&](capture::KeyAction) { return candidate; });
     return {};
@@ -457,11 +460,17 @@ void CaptureSettings::setKey(const QString& id, const std::function<QKeyCombinat
     change(m_options.keys, keys);
 }
 
-QString CaptureSettings::hotkeyConflict(QKeyCombination key, bool askSystem) const
+QString CaptureSettings::hotkeyConflict(QKeyCombination key, bool askSystem, capture::KeyAction action) const
 {
     const auto tr = settingsTr;
     const QString normal = hotkeys::normalized(QKeySequence(key).toString(QKeySequence::PortableText));
     if (!normal.isEmpty()) {
+        // 贴到屏幕 may share the 贴图 hotkey (#469): pressed while capturing,
+        // that hotkey pins the selection itself (CaptureApp, LastPinKey). Its
+        // own registration is what the probe below would find: not asked.
+        if (action == capture::KeyAction::Pin && !m_options.lastPinHotkey.isEmpty()
+            && hotkeys::normalized(m_options.lastPinHotkey) == normal)
+            return {};
         for (const auto& [hotkey, name] : ownHotkeys(m_options)) {
             if (!hotkey.isEmpty() && hotkeys::normalized(hotkey) == normal)
                 return tr("和“%1”的快捷键相同，按下时会先被它用掉").arg(tr(name));

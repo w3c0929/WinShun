@@ -32,7 +32,8 @@ public:
     enum Role {
         SourceRowRole = Qt::UserRole + 1,
         OnRole,
-        ArrowsRole, // "↓→", "↓+左", "侧1 ↑"; a shortcut's keys: "Ctrl+Alt+T"
+        ArrowsRole, // "↓→", "↓+左", "侧1 ↑" (without the keys held); a shortcut's keys: "Ctrl+Alt+T"
+        KeysRole, // the keys a gesture is drawn with: "Shift", "Ctrl+Alt"; empty for none
         DescriptionRole, // "向下，再向右", "按住右键，再点左键"
         WhereRole, // gestures::Zone as a number
         WhereTitleRole, // "任何位置", "从右下角开始画"
@@ -89,6 +90,9 @@ signals:
 
 private:
     void changed(int row);
+    // A chord for any trigger button, with one enabled: said as drawn, with
+    // that one ("侧1+右", "按住侧键（后退），再点右键"; GitHub #436).
+    std::string shownOn(const std::string& on) const;
 
     std::vector<gestures::Rule> m_rules;
     std::vector<gestures::MouseButton> m_buttons = gestures::defaultTriggerButtons();

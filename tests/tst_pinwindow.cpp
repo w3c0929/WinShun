@@ -349,31 +349,32 @@ private slots:
     {
         CaptureKeys keys;
         std::vector<PinKeyRow> rows = pinKeyRows(keys, false, false, false);
-        QCOMPARE(texts(rows), QStringList({u"编辑"_s, u"复制"_s, u"保存到“屏幕截图”"_s, u"旋转与翻转"_s, u"缩放 / 透明度"_s,
-                                  u"收成小块"_s, u"关闭"_s}));
+        QCOMPARE(texts(rows), QStringList({u"编辑"_s, u"复制"_s, u"保存到“屏幕截图”"_s, u"识别公式"_s, u"旋转与翻转"_s,
+                                  u"缩放 / 透明度"_s, u"收成小块"_s, u"关闭"_s}));
         QCOMPARE(rows[0].keys, QStringList {keys.text(KeyAction::PinEdit)});
         QCOMPARE(rows[1].keys, QStringList {keys.text(KeyAction::PinCopy)});
-        QCOMPARE(rows[3].keys, QStringList({keys.text(KeyAction::PinRotateRight), keys.text(KeyAction::PinFlipHorizontal),
+        QCOMPARE(rows[3].keys, QStringList {keys.text(KeyAction::PinFormula)});
+        QCOMPARE(rows[4].keys, QStringList({keys.text(KeyAction::PinRotateRight), keys.text(KeyAction::PinFlipHorizontal),
                                    keys.text(KeyAction::PinFlipVertical)}));
-        QCOMPARE(rows[4].keys, QStringList({u"滚轮"_s, u"Ctrl+滚轮"_s}));
-        QCOMPARE(rows[6].keys, QStringList {keys.text(KeyAction::PinClose)});
+        QCOMPARE(rows[5].keys, QStringList({u"滚轮"_s, u"Ctrl+滚轮"_s}));
+        QCOMPARE(rows[7].keys, QStringList {keys.text(KeyAction::PinClose)});
 
         rows = pinKeyRows(keys, true, true, true); // text recognition there, a translated pin showing its translation
-        QCOMPARE(texts(rows), QStringList({u"编辑"_s, u"复制"_s, u"保存到“屏幕截图”"_s, u"识别文字"_s, u"复制全部文字"_s, u"选择文字"_s, u"显示原文"_s,
-                                  u"旋转与翻转"_s, u"缩放 / 透明度"_s, u"收成小块"_s, u"关闭"_s}));
+        QCOMPARE(texts(rows), QStringList({u"编辑"_s, u"复制"_s, u"保存到“屏幕截图”"_s, u"识别文字"_s, u"复制全部文字"_s, u"选择文字"_s,
+                                  u"识别公式"_s, u"显示原文"_s, u"旋转与翻转"_s, u"缩放 / 透明度"_s, u"收成小块"_s, u"关闭"_s}));
         QCOMPARE(rows[4].keys, QStringList {keys.text(KeyAction::PinOcrCopy)});
-        QCOMPARE(rows[6].keys, QStringList {u"Tab"_s});
-        QCOMPARE(texts(pinKeyRows(keys, false, true, false))[3], u"显示译文"_s);
+        QCOMPARE(rows[7].keys, QStringList {u"Tab"_s});
+        QCOMPARE(texts(pinKeyRows(keys, false, true, false))[4], u"显示译文"_s);
 
         keys.set(KeyAction::PinCopy, QKeyCombination()); // cleared in the settings
         keys.set(KeyAction::PinFlipHorizontal, QKeyCombination());
         keys.set(KeyAction::PinFlipVertical, QKeyCombination());
         keys.set(KeyAction::PinEdit, QKeyCombination(Qt::Key_F2));
         rows = pinKeyRows(keys, false, false, false);
-        QCOMPARE(texts(rows), QStringList({u"编辑"_s, u"保存到“屏幕截图”"_s, u"旋转与翻转"_s, u"缩放 / 透明度"_s, u"收成小块"_s,
-                                  u"关闭"_s}));
+        QCOMPARE(texts(rows), QStringList({u"编辑"_s, u"保存到“屏幕截图”"_s, u"识别公式"_s, u"旋转与翻转"_s, u"缩放 / 透明度"_s,
+                                  u"收成小块"_s, u"关闭"_s}));
         QCOMPARE(rows[0].keys, QStringList {u"F2"_s});
-        QCOMPARE(rows[2].keys, QStringList {keys.text(KeyAction::PinRotateRight)});
+        QCOMPARE(rows[3].keys, QStringList {keys.text(KeyAction::PinRotateRight)});
         keys.set(KeyAction::PinRotateRight, QKeyCombination());
         QVERIFY(!texts(pinKeyRows(keys, false, false, false)).contains(u"旋转与翻转"_s));
     }
@@ -556,7 +557,7 @@ private slots:
         for (const bool dark : {false, true}) {
             const PinKeyCard::Look look = PinKeyCard::Look::fallback(dark);
             for (const double dpr : {1.0, 1.25, 1.5, 2.0}) {
-                const QSize card = PinKeyCard::cardSize(rows, dpr);
+                const QSize card = PinKeyCard::cardSize(rows, dpr, look);
                 const int s = PinKeyCard::shadowMargin(dpr);
                 const QImage picture = PinKeyCard::picture(rows, dpr, look);
                 QCOMPARE(picture.size(), card + QSize(2 * s, 2 * s));
@@ -573,6 +574,27 @@ private slots:
         }
     }
 
+    // Its type is a menu's at the 界面大小, as the capture's card: a row as
+    // tall as its keycap or its words and 6 px, the footer as a keycap.
+    void keyCardType()
+    {
+        const std::vector<PinKeyRow> rows = pinKeyRows(CaptureKeys(), true, false, false);
+        const int n = static_cast<int>(rows.size());
+        const auto height = [n](int row, int key) { return n * row + (n - 1) * 6 + 2 * 8 + 1 + key + 2 * 10; };
+        PinKeyCard::Look look = PinKeyCard::Look::fallback(false);
+        QCOMPARE(PinKeyCard::cardSize(rows, 1.0, look).height(), height(20, 20)); // 紧凑: 14 / 12 px, keycaps 20
+        const int compactWidth = PinKeyCard::cardSize(rows, 1.0, look).width();
+        look.keyHeight = 18; // 密集: the words' row is still 20
+        QCOMPARE(PinKeyCard::cardSize(rows, 1.0, look).height(), height(20, 18));
+        look.textSize = 18; // 宽松
+        look.captionSize = 16;
+        look.keyHeight = 24;
+        const QSize roomy = PinKeyCard::cardSize(rows, 1.0, look);
+        QCOMPARE(roomy.height(), height(24, 24));
+        QVERIFY(roomy.width() > compactWidth);
+        QCOMPARE(PinKeyCard::cardSize(rows, 2.0, look).height(), 2 * height(24, 24)); // whole device pixels at 200 %
+    }
+
     // The window: in a corner, through to what is under it, never the focus.
     void keyCardWindow()
     {
@@ -584,7 +606,7 @@ private slots:
         QVERIFY(!card.visible());
         QVERIFY(card.show(rows, work, QRect(), 1.0, look));
         QVERIFY(card.visible());
-        const QSize size = PinKeyCard::cardSize(rows, 1.0);
+        const QSize size = PinKeyCard::cardSize(rows, 1.0, look);
         QCOMPARE(card.rect(), QRect(116, 900 - 16 - size.height(), size.width(), size.height()));
         const LONG_PTR style = ::GetWindowLongPtrW(card.hwnd(), GWL_EXSTYLE);
         for (const LONG_PTR bit : std::initializer_list<LONG_PTR> {WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST})
@@ -595,7 +617,7 @@ private slots:
         QVERIFY(card.show(rows, work, QRect(100, 700, 400, 200), 1.0, look)); // the pin at the bottom left
         QCOMPARE(card.rect().right(), work.right() - 16);
         QVERIFY(card.show(rows, work, QRect(), 1.5, look)); // another scale: drawn again at its size
-        QCOMPARE(card.rect().size(), PinKeyCard::cardSize(rows, 1.5));
+        QCOMPARE(card.rect().size(), PinKeyCard::cardSize(rows, 1.5, look));
         QVERIFY(!card.show(rows, work, QRect(100, 850, 1200, 50), 1.0, look)); // no corner free
         QVERIFY(!card.visible());
     }

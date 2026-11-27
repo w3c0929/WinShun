@@ -76,6 +76,7 @@ Column {
         { id: "delay", text: qsTr("延时") },
         { id: "qr", text: qsTr("二维码") },
         { id: "ocr", text: qsTr("识别文字") },
+        { id: "formula", text: qsTr("公式识别") },
         { id: "translate", text: qsTr("翻译") },
         { id: "pin", text: qsTr("贴图") },
         { id: "save", text: qsTr("保存") },
@@ -87,7 +88,7 @@ Column {
     readonly property var toolbarRows: [
         { title: qsTr("编辑"), ids: ["undo", "redo"] },
         { title: qsTr("截图方式"), ids: ["long", "record", "delay"] },
-        { title: qsTr("识别"), ids: ["qr", "ocr", "translate"] },
+        { title: qsTr("识别"), ids: ["qr", "ocr", "formula", "translate"] },
         { title: qsTr("结束截图"), ids: ["pin", "save", "cancel", "copy"] },
         { title: qsTr("帮助"), ids: ["help"] }
     ]
@@ -523,6 +524,7 @@ Column {
                             { id: "PinEdit", name: QT_TRANSLATE_NOOP("ws::capture::CaptureKeys", "编辑") },
                             { id: "PinOcr", name: QT_TRANSLATE_NOOP("ws::capture::CaptureKeys", "识别文字") },
                             { id: "PinOcrCopy", name: QT_TRANSLATE_NOOP("ws::capture::CaptureKeys", "复制全部文字") },
+                            { id: "PinFormula", name: QT_TRANSLATE_NOOP("ws::capture::CaptureKeys", "识别公式") },
                             { id: "PinCollapseEdge", name: QT_TRANSLATE_NOOP("ws::capture::CaptureKeys", "收到屏幕顶边") },
                             { id: "PinCollapse", name: QT_TRANSLATE_NOOP("ws::capture::CaptureKeys", "收起/展开") },
                             { id: "PinTextPick", name: QT_TRANSLATE_NOOP("ws::capture::CaptureKeys", "选取文字") },
@@ -1023,7 +1025,7 @@ Column {
                         id: lastPinHotkeyRow
                         objectName: "capturePinImageHotkey"
                         title: qsTr("贴图的快捷键")
-                        description: qsTr("优先贴剪贴板里的图片或文字；连续按下会按顺序贴出之前的历史截图与贴图（并保留标注）。不设时仍可从托盘菜单操作")
+                        description: qsTr("优先贴剪贴板里的图片或文字；连续按下会按顺序贴出之前的历史截图与贴图（并保留标注）。截图时按它直接贴出选区，可以和“截图时 › 贴到屏幕”设成同一个键。不设时仍可从托盘菜单操作")
                         hotkey: card.editor.captureLastPinHotkey
                         error: card.editor.captureLastPinHotkeyError
                         onRecorded: (hotkey) => card.editor.captureLastPinHotkey = hotkey

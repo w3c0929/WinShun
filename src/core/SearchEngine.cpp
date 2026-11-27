@@ -31,6 +31,7 @@
 #include <QTimeZone>
 
 #include <windows.h>
+#include <psapi.h>
 
 #include <algorithm>
 #include <array>
@@ -264,6 +265,22 @@ private:
 
 namespace {
 
+// For the log of a slow search: this process's page faults so far (soft and
+// hard alike), and how much of Windows' memory is in use, in percent (-1:
+// not told).
+DWORD pageFaults() noexcept
+{
+    PROCESS_MEMORY_COUNTERS counters {};
+    counters.cb = sizeof counters;
+    return ::GetProcessMemoryInfo(::GetCurrentProcess(), &counters, sizeof counters) ? counters.PageFaultCount : 0;
+}
+
+int memoryLoad() noexcept
+{
+    MEMORYSTATUSEX memory {sizeof memory};
+    return ::GlobalMemoryStatusEx(&memory) ? static_cast<int>(memory.dwMemoryLoad) : -1;
+}
+
 // ...or, as asked, the files written last: a list to scroll through
 // (Request::limit of them). From one folder and one tree of folders, a few
 // more than in a short list, so that a clone or an unpacked archive still
@@ -303,22 +320,30 @@ struct Hidden {
     bool empty() const noexcept { return types.empty() && names.empty(); }
 };
 
+// Whether a kind's extensions (folded) take every file (kEveryFileExtension).
+bool everyFile(const std::vector<std::string>& types)
+{
+    return std::ranges::find(types, std::string_view(kEveryFileExtension)) != types.end();
+}
+
 // Whether the file at `path` (or so named) has one of `types` (folded): any
-// file or folder when there are none, never a folder when there are.
-// A file `hidden` names (a skipped type or name) is none.
+// file or folder when there are none, never a folder when there are, any
+// file for every file's. A file `hidden` names (a skipped type or name) is none.
 bool ofType(const QString& path, bool isDir, const std::vector<std::string>& types, const Hidden& hidden = {})
 {
     if (types.empty() && hidden.empty())
         return true;
+    const bool anyFile = everyFile(types);
     const qsizetype slash = std::max(path.lastIndexOf(u'\\'), path.lastIndexOf(u'/'));
     if (!isDir && !hidden.names.empty() && nameMatchesAny(wtf8::fromUtf16(wtf8::view(path.sliced(slash + 1))), hidden.names))
         return false;
     const qsizetype dot = path.lastIndexOf(u'.');
     if (isDir || dot < 0 || dot + 1 >= path.size() || dot < slash)
-        return types.empty();
+        return types.empty() || (anyFile && !isDir);
     const std::string ext = wtf8::fromUtf16(wtf8::view(path.sliced(dot + 1)));
     const auto is = [&](const std::string& t) { return text::equalsFolded(ext, t); };
-    return (types.empty() || std::any_of(types.begin(), types.end(), is)) && std::none_of(hidden.types.begin(), hidden.types.end(), is);
+    return (types.empty() || anyFile || std::any_of(types.begin(), types.end(), is))
+        && std::none_of(hidden.types.begin(), hidden.types.end(), is);
 }
 
 // Request::excludedTypes and excludedFileNames, folded, less those asked
@@ -359,7 +384,8 @@ Hidden hiddenOf(const SearchEngine::Request& request, const ParsedQuery& query, 
 }
 
 // The query with the type chosen: its extensions, or with ext: typed too,
-// those in both (none: an extension no name has, "/"); and the files skipped.
+// those in both (none: an extension no name has, "/"); every file's: files
+// alone, ext: typed as it is; and the files skipped.
 ParsedQuery withTypes(ParsedQuery query, const std::vector<std::string>& types, const Hidden& hidden, bool whole = true)
 {
     for (ParsedQuery& branch : query.alternatives)
@@ -372,6 +398,10 @@ ParsedQuery withTypes(ParsedQuery query, const std::vector<std::string>& types, 
     query.excludedFileNames = hidden.names;
     if (types.empty())
         return query;
+    if (everyFile(types)) {
+        query.filesOnly = true;
+        return query;
+    }
     if (query.extensions.empty()) {
         query.extensions = types;
     } else {
@@ -481,6 +511,22 @@ SearchResult fromWeb(const WebShortcut& web, const QString& words)
     r.words = words;
     r.icon = web.iconRef(); // its site's icon (or its user's), whichever page it opens
     return r;
+}
+
+// `typed` as it was typed, at the start of a word of `name`: "gj" in "GJ",
+// "GJ Notes" and "ly" in "ly-notes", not in 效率工具 (its pinyin) nor in
+// "family". What a switch or power command found by pinyin or a guess gives
+// way to (GitHub #477).
+bool spelledIn(QStringView name, QStringView typed)
+{
+    if (typed.isEmpty())
+        return false;
+    for (qsizetype at = name.indexOf(typed, 0, Qt::CaseInsensitive); at >= 0;
+         at = name.indexOf(typed, at + 1, Qt::CaseInsensitive)) {
+        if (at == 0 || !name[at - 1].isLetterOrNumber())
+            return true;
+    }
+    return false;
 }
 
 // A file row that only repeats an app row: the app's program, or its
@@ -1493,6 +1539,7 @@ void SearchEngine::runNameSearch(const Job& job)
     const auto began = Clock::now();
     const auto onDiskBefore = m_onDisk->waited();
     const WorkerPool::Waits poolBefore = WorkerPool::waits();
+    const DWORD faultsBefore = pageFaults();
     Clock::duration lockWait {};
     Clock::duration names {};
     Clock::duration alike {}; // the names that sound the same (homophoneQueries)
@@ -1500,7 +1547,9 @@ void SearchEngine::runNameSearch(const Job& job)
     const char* phase = "starting"; // where it was when it ended (left behind: where it noticed)
     // From its request on, 300 ms or more (the list is dimmed after 250 ms),
     // left behind by a newer request too: said in the log, with what it
-    // waited for and where its time went. No words, no paths.
+    // waited for and where its time went, and how short of memory Windows
+    // was: memory read back from the disk shows as page faults by the
+    // thousand (GitHub #471). No words, no paths.
     const auto slowLog = qScopeGuard([&] {
         const auto end = Clock::now();
         if (end - job.submitted < std::chrono::milliseconds(300))
@@ -1514,11 +1563,13 @@ void SearchEngine::runNameSearch(const Job& job)
         qWarning("WinShun: a name search took %lld ms%s (%lld queued behind the one before, %lld for the index, "
                  "%lld finding names, %lld asking the disk about recent items and favorites, %lld names that sound the "
                  "same, %lld listing the open windows, %lld the rest; its parallel loops waited %lld for their turn and "
-                 "%lld for the pool's threads; ended at: %s; running now in all of WinShun: %d name searches, %d content scans)",
+                 "%lld for the pool's threads; ended at: %s; running now in all of WinShun: %d name searches, %d content scans; "
+                 "Windows' memory %d%% in use, %lu page faults in all of WinShun meanwhile)",
             ms(end - job.submitted), isStale(job.id) ? ", left behind by a newer request" : "", ms(began - job.submitted),
             ms(lockWait), ms(names), ms(onDisk), ms(alike), ms(windowsTime), std::max(0LL, ms(rest)),
             ms(pool.forTurn - poolBefore.forTurn), ms(pool.forThreads - poolBefore.forThreads), phase,
-            s_namesRunning.load(std::memory_order_relaxed), s_scansRunning.load(std::memory_order_relaxed));
+            s_namesRunning.load(std::memory_order_relaxed), s_scansRunning.load(std::memory_order_relaxed), memoryLoad(),
+            static_cast<unsigned long>(pageFaults() - faultsBefore));
     });
 
     const bool foldersOnly = request.scope == Scope::Folders;
@@ -1543,7 +1594,7 @@ void SearchEngine::runNameSearch(const Job& job)
             .perFolder = kModifiedPerFolder,
             .perTree = kModifiedPerTree,
             .notAfter = trustedUntil(),
-            .extensions = types,
+            .extensions = everyFile(types) ? std::vector<std::string>() : types, // files alone, whichever
             .excludedExtensions = hidden.types,
             .excludedFileNames = hidden.names,
             .hiddenFolders = hidden.folders};
@@ -1791,16 +1842,27 @@ void SearchEngine::runNameSearch(const Job& job)
         }
         phase = "apps, places, typed paths, favorites";
 
+        // Typed in a folder's window, words that are a path from it ("合同\20"
+        // in D:\Work, GitHub #454): the disk lists the folder they lead to, as
+        // the box completes them (navigation::typedIn), the index's rows still
+        // the window folder's. Other words ("报告", "*.pdf"): that folder's.
+        const pathtext::TypedPath listedPath = [&] {
+            if (!typedIn || request.regex || !(request.text.contains(u'\\') || request.text.contains(u'/')))
+                return typedPath;
+            const QString& folder = typedPath.folder;
+            pathtext::TypedPath from = pathtext::splitTyped((folder.endsWith(u'\\') ? folder : folder + u'\\') + request.text);
+            return from.folder.isEmpty() ? typedPath : from;
+        }();
         // A network folder is listed only when its server answers: one that
         // is not there would hold the search up for the half minute Windows
         // waits. Known to be away (a share searched), or not answering now
         // (Windows asked, on a server it got to where the probe did not:
         // GitHub #116).
         const auto listable = [&] {
-            const std::wstring folder = typedPath.folder.toStdWString();
+            const std::wstring folder = listedPath.folder.toStdWString();
             return !unc::isUnc(folder) || (!m_index->shares().offline(folder) && share::answersNow(folder, false));
         };
-        if (!typedPath.folder.isEmpty() && !filtered && listable()) {
+        if (!listedPath.folder.isEmpty() && !filtered && listable()) {
             // Typed in a folder's window: with the rows in the folder, before
             // the others (arrange), which wait meanwhile.
             SearchResults outside;
@@ -1816,7 +1878,7 @@ void SearchEngine::runNameSearch(const Job& job)
             // is listed, not the first `limit` of listTyped's own order.
             const bool byChoice = sortedByChoice(request);
             SearchResults rows
-                = pathtext::listTyped(typedPath, foldersOnly, byChoice ? std::numeric_limits<int>::max() : static_cast<int>(request.limit));
+                = pathtext::listTyped(listedPath, foldersOnly, byChoice ? std::numeric_limits<int>::max() : static_cast<int>(request.limit));
             rows.removeIf([&](const SearchResult& r) { return !ofType(r.path, r.isDir, types, hidden); });
             if (!byChoice)
                 exactFirst(rows.begin(), rows.end(), matcher, PreferredTypes(foldedExtensions(request.preferredTypes)));
@@ -1846,8 +1908,8 @@ void SearchEngine::runNameSearch(const Job& job)
             if (byChoice) {
                 // The folder itself (nothing typed after it) stays on top as
                 // the current place; the rest, rows and matches, in the order.
-                const bool self = typedPath.name.trimmed().isEmpty() && !rows.isEmpty()
-                    && rows.front().path.compare(typedPath.folder, Qt::CaseInsensitive) == 0;
+                const bool self = listedPath.name.trimmed().isEmpty() && !rows.isEmpty()
+                    && rows.front().path.compare(listedPath.folder, Qt::CaseInsensitive) == 0;
                 SearchResults merged = std::move(results); // the index's first: a tie keeps them ahead
                 for (auto it = rows.begin() + (self ? 1 : 0); it != rows.end(); ++it)
                     merged.push_back(std::move(*it));
@@ -1958,11 +2020,12 @@ void SearchEngine::runNameSearch(const Job& job)
                     behind = std::min(behind, r.score);
             }
             // Asked for in pinyin ("gj": 关机), it still gives way to what has
-            // those letters in its name as typed ("GJ Notes").
+            // those letters in its name as typed ("GJ Notes"); the files so
+            // named are below (yielding).
             const QString typedText = request.text.trimmed();
             int behindSpelled = std::numeric_limits<int>::max();
             for (const Ranked& r : ranked) {
-                if (!r.askedInPinyin && !r.guessedAction && r.result.name.contains(typedText, Qt::CaseInsensitive))
+                if (!r.askedInPinyin && !r.guessedAction && spelledIn(r.result.name, typedText))
                     behindSpelled = std::min(behindSpelled, r.score);
             }
             for (Ranked& r : ranked) {
@@ -2012,10 +2075,13 @@ void SearchEngine::runNameSearch(const Job& job)
                 top.push_back(std::move(*commandRow));
             const qsizetype explicitRows = top.size();
             QSet<QString> guessedActions;
+            QSet<QString> yielding; // a switch or power command not asked for as spelled
             total += static_cast<qint64>(ranked.size()) + top.size();
             for (Ranked& r : ranked) {
                 if (r.guessedAction)
                     guessedActions.insert(r.result.path);
+                if (r.guessedAction || r.askedInPinyin)
+                    yielding.insert(r.result.path);
                 r.result.score = r.score;
                 top.push_back(std::move(r.result));
             }
@@ -2050,6 +2116,22 @@ void SearchEngine::runNameSearch(const Job& job)
                     for (auto it = top.begin() + explicitRows; it != top.end() && learned(*it); ++it) {
                         it->recent = true;
                         it->score = std::max(it->score, 300 + History::affinity(request.historyAffinity, it->path).bonus());
+                    }
+                }
+                // Files come after the apps and places, so a switch or power
+                // command found by pinyin or a guess ("gj": 关机) would still
+                // stand above a folder named so (GJ, GitHub #477): it moves
+                // behind the last row whose name has the text as typed.
+                if (rankBy == RankBy::Match && request.order.key == SortKey::Rank && !yielding.isEmpty()
+                    && !typedText.isEmpty()) {
+                    const auto spelled = [&](const SearchResult& r) {
+                        return !yielding.contains(r.path) && spelledIn(r.name, typedText);
+                    };
+                    const auto last = std::find_if(top.rbegin(), top.rend() - explicitRows, spelled);
+                    if (last != top.rend() - explicitRows) {
+                        // Before it, in their order; after it, as they were.
+                        std::stable_partition(top.begin() + explicitRows, last.base(),
+                            [&](const SearchResult& r) { return !yielding.contains(r.path); });
                     }
                 }
                 if (top.size() > request.limit)

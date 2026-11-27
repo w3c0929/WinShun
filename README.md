@@ -65,7 +65,7 @@
 | 📄 | [搜文件里的字](docs/使用说明.md#搜文件里的文字) | Word、Excel、PPT、PDF、WPS 和文本、代码，结果显示命中的那一行；可以用正则表达式，也能直接写 `*.docx`、`ext:py` 指定只读哪类文件 |
 | 🗂️ | [搜索面板](docs/使用说明.md#搜索面板筛选和排序) | `Ctrl+E` 展开：按类型、时间、大小、位置、名称筛选，常用条件可存成一点就用的快捷筛选，按列排序，大图浏览 |
 | 👀 | [预览](docs/使用说明.md#预览文件) | `Alt+P` 看一眼图片、文档、PDF，不用打开 |
-| 🚀 | [应用和系统设置](docs/使用说明.md#打开应用和系统设置) | 开始菜单里的应用和约 1200 个设置页，`vsc`、`网卡` 都能找到；可以加一个把应用排成图标网格的“应用”标签，还能切换已打开的窗口；`关机`、`重启`、`锁屏` 也直接打得出（关机、重启要先确认） |
+| 🚀 | [应用和系统设置](docs/使用说明.md#打开应用和系统设置) | 开始菜单里的应用和约 1200 个设置页，`vsc`、`网卡` 都能找到；可以加一个把应用排成图标网格的“应用”标签，还能切换已打开的窗口 |
 | 📋 | [剪贴板历史](docs/使用说明.md#剪贴板历史) ¹ | 代替 `Win+V`，保存文字、图片和文件，支持分组查找、悬停预览和单条快捷键 |
 | 📂 | [“打开”“另存为”对话框](docs/使用说明.md#打开另存为对话框) ² | 对话框旁多一个搜索框；`Ctrl+G` 转到文件管理器正开着的文件夹 |
 | 🖱️ | [在资源管理器里](docs/使用说明.md#在资源管理器里) ² | 双击空白处弹出常用文件夹，可一层层走进子文件夹；在文件列表里直接打字就搜 |
@@ -86,7 +86,7 @@
 |---|---|---|
 | 小工具 | `= 1+2*3` 计算（只打 `=` 列出算过的账），`12 inch to cm` 换算，`#ff8800` 颜色，还有时间戳、UUID、Base64、哈希 | 随包 |
 | 结束进程 | `kill 进程名` | 随包 |
-| [系统开关](docs/使用说明.md#系统开关) | 深色模式、蓝牙、WLAN、音量等一键切换：`关蓝牙`、`静音`、`音量 30`、`保持唤醒 1小时` | 随包，默认关 |
+| [系统开关](docs/使用说明.md#系统开关) | 深色模式、蓝牙、WLAN、音量等一键切换：`关蓝牙`、`静音`、`音量 30`、`保持唤醒 1小时`；还有 `关机`、`重启`、`锁屏`（关机、重启要先确认，可单独关掉） | 随包，默认关 |
 | [截图与录屏](docs/使用说明.md#截图) | 截图、标注、打码、聚光灯、长截图、贴图（可分组）、截图翻译、录屏和 GIF、演示白板 | 随安装包附带，插件库更新 |
 | [图片文字搜索](docs/使用说明.md#图片文字搜索) | 搜图片和扫描件里的字，或 `ocr 关键词` | 插件库 |
 | 按意思找 | `? 去年报销的规定` | 插件库 |
@@ -182,7 +182,7 @@ winget install LingCore.WinShun
 
 装的是**离线安装版**（自带增强文字识别），按“为所有用户安装”装进 `C:\Program Files\WinShun`，带索引服务，Windows 问一次管理员权限。包在 [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/LingCore/WinShun)：新版本发布后才有对应的更新提交，审核合并后才上架，所以常常比 Releases 晚一两天，`winget show LingCore.WinShun` 里的版本就是能装到的版本。更新用 `winget upgrade LingCore.WinShun`；托盘里的“下载并安装”照常能用，装完就是最新版，这时 WinGet 记的版本比实际装的旧，`winget upgrade` 要等包追上才有动作（不会把更新的版本装回去）。卸载用 `winget uninstall LingCore.WinShun`，运行的就是“设置 → 应用”里那个卸载程序。
 
-标准安装版和便携版按需安装增强文字识别：到 **设置 › 剪贴板 › 记录 › 增强文字识别** 下载约 12 MB 的组件，也可以选择本地组件包。安装后剪贴板和截图共用，离线识别，不需要重启。旧版已有的识别文件继续使用。无网络的电脑可选 `WinShun-版本号-x64-offline-setup.exe`，自带完整识别组件；或把 Release 中的 `WinShun-ocr-*.zip` 拷过去从本地安装。截图识别尚未安装时会保留原图，安装后继续识别。 程序更新、插件库和增强识别的 GitHub 文件默认优先通过两个加速镜像下载，连接失败或文件校验不符会自动换源，最后尝试官方原站。
+标准安装版和便携版按需安装增强文字识别：到 **设置 › 剪贴板 › 记录 › 增强文字识别** 下载约 12 MB 的组件，也可以选择本地组件包。安装后剪贴板和截图共用，离线识别，不需要重启。旧版已有的识别文件继续使用。无网络的电脑可选 `WinShun-版本号-x64-offline-setup.exe`，自带完整识别组件；或把 Release 中的 `WinShun-ocr-*.zip` 拷过去从本地安装。截图识别尚未安装时会保留原图，安装后继续识别。公式识别的模型（约 115 MB）也按需下载：在 **设置 › 剪贴板 › 记录 › 公式识别模型** 或第一次按 `Shift+F` 打开的窗口里下载，同样离线识别。 程序更新、插件库和增强识别的 GitHub 文件默认优先通过两个加速镜像下载，连接失败或文件校验不符会自动换源，最后尝试官方原站。
 
 </details>
 
@@ -201,6 +201,14 @@ winget install LingCore.WinShun
 </details>
 
 ### 最近更新
+
+**0.50.0**
+
+- 🧮 截图**公式识别**：框住公式按 `Shift+F`，转成 LaTeX，复制成 Word 公式、Markdown 或 Typst，模型在本机运行；⌨️ 鼠标手势可以**按住 Ctrl、Alt、Shift 画**出另外的手势（#472）。
+- 🗂️ 文件类型的扩展名填 `*`，就**只分文件和文件夹**；⏻ 关机、重启这些命令归到“系统开关”插件（#477）；🎨 四种外观里**选中的行更醒目**（#474）。
+- 🛠️ **改进** 内存紧张时呼出搜索框和第一次搜索不再卡几秒（#471）；反作弊保护的游戏里“不响应的程序”照常生效（#121）；Photoshop 里粘贴剪贴板选中的那张图（#432）。
+
+详见 [0.50.0 发布说明](docs/release-notes/v0.50.0.md)。
 
 **0.49.0**
 
@@ -381,7 +389,7 @@ Listary、PowerToys 的“查找鼠标”默认也用双击 Ctrl，关掉其中�
 <details>
 <summary><b>占多少内存？索引能不放 C 盘吗？</b></summary>
 
-- **内存**：用着的时候主要是文件索引，每 100 万个文件约 30 MB；三百万个文件的电脑上，搜索时整个程序约 150～230 MB。关掉搜索框约 20 秒后，Win顺 把用不着的内存还给系统，任务管理器里降到几 MB。想看内存花在哪，打开 **设置 › 运行状况**。
+- **内存**：用着的时候主要是文件索引，每 100 万个文件约 30 MB；三百万个文件的电脑上，搜索时整个程序约 150～230 MB。关掉搜索框约 20 秒后，Win顺 把用不着的内存还给系统，任务管理器里降到几 MB；系统内存已用到 80% 以上时先不还（还回去马上被别的程序占走，下次搜索要从硬盘一点点读回来，会卡几秒），内存宽裕了再还。想看内存花在哪，打开 **设置 › 运行状况**。
 - **索引位置**：在 **设置 › 常规 › 索引位置** 里，可以移到其他内置硬盘。
 
 </details>
@@ -403,6 +411,7 @@ Listary、PowerToys 的“查找鼠标”默认也用双击 Ctrl，关掉其中�
 - **下载更新**：你点“下载并安装”后，经第三方镜像或 GitHub 下载安装包，并用 SHA-256 校验。
 - **网站图标**：第一次显示某个网页搜索或书签时，取一次那个网站的图标。
 - **插件库**：打开设置里的“插件库”页、点“刷新”或安装插件时，取列表和插件；开着“自动更新”时每天检查一次已装插件有没有新版（可以关）。从旧版升级时，以前开着、现在不再随 Win顺 自带的插件（截图与录屏、翻译等）也从插件库取一次。
+- **识别模型**：你选择下载时（图片文字识别的增强模型、公式识别模型），从 GitHub、ModelScope 或 Hugging Face（先走国内镜像）下载，并用 SHA-256 校验；图片只在本机识别，不上传。
 - **搜索建议**：在网站关键词后打字时，把这些字发给那个网站取搜索建议（不打关键词时一个字也不发，可以关）。
 - **你自己选的服务**：“按意思找”插件选了云服务时，把文档的文字发给你选的服务商；用“翻译”插件时，把要翻译的句子发给你填的翻译服务。
 
@@ -469,7 +478,7 @@ No installer, or Scoop and WinGet? See [Download and install](#download-and-inst
 | 📄 | [Text inside files](docs/features.en.md#full-text-search) | Word, Excel, PowerPoint, PDF, WPS, text and code, showing the matching line; regular expressions too, and `*.docx` or `ext:py` typed among the words picks which files to read |
 | 🗂️ | [Search panel](docs/features.en.md#file-search) | `Ctrl+E` expands it: filter by kind, date, size, folder and name, save your own quick filters, sort by column, large icons |
 | 👀 | [Preview](docs/features.en.md#file-search) | `Alt+P` shows a picture, document or PDF without opening it |
-| 🚀 | [Apps and settings](docs/features.en.md#apps-and-settings) | Start menu apps and about 1,200 Windows settings pages; an optional Apps tab shows the apps as a grid of icons and switches to open windows; shut down, restart and lock are one typed word away (shut down and restart ask first) |
+| 🚀 | [Apps and settings](docs/features.en.md#apps-and-settings) | Start menu apps and about 1,200 Windows settings pages; an optional Apps tab shows the apps as a grid of icons and switches to open windows |
 | 📋 | [Clipboard history](docs/features.en.md#clipboard-history) ¹ | Replaces `Win+V` with text, pictures and files, group search, hover previews and per-entry shortcuts |
 | 📂 | [Open / Save dialogs](docs/features.en.md#open-and-save-dialogs) ² | A search bar beside the dialog; `Ctrl+G` jumps to the folder open in your file manager |
 | 🖱️ | [In File Explorer](docs/features.en.md#in-file-explorer) ² | Double-click empty space for your folders and the folders inside them; type in a file list to search |
@@ -490,7 +499,7 @@ Some plugins come with WinShun; the rest are installed when you want them from *
 |---|---|---|
 | Tools | `= 1+2*3` calculator (`=` alone lists past sums), `12 inch to cm`, `#ff8800` colors, timestamps, UUID, Base64, hashes | Bundled |
 | Kill | `kill process` | Bundled |
-| System switches | Dark mode, Bluetooth, WLAN, volume and more in one step: `bluetooth off`, `mute`, `volume 30`, `awake 1h` | Bundled, off by default |
+| System switches | Dark mode, Bluetooth, WLAN, volume and more in one step: `bluetooth off`, `mute`, `volume 30`, `awake 1h`; also `shutdown`, `restart` and `lock` (shut down and restart ask first; can be turned off alone) | Bundled, off by default |
 | [Screenshot and recording](docs/features.en.md#screenshots-and-recording) | Capture, mark up, redact, spotlight, scrolling screenshots, pins (in groups), translating a capture in place, MP4 and GIF recording, presenter and whiteboard | Comes with the setup; updated from the plugin library |
 | Image text search | Search the words in pictures and scans, or `ocr words` | Plugin library |
 | Search by meaning | `? last year's expense rules` | Plugin library |
@@ -586,7 +595,7 @@ winget install LingCore.WinShun
 
 This installs the **offline setup** (enhanced text recognition included) for all users into `C:\Program Files\WinShun`, index service and all, with one administrator prompt. The package is in [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/LingCore/WinShun): a release reaches it only through a new submission that is reviewed before it goes live, so it often trails Releases by a day or two, and the version in `winget show LingCore.WinShun` is the one you get. Update with `winget upgrade LingCore.WinShun`; “Download and install” in the tray still works and takes WinShun to the newest release, after which WinGet's version lags the installed one and `winget upgrade` waits until the package catches up (it never moves you back to an older version). Uninstall with `winget uninstall LingCore.WinShun`, which runs the same setup as Settings → Apps.
 
-Standard and portable packages install enhanced text recognition on demand. Open **Settings › Clipboard › Recording › Enhanced text recognition** to download about 12 MB, or install a local component archive. Clipboard and screenshots share it and work offline after installation, with no restart. Existing recognition files remain usable. For a PC without internet, choose `WinShun-<version>-x64-offline-setup.exe`, or copy the Release’s `WinShun-ocr-*.zip` and install it locally. Screenshot recognition keeps the original image and continues once the component is installed. App updates, the plugin library and enhanced recognition prefer two download mirrors for public GitHub files, then the original source; failed connections and rejected files automatically try the next source.
+Standard and portable packages install enhanced text recognition on demand. Open **Settings › Clipboard › Recording › Enhanced text recognition** to download about 12 MB, or install a local component archive. Clipboard and screenshots share it and work offline after installation, with no restart. Existing recognition files remain usable. For a PC without internet, choose `WinShun-<version>-x64-offline-setup.exe`, or copy the Release’s `WinShun-ocr-*.zip` and install it locally. Screenshot recognition keeps the original image and continues once the component is installed. Formula recognition's model (about 115 MB) is downloaded on demand too, in **Settings › Clipboard › Recording › Formula recognition model** or in the window `Shift+F` opens the first time, and reads offline as well. App updates, the plugin library and enhanced recognition prefer two download mirrors for public GitHub files, then the original source; failed connections and rejected files automatically try the next source.
 
 </details>
 
@@ -605,6 +614,14 @@ Standard and portable packages install enhanced text recognition on demand. Open
 </details>
 
 ### What's new
+
+**0.50.0**
+
+- 🧮 **Formula recognition** in captures: select a formula, press `Shift+F`, and copy it as LaTeX, a Word equation, Markdown or Typst, with the model running on your PC; ⌨️ mouse gestures **drawn with Ctrl, Alt or Shift held** can do something else (#472).
+- 🗂️ A file kind whose extension is `*` makes the strip **just files and folders**; ⏻ shut down, restart and the like come with the System switches plugin (#477); 🎨 **the chosen row stands out** in all four styles (#474).
+- 🛠️ **Improved** no seconds-long wait at the hotkey and the first search when memory is tight (#471); the programs to leave alone work in games guarded by anti-cheat (#121); Photoshop pastes the picture chosen in the clipboard (#432).
+
+See the [0.50.0 release notes](docs/release-notes/v0.50.0.md).
 
 **0.49.0**
 
@@ -785,7 +802,7 @@ With “Direct (administrator)” chosen, WinShun runs as administrator, and Win
 <details>
 <summary><b>How much memory? Can the index leave drive C?</b></summary>
 
-- **Memory**: mostly the file index while in use, about 30 MB per million files; on a PC with three million files the whole app uses about 150–230 MB while searching. About 20 seconds after the search box closes, WinShun gives what it no longer needs back to Windows, and Task Manager shows a few MB. **Settings › Health** shows where it goes.
+- **Memory**: mostly the file index while in use, about 30 MB per million files; on a PC with three million files the whole app uses about 150–230 MB while searching. About 20 seconds after the search box closes, WinShun gives what it no longer needs back to Windows, and Task Manager shows a few MB; while 80 % or more of the PC's memory is in use it holds on instead (given back then, other programs take it at once and the next search reads it back from the disk for seconds), and gives it back once there is room. **Settings › Health** shows where it goes.
 - **Index location**: the index can move to another built-in drive under **Settings › General › Index location**.
 
 </details>
@@ -807,6 +824,7 @@ Free and MIT-licensed. Your files and index are never uploaded; the index and hi
 - **to download an update** when you click “Download and install”, through third-party mirrors or GitHub, checked against its SHA-256;
 - **for site icons**: once, the first time a web search site or bookmark is shown;
 - **for the plugin library**: when you open its page in the settings, press Refresh or install a plugin, and once a day to check installed plugins for updates while Automatic updates is on (you can turn it off). After an upgrade, plugins you had on that no longer come with WinShun (Screenshot and recording, Translate and others) are fetched from it once;
+- **for recognition models**: when you choose to download one (the larger text recognition models, formula recognition), from GitHub, ModelScope or Hugging Face (its mirror in China first), checked against its SHA-256; pictures are read on your PC and never uploaded;
 - **for search suggestions**: what you type after a site keyword goes to that site (nothing is sent without a site keyword; you can turn this off);
 - **for services you choose**: document text to the cloud service picked for Search by meaning, and sentences to the translation service entered in Translate.
 
@@ -867,4 +885,5 @@ WinShun is released under the [MIT License](LICENSE). Copyright © 2026 LingCore
 - `resources/fonts/` 阿里巴巴普惠体 3.0 · Alibaba PuHuiTi 3.0 — © Alibaba Group，按其免费商用授权随程序附带 · redistributed unmodified under its free commercial-use terms; only the full Regular font is shipped, with heavier UI weights synthesized by Qt. See `resources/fonts/LICENSE.txt`.
 - 图片文字识别 · Text recognition — [ONNX Runtime](https://github.com/microsoft/onnxruntime)（MIT）和 · and [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) 的 PP-OCRv6 模型 · models（Apache-2.0），见 · see `third_party/ppocr/LICENSE`；安装后在 · installed in `licenses\`。
 - 二维码识别 · QR code reading — [zxing-cpp](https://github.com/zxing-cpp/zxing-cpp) 3.1.1（Apache-2.0），见 · see `third_party/zxing-cpp/LICENSE`；安装后在 · installed in `licenses\`。
+- 公式显示 · Formula drawing — [MicroTeX](https://github.com/NanoMichael/MicroTeX)（MIT）和 · and Latin Modern Math 1.959 字体 · font（GUST Font License），见 · see `third_party/microtex/`；安装后在截图插件的 · installed in the screenshot plugin's `licenses\`。公式识别模型 · The formula recognition model — [Pix2Text MFR 1.5](https://huggingface.co/breezedeus/pix2text-mfr-1.5)（MIT）不随程序附带，用户点“下载模型”后才下载 · is not bundled; it is downloaded only when the user clicks Download model。
 - 拼音读音数据 · Pinyin data — [pinyin-data](https://github.com/mozillazg/pinyin-data)，MIT，见 · see `tools/data/pinyin-data-LICENSE.txt`。常用字的读音以其中的《通用规范汉字字典》（2013）数据为准。

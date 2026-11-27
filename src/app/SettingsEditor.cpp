@@ -8,6 +8,7 @@
 #include "HealthMonitor.h"
 #include "PreviewShortcut.h"
 #include "platform/OcrFiles.h"
+#include "platform/FormulaModel.h"
 #include "platform/OcrPackage.h"
 
 #include "ClipBackupFiles.h"
@@ -145,6 +146,7 @@ void SettingsEditor::useOcrPackage(OcrPackage* package)
     if (m_ocrPackage) {
         disconnect(m_ocrPackage, nullptr, this, nullptr);
         disconnect(m_ocrPackage->preciseModel(), nullptr, this, nullptr);
+        disconnect(m_ocrPackage->formulaModel(), nullptr, this, nullptr);
     }
     if (m_ocrPackage && m_ocrPackage->parent() == this)
         delete m_ocrPackage;
@@ -165,6 +167,13 @@ void SettingsEditor::useOcrPackage(OcrPackage* package)
             {{OcrModel::tr("识别模型"), u"*.onnx"_s}});
         if (!file.isEmpty())
             m_ocrPackage->preciseModel()->useOwnFile(file);
+    });
+    // The model's files fetched by hand, in one folder: one of them picked.
+    connect(package->formulaModel(), &FormulaModel::localRequested, this, [this] {
+        const QString file = shell::pickFile(nullptr, FormulaModel::tr("选择公式识别模型的文件（三个文件放在同一个文件夹里）"),
+            {{FormulaModel::tr("公式识别模型"), u"encoder_model.onnx;decoder_model.onnx;tokenizer.json"_s}});
+        if (!file.isEmpty())
+            m_ocrPackage->formulaModel()->installFolder(QFileInfo(file).absolutePath());
     });
 }
 
@@ -2936,7 +2945,7 @@ QString SettingsEditor::addFileType(const QString& name, const QString& extensio
     const FileTypes named = m_settings.namedFileTypes();
     if (std::ranges::any_of(named, [&](const FileType& t) { return t.name.compare(trimmed, Qt::CaseInsensitive) == 0; }))
         return tr("已有这个类型");
-    const QStringList exts = Settings::fileExtensions(extensions);
+    const QStringList exts = Settings::fileTypeExtensions(extensions);
     if (exts.isEmpty())
         return tr("填上扩展名，例如 md, log");
     m_settings.fileTypes.append({trimmed, exts, {}});
@@ -2967,7 +2976,7 @@ QString SettingsEditor::setFileTypeExtensions(int index, const QString& text)
 {
     if (index < 0 || index >= m_settings.fileTypes.size())
         return {};
-    const QStringList exts = Settings::fileExtensions(text);
+    const QStringList exts = Settings::fileTypeExtensions(text);
     if (exts.isEmpty())
         return tr("填上扩展名，例如 md, log");
     if (exts != m_settings.fileTypes[index].extensions) {

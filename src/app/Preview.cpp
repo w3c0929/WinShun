@@ -1908,9 +1908,12 @@ int runSettings(const QStringList& args)
     indexState.size = u"112 MB"_s;
     editor->setIndexFolderState(indexState);
     editor->setContentIndexStatus(u"已收录 337,215 个文件，其中 5,815 个文档"_s);
-    // The 运行状况 page (settings page 10): made-up current readings, indexing content or (--health-idle) at rest.
+    // The 运行状况 page (settings page 10): made-up current readings, indexing content or (--health-idle) at rest;
+    // --health-memory-load <percent>: Windows' memory that much in use (80 and up: idle memory held, GitHub #471).
+    const qsizetype memoryLoadAt = args.indexOf(u"--health-memory-load"_s);
+    const int memoryLoad = memoryLoadAt >= 0 && memoryLoadAt + 1 < args.size() ? std::clamp(args[memoryLoadAt + 1].toInt(), 0, 100) : -1;
     editor->setMonitor(args.contains(u"--health-monitor"_s) ? new HealthMonitor({}, editor)
-        : HealthMonitor::demo(editor, args.contains(u"--health-idle"_s)));
+        : HealthMonitor::demo(editor, args.contains(u"--health-idle"_s), memoryLoad));
     editor->setHistoryCount(128);
     editor->setClipboardCount(args.contains(u"--clipboard-disabled"_s) ? -1 : 57);
     { // 打开时显示's list, as Clipboard::openTabChoices gives it with two groups of the user's
@@ -3198,6 +3201,25 @@ int runSettings(const QStringList& args)
         check(editor->addFileType(u"工作 CSV"_s, u"csv"_s).isEmpty() && editor->setFileTypeKeyword(csv, u"cw"_s).isEmpty()
                 && editor->setFileTypeFolder(csv, u"H:\\__work__"_s).isEmpty(),
             "putting the range example back failed");
+        settle(window, 3);
+        // A kind of every file: "*.*" as a Chinese input method types it, and "jpg *", are "*" alone.
+        check(editor->addFileType(u"所有文件"_s, u"＊。＊"_s).isEmpty(), "a kind of every file was rejected");
+        const int every = static_cast<int>(editor->fileTypes().size()) - 1;
+        const auto everyOf = [&] { return editor->fileTypes().value(every).toMap().value(u"extensions"_s).toStringList(); };
+        check(everyOf() == QStringList {u"*"_s}, "a kind of every file is not \"*\" alone");
+        check(editor->setFileTypeExtensions(every, u"jpg *"_s).isEmpty() && everyOf() == QStringList {u"*"_s},
+            "\"jpg *\" is not every file");
+        settle(window, 3);
+        auto* everyRow = visualNamed(window->contentItem(), u"fileTypeRow_%1"_s.arg(every + 1)); // after 文件夹
+        auto* content = flick->property("contentItem").value<QQuickItem*>();
+        check(everyRow && everyRow->isVisible() && content, "the kind of every file has no row");
+        if (everyRow && content) { // its row in view, the add row and the description under it
+            const qreal most = std::max(0.0, flick->property("contentHeight").toDouble() - flick->property("height").toDouble());
+            flick->setProperty("contentY", std::clamp(everyRow->mapToItem(content, QPointF()).y() - 240, 0.0, most));
+            settle(window, 3);
+        }
+        saved = saveGrab(window, out.filePath(u"file-types-every-file.png"_s)) && saved;
+        editor->removeFileType(every);
         settle(window, 3);
         // The quick filters, below the types on the same tab.
         check(editor->quickFilters().isEmpty(), "quick filters: some before any was added");
@@ -5021,6 +5043,13 @@ bool checkShortcutPanels(QQmlEngine* engine, const QDir& output)
         for (const QString& key : absent)
             check(!keys.contains(key), name + u": leaves out " + key);
         check(visualNamed(tip->contentItem(), u"shortcutLink"_s) != nullptr, name + u": the last row leads to all shortcuts"_s);
+        { // what a key does in a menu's words at this 界面大小, as the capture's and the pin's key cards
+            const QObject* theme = engine->singletonInstance<QObject*>(u"WinShun"_s, u"Theme"_s);
+            const QQuickItem* words = visualNamed(tip->contentItem(), u"shortcutText"_s);
+            const int size = words ? words->property("font").value<QFont>().pixelSize() : 0;
+            check(theme && size == theme->property("menuTextSize").toInt(),
+                name + u": the keys' words at the menus' size (%1 px)"_s.arg(size));
+        }
         settle(tip, 2);
         saveGrab(tip, output.filePath(u"shortcut-panel-%1.png"_s.arg(name)));
         click(window, elsewhere);
@@ -5891,41 +5920,20 @@ void checkFileGallery(Launcher& launcher, IndexService& index, SystemCatalog& pl
     const auto check = [](bool okay, const char* reason) {
         if (!okay) qWarning("file gallery regression: %s", reason);
     };
-    launcher.setPanel(true);
-    ClipStore store(temporary.filePath(u"clipboard"_s));
-    check(store.open(QDateTime::currentMSecsSinceEpoch()), "could not open isolated clipboard");
-    ClipboardWatcher watcher({}, {});
-    Clipboard clipboard(&store, &watcher);
-    Placement placement(temporary.filePath(u"state.ini"_s), u"Launcher"_s);
-    WindowFrame frame(false);
-    QQmlComponent component(engine, u"WinShun"_s, u"Main"_s);
-    std::unique_ptr<QObject> object(component.createWithInitialProperties({
-        {u"launcher"_s, QVariant::fromValue(&launcher)}, {u"clipboard"_s, QVariant::fromValue(&clipboard)},
-        {u"frame"_s, QVariant::fromValue(&frame)}, {u"placement"_s, QVariant::fromValue(&placement)}}));
-    auto* window = qobject_cast<QQuickWindow*>(object.get());
-    if (!window) { qWarning().noquote() << "gallery main:" << component.errorString(); return; }
-    window->create();
-    window->resize(1200, 680);
-    launcher.setWindow(window);
-    frame.setWindow(window);
-    placement.setWindow(window);
-    showOffScreen(window);
-    FilePreview filePreview;
-    WindowFrame previewFrame(false);
-    std::unique_ptr<QObject> previewObject;
-    engine->addImageProvider(u"preview"_s, filePreview.imageProvider());
-    filePreview.setBuiltInOnly(true);
-    filePreview.setLauncherWindow(window);
-    filePreview.setWindowFactory([&]() -> QQuickWindow* {
-        QQmlComponent previewComponent(engine, u"WinShun"_s, u"PreviewWindow"_s);
-        previewObject.reset(previewComponent.createWithInitialProperties({
-            {u"preview"_s, QVariant::fromValue(&filePreview)}, {u"frame"_s, QVariant::fromValue(&previewFrame)}}));
-        auto* previewWindow = qobject_cast<QQuickWindow*>(previewObject.get());
-        if (previewWindow)
-            previewFrame.setWindow(previewWindow);
-        return previewWindow;
-    });
-    launcher.setPreview(&filePreview);
+    // Nothing of the setup is under way while the next is made: the search
+    // the launcher was asked for as it was set up (its window, its options)
+    // answered, then the files, the window drawn once, the preview; only
+    // then is the list asked for the rows looked at here. Made while a
+    // search is under way, they would keep its rows from the screen (the
+    // GUI thread busy), and the launcher would rightly log them late
+    // (Launcher::showRows).
+    const auto answered = [&] {
+        QElapsedTimer waited;
+        waited.start();
+        while (launcher.searching() && waited.elapsed() < 2000)
+            pump(10);
+    };
+    answered();
     SearchResults pictures;
     for (int i = 0; i < 18; ++i) {
         const bool portrait = i % 3 == 0;
@@ -5954,6 +5962,43 @@ void checkFileGallery(Launcher& launcher, IndexService& index, SystemCatalog& pl
             files->setSize(id, packSize(QFileInfo(picture.path).size()));
         }
     }
+    ClipStore store(temporary.filePath(u"clipboard"_s));
+    check(store.open(QDateTime::currentMSecsSinceEpoch()), "could not open isolated clipboard");
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Launcher"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(engine, u"WinShun"_s, u"Main"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {u"launcher"_s, QVariant::fromValue(&launcher)}, {u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"frame"_s, QVariant::fromValue(&frame)}, {u"placement"_s, QVariant::fromValue(&placement)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { qWarning().noquote() << "gallery main:" << component.errorString(); return; }
+    window->create();
+    window->resize(1200, 680);
+    launcher.setWindow(window);
+    frame.setWindow(window);
+    placement.setWindow(window);
+    showOffScreen(window);
+    settle(window); // drawn once, and what showing it asked for answered
+    answered();
+    FilePreview filePreview;
+    WindowFrame previewFrame(false);
+    std::unique_ptr<QObject> previewObject;
+    engine->addImageProvider(u"preview"_s, filePreview.imageProvider());
+    filePreview.setBuiltInOnly(true);
+    filePreview.setLauncherWindow(window);
+    filePreview.setWindowFactory([&]() -> QQuickWindow* {
+        QQmlComponent previewComponent(engine, u"WinShun"_s, u"PreviewWindow"_s);
+        previewObject.reset(previewComponent.createWithInitialProperties({
+            {u"preview"_s, QVariant::fromValue(&filePreview)}, {u"frame"_s, QVariant::fromValue(&previewFrame)}}));
+        auto* previewWindow = qobject_cast<QQuickWindow*>(previewObject.get());
+        if (previewWindow)
+            previewFrame.setWindow(previewWindow);
+        return previewWindow;
+    });
+    launcher.setPreview(&filePreview);
+    launcher.setPanel(true);
     launcher.chooseFileType(1);
     launcher.setQuery(u"测试照片"_s);
     QElapsedTimer timeout;
@@ -7904,7 +7949,8 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
         check(manifest.open(QIODevice::WriteOnly), "could not create the isolated history plugin");
         manifest.write(R"({"manifest":1,"id":"test.history","name":"History fixture","version":"1.0.0","commands":[
             {"id":"sum","keyword":"sum","title":"Sum","run":{"items":[{"id":"r","title":"21"}]}},
-            {"id":"hide","keyword":"hide","title":"Hidden","history":false,"run":{"items":[{"id":"r","title":"x"}]}}]})");
+            {"id":"hide","keyword":"hide","title":"Hidden","history":false,"run":{"items":[{"id":"r","title":"x"}]}},
+            {"id":"calc","keyword":"calc","mode":"instant","title":"Calc","run":{"items":[{"id":"r","title":"42"}]}}]})");
         manifest.close();
         plugin::Host host({.userPluginDir = temporary.filePath(u"plugins"_s)});
         host.catalog().scan();
@@ -7929,6 +7975,36 @@ void checkLauncherFilters(QQuickWindow* window, QQmlEngine* qmlEngine, const QDi
             "#411: Shift+Tab did not turn the keyword into a quoted word of the name search");
         check(!launcher.searchKeywordAsWords(), "#411: Shift+Tab claimed a keyword with none there");
         say(u"#411 Shift+Tab on \"sum 3*7\": the box reads %1, keyword \"%2\""_s.arg(launcher.query(), launcher.pluginKeyword()));
+        // GitHub #479: a keyword typed alone, nothing after it, is no keyword
+        // mode, though its row leads the list (a list command's hint row, an
+        // instant one's answer): Shift+Tab went back a scope, to 内容. It
+        // quotes the word as in keyword mode, and the footer says so where Tab
+        // has nothing of its own to say.
+        for (const QString& alone : {u"sum"_s, u"calc"_s}) {
+            query(alone);
+            pump(100);
+            query(alone); // the plugin's answer in
+            const SearchResult* first = launcher.results()->at(0);
+            check(launcher.pluginKeyword().isEmpty() && first && first->isPlugin(),
+                "#479: the keyword typed alone did not lead the list, or took it");
+            const QString tabHint = launcher.keyHints().value(u"tabKeys"_s).toString() + u' '
+                + launcher.keyHints().value(u"tab"_s).toString();
+            check(launcher.searchKeywordAsWords(), "#479: Shift+Tab did not quote a keyword typed alone");
+            query(launcher.query());
+            bool pluginRow = false;
+            for (int i = 0; i < launcher.results()->count(); ++i)
+                pluginRow = pluginRow || launcher.results()->at(i)->isPlugin();
+            check(launcher.query() == u'"' + alone + u"\" " && launcher.scope() == Launcher::All && !pluginRow,
+                "#479: the quoted keyword still opened its plugin, or the scope changed");
+            say(u"#479 Shift+Tab on \"%1\" alone (footer: %2): the box reads %3"_s.arg(alone, tabHint, launcher.query()));
+        }
+        query(u"calc"_s);
+        pump(100);
+        query(u"calc"_s);
+        check(launcher.keyHints().value(u"tabKeys"_s).toString() == u"Shift+Tab",
+            "#479: an instant command's keyword alone did not offer Shift+Tab");
+        query(u"su"_s); // keywords only begin with it: the list is the search's, Shift+Tab the scopes'
+        check(!launcher.searchKeywordAsWords(), "#479: Shift+Tab claimed a word a keyword only begins with");
         query({});
         launcher.setPluginHost(nullptr);
     }
@@ -8462,28 +8538,43 @@ bool checkClipboardSizing(QQuickWindow* window, Clipboard& clipboard, Placement&
         clear.start();
         while (::GetAncestor(::WindowFromPoint(corner), GA_ROOT) != hwnd && clear.elapsed() < 3000)
             pump(50);
-        check("corner_is_the_windows_own", ::GetAncestor(::WindowFromPoint(corner), GA_ROOT) == hwnd);
-        std::jthread input([rect] {
-            const auto button = [](DWORD flags) {
-                INPUT event {};
-                event.type = INPUT_MOUSE;
-                event.mi.dwFlags = flags;
-                ::SendInput(1, &event, sizeof event);
-            };
-            ::SetCursorPos(rect.right - 2, rect.bottom - 2);
-            ::Sleep(50);
-            button(MOUSEEVENTF_LEFTDOWN);
-            ::Sleep(100);
-            ::SetCursorPos(rect.right + 28, rect.bottom + 28);
-            ::Sleep(100);
-            button(MOUSEEVENTF_LEFTUP);
-        });
-        pump(600);
-        input.join();
-        settle(window);
-        check("real_mouse_corner_drag", window->width() > before.width() && window->height() > before.height()
-            && clipboard.listWidth() == window->width() && clipboard.windowHeight() == window->height() && !placement.windowSizing());
-        check("resize_does_not_activate", ::GetForegroundWindow() == foreground && !window->isActive());
+        const HWND atCorner = ::GetAncestor(::WindowFromPoint(corner), GA_ROOT);
+        check("corner_is_the_windows_own", atCorner == hwnd);
+        if (atCorner != hwnd) {
+            // Another window lies over it (one of the user's, always on top):
+            // no press there, which would land on that window. Said by name.
+            wchar_t className[128] {};
+            wchar_t title[128] {};
+            ::GetClassNameW(atCorner, className, int(std::size(className)));
+            ::GetWindowTextW(atCorner, title, int(std::size(title)));
+            DWORD process = 0;
+            ::GetWindowThreadProcessId(atCorner, &process);
+            results.insert(u"corner_covered_by"_s, u"%1 \"%2\" (process %3)"_s.arg(QString::fromWCharArray(className),
+                                                     QString::fromWCharArray(title)).arg(process));
+            check("real_mouse_corner_drag", false);
+        } else {
+            std::jthread input([rect] {
+                const auto button = [](DWORD flags) {
+                    INPUT event {};
+                    event.type = INPUT_MOUSE;
+                    event.mi.dwFlags = flags;
+                    ::SendInput(1, &event, sizeof event);
+                };
+                ::SetCursorPos(rect.right - 2, rect.bottom - 2);
+                ::Sleep(50);
+                button(MOUSEEVENTF_LEFTDOWN);
+                ::Sleep(100);
+                ::SetCursorPos(rect.right + 28, rect.bottom + 28);
+                ::Sleep(100);
+                button(MOUSEEVENTF_LEFTUP);
+            });
+            pump(600);
+            input.join();
+            settle(window);
+            check("real_mouse_corner_drag", window->width() > before.width() && window->height() > before.height()
+                && clipboard.listWidth() == window->width() && clipboard.windowHeight() == window->height() && !placement.windowSizing());
+            check("resize_does_not_activate", ::GetForegroundWindow() == foreground && !window->isActive());
+        }
     }
     QFile report(output.filePath(u"clipboard-sizing.json"_s));
     if (report.open(QIODevice::WriteOnly)) report.write(QJsonDocument(results).toJson(QJsonDocument::Indented));
@@ -9715,7 +9806,22 @@ bool checkClipboardPictureView(QQmlEngine* engine, const QDir& output, const QSt
                                                        .save(&buffer, "PNG"),
             "the picture could not be made");
     }
+    QByteArray tallPng; // shown next while the one before is large
+    {
+        QBuffer buffer(&tallPng);
+        check(buffer.open(QIODevice::WriteOnly) && drawn({700, 1800}, QColor(0xd9, 0xf2, 0xe0), QColor(0xf1, 0xfa, 0xf3))
+                                                       .save(&buffer, "PNG"),
+            "the tall picture could not be made");
+    }
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    ClipCapture tall;
+    tall.kind = ClipKind::Image;
+    tall.imageData = tallPng;
+    tall.hash = "picture-view-tall";
+    tall.width = 700;
+    tall.height = 1800;
+    tall.source = u"PixPin"_s;
+    store.add(tall, now - 3000);
     store.add(ClipCapture {.kind = ClipKind::Files, .text = pictureFile, .source = u"资源管理器"_s}, now - 2000);
     store.add(ClipCapture {.kind = ClipKind::Text, .text = u"一段文字"_s, .source = u"记事本"_s}, now - 1000);
     ClipCapture picture;
@@ -9811,9 +9917,10 @@ bool checkClipboardPictureView(QQmlEngine* engine, const QDir& output, const QSt
         const QRect host = window->geometry();
         const QRect area = large->screen()->availableGeometry();
         check(area.contains(large->geometry()), "the large picture is not on the screen");
-        check(!large->geometry().intersects(host) || large->geometry().center().x() == area.center().x()
-                  || std::abs(large->geometry().center().x() - area.center().x()) <= 1,
-            "the large picture covers the window without being in the middle of the screen");
+        // Beside the window, or past its list (over its preview): the list stays to be pointed at.
+        const QRect list(host.topLeft(), QSize(page->property("listWidth").toInt(), host.height()));
+        check(!large->geometry().intersects(list) || std::abs(large->geometry().center().x() - area.center().x()) <= 1,
+            "the large picture covers the list without being in the middle of the screen");
         check(large->width() > zoom->width() && large->height() > zoom->height(), "the large picture is not larger");
         settle(large);
         check(saveGrab(large, output.filePath(u"clipboard-picture-viewer.png"_s)), "the large picture did not render");
@@ -9825,6 +9932,52 @@ bool checkClipboardPictureView(QQmlEngine* engine, const QDir& output, const QSt
             "the large picture does not zoom");
         settle(large);
         check(saveGrab(large, output.filePath(u"clipboard-picture-viewer-zoomed.png"_s)), "the zoomed picture did not render");
+
+        // Another picture while it is large: the one before stays until the
+        // next is read, in every frame (never "正在加载图片…", never nothing),
+        // then the window takes the next one's size in one go (it only grows)
+        // and is on the screen again.
+        QList<QSize> sizes {large->size()};
+        const auto sized = [&] {
+            if (sizes.back() != large->size())
+                sizes.push_back(large->size());
+        };
+        const QMetaObject::Connection byWidth = QObject::connect(large, &QWindow::widthChanged, large, sized);
+        const QMetaObject::Connection byHeight = QObject::connect(large, &QWindow::heightChanged, large, sized);
+        int frames = 0;
+        int empty = 0;
+        const QMetaObject::Connection everyFrame = QObject::connect(large, &QQuickWindow::afterAnimating, large, [&] {
+            ++frames;
+            auto* shown = visualNamed(large->contentItem(), u"clipboardPictureViewerImage"_s);
+            auto* waiting = visualNamed(large->contentItem(), u"clipboardPictureViewerWaiting"_s);
+            if (!shown || shown->property("status").toInt() != 1 || (waiting && waiting->isVisible()))
+                ++empty;
+        }, Qt::DirectConnection);
+        const QString first = image ? image->property("source").toString() : QString();
+        const QSize before = large->size();
+        entries->setProperty("currentIndex", 3);
+        check(waitFor([&] {
+            auto* shown = viewerItem(u"clipboardPictureViewerImage"_s);
+            return shown && shown->property("status").toInt() == 1 && shown->property("source").toString() != first;
+        }, 5000), "the next picture does not take the one before's place");
+        settle(large);
+        QObject::disconnect(byWidth);
+        QObject::disconnect(byHeight);
+        QObject::disconnect(everyFrame);
+        check(viewer() == large && frames > 0 && empty == 0, "going to the next picture shows nothing or 正在加载图片… in between");
+        check(sizes.size() <= 2 && large->width() >= before.width() && large->height() >= before.height(),
+            "the window does not take the next picture's size in one go");
+        check(!isCloaked(reinterpret_cast<HWND>(large->winId())), "the window stays off the screen after taking its size");
+        auto* caption = viewerItem(u"clipboardPictureViewerCaption"_s);
+        check(caption && caption->property("text").toString().contains(u"700 × 1800"_s)
+                  && !caption->property("truncated").toBool(),
+            "the next picture's size is not said whole under it");
+        check(saveGrab(large, output.filePath(u"clipboard-picture-viewer-next.png"_s)), "the next picture did not render");
+        say(u"picture view: %1 frame(s) going to the next picture, sizes %2"_s.arg(frames).arg([&] {
+            QStringList shown;
+            for (const QSize& size : sizes) shown << u"%1×%2"_s.arg(size.width()).arg(size.height());
+            return shown.join(u" → "_s);
+        }()));
     }
     check(page->property("pictureViewOpen").toBool(), "the page does not know the picture is shown large");
 
@@ -9868,6 +10021,13 @@ bool checkClipboardPictureView(QQmlEngine* engine, const QDir& output, const QSt
     if (QQuickWindow* large = viewer()) {
         settle(large);
         check(saveGrab(large, output.filePath(u"clipboard-picture-file-viewer.png"_s)), "the large picture file did not render");
+        // ↓ to the next row, a copied picture: the same window shows it.
+        press(Qt::Key_Down);
+        check(waitFor([&] {
+            image = viewerItem(u"clipboardPictureViewerImage"_s);
+            return viewer() == large && image && image->property("status").toInt() == 1
+                && !image->property("source").toString().startsWith(u"image://clippreview/"_s);
+        }, 5000), "↓ from the picture file does not show the next picture large");
     }
 
     // The poster (--gallery-image): a day's copies, the picture's row open
@@ -10474,6 +10634,108 @@ bool checkTypeStripCounts(QQmlEngine* qml, const QDir& output)
     settle(window);
     for (int i = 0; i < shown.size(); ++i)
         check(!tagOf(shown.at(i))->isVisible() && chipOf(shown.at(i))->width() == plain.at(i), "switched off, a tag or its room stays");
+    return ok;
+}
+
+// --preview-results <dir> --type-strip-every-file: 文件 split as some users
+// want it, 文件夹 and a kind 文件 of every file ("*", kEveryFileExtension),
+// through the production Main.qml, Launcher and a real search. Chosen, the
+// rows are the files 不限 lists, with or without an extension, and no folder;
+// ext: typed still narrows them; chosen with another kind too, it is still
+// every file. Its chip counts the files, shows the files icon and says in its
+// tip what it lists.
+bool checkTypeStripEveryFile(QQmlEngine* qml, const QDir& output)
+{
+    QTemporaryDir temporary;
+    IndexService index(temporary.filePath(u"index"_s), IndexService::Options{});
+    const QString base = QDir::toNativeSeparators(temporary.filePath(u"资料"_s));
+    {
+        const auto files = index.index();
+        const auto lock = files->writeLock();
+        const auto root = files->addRoot(base.toStdString());
+        for (const char* name : {"报告.docx", "报告.pdf", "报告"})
+            files->add(root, name, 0);
+        files->add(files->add(root, "报告 2026", EntryFlag::Directory), "附件.zip", 0);
+        files->add(root, "报告.旧", EntryFlag::Directory);
+    }
+    AppCatalog apps;
+    SystemCatalog places;
+    apps.setApps(std::make_shared<const AppList>());
+    places.setPlaces(std::make_shared<const PlaceList>());
+    History history(temporary.filePath(u"history.tsv"_s));
+    SearchEngine search(&index, &apps, &places);
+    Launcher launcher(&index, &apps, &places, &search, &history);
+    launcher.setFileTypes({FileType {u"文件"_s, {QString::fromLatin1(kEveryFileExtension)}},
+        FileType {u"文档"_s, {u"docx"_s, u"pdf"_s}}});
+    ClipStore store(temporary.filePath(u"clipboard"_s));
+    if (!store.open(QDateTime::currentMSecsSinceEpoch())) return false;
+    ClipboardWatcher watcher({}, {});
+    Clipboard clipboard(&store, &watcher);
+    Placement placement(temporary.filePath(u"state.ini"_s), u"Launcher"_s);
+    WindowFrame frame(false);
+    QQmlComponent component(qml, u"WinShun"_s, u"Main"_s);
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {u"launcher"_s, QVariant::fromValue(&launcher)}, {u"clipboard"_s, QVariant::fromValue(&clipboard)},
+        {u"frame"_s, QVariant::fromValue(&frame)}, {u"placement"_s, QVariant::fromValue(&placement)}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    if (!window) { say(component.errorString()); return false; }
+    window->create();
+    launcher.setWindow(window);
+    frame.setWindow(window);
+    placement.setWindow(window);
+    showOffScreen(window);
+    bool ok = true;
+    const auto check = [&](bool condition, const QString& reason) {
+        ok = condition && ok;
+        if (!condition) qWarning("every file kind regression: %s", qUtf8Printable(reason));
+    };
+    // The rows of `text` (those of the index: the files and folders made above), once searched.
+    const auto rows = [&](const QString& text) {
+        launcher.setQuery(text);
+        QElapsedTimer timeout;
+        timeout.start();
+        do
+            pump(10);
+        while (launcher.searching() && timeout.elapsed() < 5000);
+        settle(window);
+        QStringList names;
+        for (int i = 0; i < launcher.results()->count(); ++i) {
+            const QString path = launcher.results()->pathAt(i);
+            if (path.startsWith(base + u'\\'))
+                names.append(path.mid(base.size() + 1) + (launcher.results()->at(i)->isDir ? u"\\"_s : QString()));
+        }
+        names.sort();
+        return names;
+    };
+    const QStringList files {u"报告"_s, u"报告.docx"_s, u"报告.pdf"_s};
+    launcher.setScope(Launcher::Files);
+    launcher.chooseFileType(-1);
+    QStringList found = rows(u"报告"_s);
+    check(found == QStringList({u"报告"_s, u"报告 2026\\"_s, u"报告.docx"_s, u"报告.pdf"_s, u"报告.旧\\"_s}), u"不限: "_s + found.join(u", "));
+    launcher.toggleFileType(0); // 文件
+    found = rows(u"报告"_s);
+    check(found == files, u"文件: "_s + found.join(u", "));
+    QElapsedTimer counted;
+    counted.start();
+    while (launcher.fileTypeCounts().size() < 4 && counted.elapsed() < 5000)
+        pump(10);
+    settle(window);
+    QList<qint64> counts;
+    for (const QVariant& count : launcher.fileTypeCounts())
+        counts.append(count.toLongLong());
+    check(counts == QList<qint64>({5, 2, 3, 2}), u"the chips' numbers (all, folders, 文件, 文档): "_s
+        + QString::fromUtf8(QJsonDocument(QJsonArray::fromVariantList(launcher.fileTypeCounts())).toJson(QJsonDocument::Compact)));
+    QQuickItem* chip = visualNamed(window->contentItem(), u"searchTypeChip0"_s);
+    QQuickItem* icon = chip ? visualNamed(chip, u"searchTypeChipIcon"_s) : nullptr;
+    check(icon && icon->isVisible() && icon->property("glyph").toString() == u"ph:files", u"文件's chip has no files icon"_s);
+    const QString tip = chip ? chip->property("modelData").toMap().value(u"tip"_s).toString() : QString();
+    check(tip == QCoreApplication::translate("TypeStrip", "所有文件，不含文件夹"), u"文件's tip does not say what it lists: "_s + tip);
+    check(saveGrab(window, output.filePath(u"type-strip-every-file.png"_s)), u"the window did not render"_s);
+    found = rows(u"报告 ext:pdf"_s);
+    check(found == QStringList {u"报告.pdf"_s}, u"文件 with ext:pdf: "_s + found.join(u", "));
+    launcher.toggleFileType(1); // 文档 too
+    found = rows(u"报告"_s);
+    check(launcher.selectedFileTypes() == QList<int>({0, 1}) && found == files, u"文件 and 文档: "_s + found.join(u", "));
     return ok;
 }
 
@@ -12713,6 +12975,8 @@ int runResults(const QStringList& args)
         return checkTypeStripDrag(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--type-strip-counts"_s)) // by its own checks: the empty index's first searches may warn of being slow on a busy PC
         return checkTypeStripCounts(&engine, out) ? 0 : 4;
+    if (args.contains(u"--type-strip-every-file"_s)) // by its own checks, as --type-strip-counts
+        return checkTypeStripEveryFile(&engine, out) ? 0 : 4;
     if (args.contains(u"--clipboard-crashed-reading"_s)) // its warning when it gives up is expected
         return checkClipboardCrashedReading() ? 0 : 4;
     if (const qsizetype at = args.indexOf(u"--terminal-launch"_s); at >= 0 && at + 2 < args.size()) {
@@ -12736,6 +13000,8 @@ int runResults(const QStringList& args)
         return checkNavigationWorkflows(&engine, out, args.contains(u"--flipped"_s)) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--name-filter-poster"_s))
         return checkNameFilterPoster(&engine, out) ? std::min(g_warnings, 100) : 4;
+    if (args.contains(u"--row-states"_s))
+        return checkRowStatesPoster(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--search-experience"_s))
         return checkSearchExperience(&engine, out) ? std::min(g_warnings, 100) : 4;
     if (args.contains(u"--pure-search"_s))

@@ -320,6 +320,7 @@ Item {
                 popupHost: page.clipboard
                 open: page.pictureViewOpen && clipWindow !== null && clipWindow.visible
                 hostRect: clipWindow ? Qt.rect(clipWindow.x, clipWindow.y, clipWindow.width, clipWindow.height) : Qt.rect(0, 0, 0, 0)
+                listWidth: page.previewOpen ? page.listWidth : page.width
                 availableArea: page.frame.availableArea(page)
                 source: page.viewedSource
                 pixels: page.viewedFilePicture ? page.viewedFile.imageSize
@@ -892,11 +893,14 @@ Item {
 
             // The style's search field (Theme.searchField), as the launcher's
             // row: inset by fieldInset (0 in fluent, where the row is the
-            // field and nothing is drawn: flat), a box where the style has one.
+            // field and nothing is drawn: flat), a box where the style has one;
+            // less above and below in a low row (密集, GitHub #480).
             Hook {
                 id: fieldPart
                 anchors.fill: parent
                 anchors.margins: Theme.fieldInset
+                anchors.topMargin: Theme.fieldInsetYIn(header.height)
+                anchors.bottomMargin: Theme.fieldInsetYIn(header.height)
                 part: Theme.searchField
                 flat: Theme.fieldInset <= 0
                 focused: input.activeFocus
@@ -966,7 +970,12 @@ Item {
                     verticalAlignment: Text.AlignVCenter
                     text: page.findingGroup ? qsTr("输入分组名，回车进入")
                         : (page.currentCategory.group ?? 0) > 0 ? qsTr("在“%1”中搜索").arg(page.currentCategory.title)
-                        : page.pinyinHint ? page.pinyinHintText : qsTr("搜索剪贴板，支持拼音")
+                        : page.pinyinHint ? page.pinyinHintText
+                        // Without the focus the keys are letters (pinyin finds
+                        // Chinese), and the click that brings the input method
+                        // is said where it is made (GitHub #470).
+                        : page.clipboard.keysRouted ? qsTr("拼音搜索，点这里用输入法")
+                        : qsTr("搜索剪贴板")
                     textFormat: Text.PlainText
                     color: fieldPart.out("placeholderColor", Theme.faint)
                     font: input.font

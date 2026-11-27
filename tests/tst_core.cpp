@@ -4033,7 +4033,8 @@ private slots:
 
     // GitHub #364: a link to a folder on a disk the index holds is walked
     // under its own path too (the link's path finds what is in it), except a
-    // system link, one to a whole disk, a loop, and one in a tool folder.
+    // system link, one to a whole disk, a loop, and one in a tool folder (not
+    // a dot-folder alone, GitHub #460).
     // One disk, no elevation; each verdict is counted in the diagnostics.
     void directoryLinksToIndexedDisk()
     {
@@ -4098,13 +4099,13 @@ private slots:
             QVERIFY(!indexedIn(service, up + u"\\a.txt"_s));
             QVERIFY(!indexedIn(service, back + u"\\docs\\a.txt"_s));
             QVERIFY(!indexedIn(service, inModules + u"\\o.txt"_s));
-            QVERIFY(!indexedIn(service, inDotFolder + u"\\o.txt"_s));
+            QVERIFY(indexedIn(service, inDotFolder + u"\\o.txt"_s)); // .cache, .claude: the user's (GitHub #460)
             // GitHub #460: a link not gone through has nothing under it here,
             // and is not taken for an empty folder: flagged as found on the disk.
             {
                 const auto index = service.index();
                 const auto lock = index->readLock();
-                for (const QString& link : {inDotFolder, up, back}) {
+                for (const QString& link : {inModules, up, back}) {
                     const EntryId id = index->findPath(link.toStdWString());
                     QVERIFY2(id != kNoEntry, qPrintable(link));
                     const Entry e = index->entry(id);
@@ -4147,14 +4148,105 @@ private slots:
             const int wholeDisk = scratch.isEmpty() ? 0 : 1; // made on a scratch volume only
             QCOMPARE(details.value(u"found"_s).toInteger(), 7 + wholeDisk);
             // Each one for its own reason, not for another's.
-            QCOMPARE(results.value(u"walked"_s).toInteger(), 1);
+            QCOMPARE(results.value(u"walked"_s).toInteger(), 2);
             QCOMPARE(results.value(u"system-link"_s).toInteger(), 2); // hidden only; hidden and system
             QCOMPARE(results.value(u"whole-disk"_s).toInteger(), wholeDisk);
             QCOMPARE(results.value(u"loop"_s).toInteger(), 2);
-            QCOMPARE(results.value(u"tool-folder"_s).toInteger(), 2);
+            QCOMPARE(results.value(u"tool-folder"_s).toInteger(), 1);
             QCOMPARE(results.size(), 4 + wholeDisk);
         }
         QVERIFY2(read && madeSince, text.constData());
+    }
+
+    // GitHub #460: a folder of links (.skills, a link itself, to the folder
+    // of links to each skill) shows what is in each under its own path too,
+    // and the links in those in turn, made since as well; not one that leads
+    // back to where a link it is in really is. One disk, no elevation.
+    void directoryLinksInLinkFolders()
+    {
+        QTemporaryDir tree;
+        QTemporaryDir store;
+        QVERIFY(tree.isValid() && store.isValid());
+        MadeLinks made; // after the folders: removed as links, never through them
+        QVERIFY(makeScopeTree(tree.path()));
+        const QString t = QDir::toNativeSeparators(tree.path());
+        QVERIFY(QDir(t).mkpath(u".agents/skills"_s));
+        for (const QString& skill : {u"甲"_s, u"乙"_s, u"丙"_s})
+            QVERIFY(QDir(t).mkpath(u"pool/"_s + skill) && writeBytes(t + u"\\pool\\"_s + skill + u"\\SKILL.md"_s, 10));
+        const QString skills = t + u"\\.agents\\skills"_s;
+        const QString a = made << skills + u"\\技能甲"_s;
+        QVERIFY(makeJunction(a, t + u"\\pool\\甲"_s));
+        QVERIFY(makeJunction(made << skills + u"\\技能乙"_s, t + u"\\pool\\乙"_s));
+        QVERIFY(makeJunction(made << t + u"\\pool\\甲\\更深"_s, t + u"\\other"_s)); // two links deep
+        QVERIFY(makeJunction(made << t + u"\\pool\\甲\\回去"_s, t + u"\\.agents"_s)); // back above 技能甲
+        const QString dotSkills = made << t + u"\\.skills"_s;
+        QVERIFY(makeJunction(dotSkills, skills));
+
+        auto options = walkedOptions(std::nullopt, branchRules(t));
+        options.selectedDrives = std::vector<std::wstring>{t.left(2).toStdWString()};
+        IndexService service(store.path(), options);
+        service.start();
+        QTRY_VERIFY_WITH_TIMEOUT(allReady(service), 60'000);
+        QTRY_VERIFY_WITH_TIMEOUT(indexedIn(service, dotSkills + u"\\技能甲\\更深\\o.txt"_s), 30'000);
+        QVERIFY(indexedIn(service, dotSkills + u"\\技能甲\\SKILL.md"_s));
+        QVERIFY(indexedIn(service, dotSkills + u"\\技能乙\\SKILL.md"_s));
+        QVERIFY(indexedIn(service, a + u"\\SKILL.md"_s)); // in a dot-folder, under its own path
+        // Gone through, 回去 would hold .agents again, and so on.
+        QVERIFY(indexedIn(service, dotSkills + u"\\技能甲\\回去"_s));
+        QVERIFY(!indexedIn(service, dotSkills + u"\\技能甲\\回去\\skills"_s));
+        // A skill linked since, seen where its link is and where .skills shows it.
+        const QString later = made << skills + u"\\技能丙"_s;
+        QVERIFY(makeJunction(later, t + u"\\pool\\丙"_s));
+        QTRY_VERIFY_WITH_TIMEOUT(indexedIn(service, dotSkills + u"\\技能丙\\SKILL.md"_s), 30'000);
+        QVERIFY(indexedIn(service, later + u"\\SKILL.md"_s));
+        service.shutdown();
+    }
+
+    // GitHub #460: the links an older Win顺 chose (its scope.json without
+    // links_rules: none in a dot-folder) are chosen again once the disks are
+    // read; a walked one, a while after startup, whatever the rescan setting.
+    void directoryLinksChosenAgainAfterUpdate()
+    {
+        QTemporaryDir tree;
+        QTemporaryDir store;
+        QVERIFY(tree.isValid() && store.isValid());
+        MadeLinks made;
+        QVERIFY(makeScopeTree(tree.path()));
+        const QString t = QDir::toNativeSeparators(tree.path());
+        QVERIFY(QDir(t).mkpath(u".agents/skills"_s) && QDir(t).mkpath(u"pool/甲"_s));
+        const QString a = made << t + u"\\.agents\\skills\\技能甲"_s;
+        QVERIFY(makeJunction(a, t + u"\\pool\\甲"_s));
+
+        auto options = walkedOptions(std::nullopt, branchRules(t));
+        options.selectedDrives = std::vector<std::wstring>{t.left(2).toStdWString()};
+        options.rescanDelayMs = 200;
+        {
+            IndexService service(store.path(), options);
+            service.start();
+            QTRY_VERIFY_WITH_TIMEOUT(allReady(service), 60'000);
+            service.shutdown();
+        }
+        // As an older Win顺 left it: the link in .agents not chosen.
+        QFile scopeFile(indexfolder::scopePath(store.path()));
+        QVERIFY(scopeFile.open(QIODevice::ReadOnly));
+        QJsonObject root = QJsonDocument::fromJson(scopeFile.readAll()).object();
+        scopeFile.close();
+        QCOMPARE(root.value(u"links_rules"_s).toInt(), 2);
+        QVERIFY(root.value(u"links"_s).toArray().contains(a));
+        root.remove(u"links_rules"_s);
+        root[u"links"_s] = QJsonArray {};
+        QVERIFY(scopeFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QVERIFY(scopeFile.write(QJsonDocument(root).toJson()) > 0);
+        scopeFile.close();
+        // Seen under the link only if it is walked again.
+        QVERIFY(writeBytes(t + u"\\pool\\甲\\后来.md"_s, 10));
+
+        IndexService service(store.path(), options);
+        service.start();
+        QTRY_VERIFY_WITH_TIMEOUT(indexedIn(service, a + u"\\后来.md"_s), 30'000);
+        service.shutdown();
+        QVERIFY(scopeFile.open(QIODevice::ReadOnly));
+        QCOMPARE(QJsonDocument::fromJson(scopeFile.readAll()).object().value(u"links_rules"_s).toInt(), 2);
     }
 
     void chosenFoldersOnly()
@@ -5533,6 +5625,25 @@ private slots:
         QCOMPARE(scanBlocks, index.chunkCount());
         QCOMPARE(linkBlocks, index.chunkCount());
         QCOMPARE(sizeof(EntryScan) + sizeof(EntryLinks), std::size_t(17)); // no more than the one record it was
+
+        // What a name search reads from end to end, read back ahead after
+        // the memory went to the disk (GitHub #471): the scan chunks and the
+        // names, none of the other part.
+        std::size_t searchScan = 0, searchNames = 0;
+        const auto searched = index.searchBlocks();
+        const auto blocks = index.memoryBlocks();
+        for (const auto& [address, size] : searched) {
+            searchScan += size == FileIndex::kChunkSize * sizeof(EntryScan);
+            searchNames += size == FileIndex::kNameChunkSize;
+            QVERIFY(std::ranges::any_of(blocks, [&](const auto& b) { return b.first == address && b.second >= size; }));
+        }
+        QCOMPARE(searchScan, index.chunkCount());
+        QVERIFY(searchNames >= 1);
+        QCOMPARE(searched.size(), searchScan + searchNames);
+        std::size_t searchBytes = 0;
+        for (const auto& block : searched)
+            searchBytes += block.second;
+        QCOMPARE(index.prefetchSearch(), searchBytes);
     }
 
     void mappedIndexStorageSurvivesCompactionAndSnapshot()
@@ -9798,6 +9909,124 @@ private slots:
         QVERIFY(matcher.match(index, index.entry(other)) >= 0);
     }
 
+    // A kind of every file ("*", kEveryFileExtension: 文件 beside 文件夹, for
+    // those who want the two alone): what 不限 finds less the folders, a file
+    // with no extension too; ext: typed still narrows it, the settings' skipped
+    // types stay out, and it is counted as the files found. In the index, in a
+    // folder walked on the disk, with nothing typed and in a bound folder.
+    void everyFileType()
+    {
+        const QString root = u"F:\\wseverytest\\"_s;
+        QTemporaryDir dir;
+        IndexService::Options options;
+        options.content.enabled = false;
+        IndexService service(dir.path() + u"/index"_s, options);
+        {
+            const auto index = service.index();
+            const auto lock = index->writeLock();
+            const EntryId f = index->addRoot("F:");
+            const EntryId test = index->add(f, "wseverytest", EntryFlag::Directory);
+            for (const char* name : {"report.docx", "report.PDF", "report", "report.bak", "budget.xlsx"})
+                index->add(test, name, 0);
+            index->add(test, "report photos", EntryFlag::Directory);
+            index->add(test, "report.old", EntryFlag::Directory); // a folder, though named as a file
+            const EntryId src = index->add(test, "src", EntryFlag::Directory);
+            index->add(src, "main.cpp", 0);
+            index->add(src, "report draft.txt", 0);
+            FileTime t = 1'700'000'000;
+            for (std::size_t i = 0; i < index->slotCount(); ++i)
+                index->setModified(static_cast<EntryId>(i), t += 100);
+        }
+        SearchEngine engine(&service);
+        QSignalSpy spy(&engine, &SearchEngine::resultsReady);
+        const QStringList every {QString::fromLatin1(kEveryFileExtension)};
+        const auto names = [&](SearchEngine::Request request) {
+            spy.clear();
+            engine.submit(std::move(request));
+            if (!spy.wait(5000))
+                return QStringList {u"(no results)"_s};
+            QStringList found;
+            for (const SearchResult& r : spy.at(0).at(1).value<SearchResults>())
+                found.append(r.path.mid(root.size()));
+            found.sort();
+            return found;
+        };
+        const auto search = [&](const QString& text, const QStringList& types, const QStringList& skipped = {}) {
+            SearchEngine::Request request;
+            request.text = text;
+            request.scope = Scope::Files;
+            request.extensions = types;
+            request.excludedTypes = skipped;
+            return names(std::move(request));
+        };
+        const QStringList files {u"report"_s, u"report.PDF"_s, u"report.bak"_s, u"report.docx"_s, u"src\\report draft.txt"_s};
+        QCOMPARE(search(u"report"_s, {}),
+            (QStringList {u"report"_s, u"report photos"_s, u"report.PDF"_s, u"report.bak"_s, u"report.docx"_s, u"report.old"_s,
+                u"src\\report draft.txt"_s}));
+        QCOMPARE(search(u"report"_s, every), files);
+        // With other kinds chosen too: every file all the same.
+        QCOMPARE(search(u"report"_s, {u"docx"_s, u"*"_s}), files);
+        QCOMPARE(search(u"report ext:pdf"_s, every), (QStringList {u"report.PDF"_s}));
+        QCOMPARE(search(u"report"_s, every, {u"bak"_s}),
+            (QStringList {u"report"_s, u"report.PDF"_s, u"report.docx"_s, u"src\\report draft.txt"_s}));
+        // A word alone is the name's, as in 不限: not every file of the folder so named.
+        QCOMPARE(search(u"src"_s, {}), (QStringList {u"src"_s}));
+        QCOMPARE(search(u"src"_s, every), QStringList());
+        QCOMPARE(search(u"src main"_s, every), (QStringList {u"src\\main.cpp"_s}));
+        QCOMPARE(search(u"photos | budget"_s, every), (QStringList {u"budget.xlsx"_s}));
+
+        // Nothing typed: the files written last; in a folder it is bound to, every file there.
+        SearchEngine::Request newest;
+        newest.scope = Scope::Files;
+        newest.extensions = every;
+        newest.startList = StartList::Modified;
+        const QStringList written = names(newest);
+        QVERIFY2(!written.isEmpty() && written.contains(u"report"_s) && !written.contains(u"report photos"_s)
+                && !written.contains(u"report.old"_s) && !written.contains(u"src"_s),
+            qPrintable(written.join(u", ")));
+        SearchEngine::Request bound;
+        bound.scope = Scope::Files;
+        bound.extensions = every;
+        bound.typeFolders = {root + u"src"_s};
+        QCOMPARE(names(bound), (QStringList {u"src\\main.cpp"_s, u"src\\report draft.txt"_s}));
+
+        // Counted as the files that match, whichever kind is chosen.
+        QSignalSpy counts(&engine, &SearchEngine::typeCounts);
+        SearchEngine::Request counted;
+        counted.text = u"report"_s;
+        counted.scope = Scope::Files;
+        counted.extensions = {u"docx"_s};
+        counted.countTypes = {{every, {}}, {{u"docx"_s, u"pdf"_s}, {}}, {every, {root + u"src"_s}}};
+        names(counted);
+        QVERIFY(QTest::qWaitFor([&] { return !counts.isEmpty(); }, 5000));
+        QCOMPARE(counts.last().at(1).value<NameTypeCounts>(), (NameTypeCounts {.all = 7, .folders = 2, .types = {5, 2, 1}}));
+
+        // A folder walked on the disk: its files alone.
+        QTemporaryDir disk;
+        QVERIFY(QDir(disk.path()).mkpath(u"report photos"_s));
+        for (const QString& name : {u"report"_s, u"report.txt"_s, u"report photos/report 1.jpg"_s}) {
+            QFile file(disk.filePath(name));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+        }
+        QSignalSpy rows(&engine, &SearchEngine::driveResults);
+        QSignalSpy progress(&engine, &SearchEngine::driveProgress);
+        SearchEngine::Request walk;
+        walk.text = u"report"_s;
+        walk.scope = Scope::Files;
+        walk.extensions = every;
+        walk.walkFolder = QDir::toNativeSeparators(disk.path());
+        const quint64 id = engine.submit(std::move(walk));
+        QVERIFY(QTest::qWaitFor(
+            [&] { return !progress.isEmpty() && progress.last().at(2).toBool() && progress.last().at(0).toULongLong() == id; }, 5000));
+        QStringList walked;
+        for (const QList<QVariant>& batch : rows) {
+            for (const SearchResult& r : batch.at(1).value<SearchResults>())
+                walked.append(QDir(disk.path()).relativeFilePath(QDir::fromNativeSeparators(r.path)));
+        }
+        walked.sort();
+        QCOMPARE(walked, (QStringList {u"report"_s, u"report photos/report 1.jpg"_s, u"report.txt"_s}));
+    }
+
     // GitHub #132: Settings' skipped file names (wildcards, any case) leave
     // files so named out of names and the start list; a folder so named is
     // not a file; a word typed that is such a name shows them.
@@ -10585,6 +10814,55 @@ private slots:
         QCOMPARE(search(u"report"_s, u"F:\\ws182"_s, true).names, (L {u"report-top.txt"_s}));
         QCOMPARE(search(u"report"_s, u"G:\\"_s, true).names, (L {u"report-g.txt"_s}));
         QCOMPARE(search(u"report"_s, u"F:\\ws182\\gone"_s, true).names, L {});
+    }
+
+    // GitHub #454: typed in a folder's window, words that are a path from it
+    // ("合同\20") list, from the disk, the folder they lead to, as a path
+    // typed in full does (the box's Tab completes them there); not yet in
+    // the index, or never (a folder not indexed), it is all the same.
+    void folderTypedPathFromIt()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir disk(dir.path());
+        QVERIFY(disk.mkpath(u"work/合同/2024 年"_s) && disk.mkpath(u"work/合同/归档"_s) && disk.mkpath(u"work/合同 旧"_s));
+        QFile file(disk.filePath(u"work/合同/2024 说明.txt"_s));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.close();
+        IndexService::Options options;
+        options.content.enabled = false;
+        IndexService service(dir.path() + u"/index"_s, options); // an index without the folder
+        SearchEngine engine(&service);
+        QSignalSpy spy(&engine, &SearchEngine::resultsReady);
+        const QString work = QDir::toNativeSeparators(disk.filePath(u"work"_s));
+        const auto search = [&](const QString& text, bool only = false, bool regex = false) {
+            spy.clear();
+            SearchEngine::Request request;
+            request.text = text;
+            request.currentFolder = work;
+            request.currentFolderOnly = only;
+            request.regex = regex;
+            request.limit = 100;
+            engine.submit(std::move(request));
+            QStringList paths;
+            if (!spy.wait(5000))
+                return QStringList {u"(no results)"_s};
+            for (const SearchResult& r : spy.at(0).at(1).value<SearchResults>())
+                paths.append(QString(r.path).remove(0, work.size() + 1));
+            return paths;
+        };
+        using L = QStringList;
+        // The words a path from the folder: what the folder they lead to holds, folders first.
+        QCOMPARE(search(u"合同\\20"_s), (L {u"合同\\2024 年"_s, u"合同\\2024 说明.txt"_s}));
+        QCOMPARE(search(u"合同/20"_s), search(u"合同\\20"_s));
+        QCOMPARE(search(u"合同\\20"_s, true), search(u"合同\\20"_s));
+        // Nothing typed after it: all that folder holds, the folder first, as for "D:\Work\合同\".
+        QCOMPARE(search(u"合同\\"_s), (L {u"合同"_s, u"合同\\2024 年"_s, u"合同\\归档"_s, u"合同\\2024 说明.txt"_s}));
+        // Words alone: still the window folder's names.
+        QCOMPARE(search(u"合同"_s), (L {u"合同"_s, u"合同 旧"_s}));
+        // Leading nowhere, or no path at all: nothing from the disk, as before.
+        QCOMPARE(search(u"没有\\20"_s), L {});
+        QCOMPARE(search(u"合同\\20"_s, false, true), L {});
     }
 
     // GitHub #351: with the Everything compatibility on, the folders excluded
@@ -12192,6 +12470,19 @@ private slots:
         apps.setApps(programs);
         SystemCatalog catalog;
         catalog.setPlaces(std::make_shared<PlaceList>(zh));
+        // They come with the 系统开关 plugin (GitHub #477): left out of the
+        // places until it says so, and back out when it no longer does.
+        const auto hasPower = [&] {
+            return std::ranges::any_of(*catalog.places(), [](const PlaceInfo& p) { return isPowerCommand(p.command); });
+        };
+        QVERIFY(!hasPower());
+        QVERIFY(std::ranges::any_of(*catalog.places(), [](const PlaceInfo& p) { return p.switchId == u"bluetooth"; }));
+        QSignalSpy catalogChanged(&catalog, &SystemCatalog::changed);
+        catalog.setPowerCommands(true);
+        QCOMPARE(catalogChanged.size(), 1);
+        QVERIFY(hasPower());
+        catalog.setPowerCommands(true);
+        QCOMPARE(catalogChanged.size(), 1); // nothing new, no new search
         SearchEngine engine(&service, &apps, &catalog);
         QSignalSpy spy(&engine, &SearchEngine::resultsReady);
         SearchEngine::Request req;
@@ -12288,6 +12579,45 @@ private slots:
         QVERIFY2(listed.indexOf(u"电影"_s) >= 0 && listed.indexOf(u"电影"_s) < listed.indexOf(u"关机"_s), qPrintable(listed.join(u", ")));
         listed = order(u"sp"_s);
         QVERIFY2(listed.indexOf(u"视频"_s) >= 0 && listed.indexOf(u"视频"_s) < listed.indexOf(u"锁定屏幕"_s), qPrintable(listed.join(u", ")));
+
+        // Files come after apps and places, yet one named as typed is no
+        // less asked for (GitHub #477: "gj" listed 关机 above a folder GJ).
+        // A switch or power command found by pinyin or a guess goes behind
+        // it; a name that only has the letters inside a word ("styled" for
+        // 音量's "yl") is not so named. Asked for by name, it still leads.
+        {
+            const auto index = service.index();
+            const auto lock = index->writeLock();
+            const EntryId f = index->addRoot("F:");
+            index->add(f, "GJ", EntryFlag::Directory);
+            index->add(f, "ly-notes.txt", 0);
+            index->add(f, "styled.txt", 0);
+        }
+        listed = order(u"gj"_s);
+        QVERIFY2(listed.indexOf(u"GJ"_s) >= 0 && listed.indexOf(u"关机"_s) > listed.indexOf(u"GJ"_s), qPrintable(listed.join(u", ")));
+        listed = order(u"ly"_s);
+        QVERIFY2(listed.indexOf(u"ly-notes.txt"_s) >= 0 && listed.indexOf(u"蓝牙"_s) > listed.indexOf(u"ly-notes.txt"_s),
+            qPrintable(listed.join(u", ")));
+        listed = order(u"yl"_s);
+        QVERIFY2(listed.indexOf(u"音量"_s) >= 0 && listed.indexOf(u"styled.txt"_s) >= 0
+                && listed.indexOf(u"音量"_s) < listed.indexOf(u"styled.txt"_s),
+            qPrintable(listed.join(u", ")));
+        listed = order(u"关机"_s);
+        QVERIFY2(listed.indexOf(u"关机"_s) == 0, qPrintable(listed.join(u", ")));
+        listed = order(u"guanji"_s);
+        QVERIFY2(listed.indexOf(u"关机"_s) == 0, qPrintable(listed.join(u", ")));
+
+        // The plugin off: none of them, however asked for; the switches stay.
+        catalog.setPowerCommands(false);
+        QCOMPARE(catalogChanged.size(), 2);
+        QVERIFY(!hasPower());
+        for (const QString& text : {u"关机"_s, u"shutdown"_s, u"gj"_s, u"重启"_s, u"锁屏"_s, u"注销"_s}) {
+            listed = order(text);
+            for (const QStringView power : {u"关机", u"重启电脑", u"睡眠", u"休眠", u"锁定屏幕", u"注销"})
+                QVERIFY2(!listed.contains(power), qPrintable(text + u": "_s + listed.join(u", ")));
+        }
+        listed = order(u"蓝牙"_s);
+        QVERIFY2(listed.indexOf(u"蓝牙"_s) == 0, qPrintable(listed.join(u", ")));
     }
 
     void switchPlaceSearch()

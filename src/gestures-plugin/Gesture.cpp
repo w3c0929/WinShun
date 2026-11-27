@@ -698,6 +698,81 @@ const wchar_t* buttonShortTitle(MouseButton button, bool chinese)
     return L"";
 }
 
+// ---- keys held with the button ----
+
+namespace {
+
+constexpr Modifiers kAllModifiers = kModCtrl | kModAlt | kModShift;
+
+struct ModifierName {
+    Modifiers bit;
+    std::string_view id;
+    const wchar_t* title;
+};
+// In Windows' order, as shortcuts are written.
+constexpr ModifierName kModifierNames[] = {
+    {kModCtrl, "ctrl", L"Ctrl"},
+    {kModAlt, "alt", L"Alt"},
+    {kModShift, "shift", L"Shift"},
+};
+
+} // namespace
+
+std::string modifiersId(Modifiers modifiers)
+{
+    std::string out;
+    for (const ModifierName& m : kModifierNames) {
+        if (modifiers & m.bit) {
+            if (!out.empty())
+                out += '+';
+            out += m.id;
+        }
+    }
+    return out;
+}
+
+std::optional<Modifiers> parseModifiers(std::string_view id)
+{
+    Modifiers out = 0;
+    std::string token;
+    const auto take = [&]() -> bool {
+        for (const ModifierName& m : kModifierNames) {
+            if (token == m.id) {
+                if (out & m.bit)
+                    return false; // twice
+                out |= m.bit;
+                token.clear();
+                return true;
+            }
+        }
+        return false;
+    };
+    for (const char c : id) {
+        if (c == '+') {
+            if (!take())
+                return std::nullopt;
+        } else {
+            token += c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+        }
+    }
+    if (!take())
+        return std::nullopt;
+    return out;
+}
+
+std::wstring modifiersTitle(Modifiers modifiers)
+{
+    std::wstring out;
+    for (const ModifierName& m : kModifierNames) {
+        if (modifiers & m.bit) {
+            if (!out.empty())
+                out += L'+';
+            out += m.title;
+        }
+    }
+    return out;
+}
+
 // ---- the rules ----
 
 const char* zoneId(Zone zone)
@@ -738,11 +813,30 @@ std::optional<ParsedGesture> parseGestureTrigger(std::string_view on)
     if (on.empty())
         return std::nullopt;
     ParsedGesture out;
-    if (const std::size_t colon = on.find(':'); colon != std::string_view::npos) {
-        const auto btn = buttonByShortId(on.substr(0, colon));
+    // Before the stroke: the keys held ("shift:"), then the trigger button ("r:"), each optional.
+    const auto takeButton = [&](std::string_view head) {
+        const auto btn = buttonByShortId(head);
         if (!btn || !isTriggerButton(*btn))
-            return std::nullopt;
+            return false;
         out.trigger = *btn;
+        return true;
+    };
+    if (std::size_t colon = on.find(':'); colon != std::string_view::npos) {
+        const std::string_view head = on.substr(0, colon);
+        if (buttonByShortId(head)) {
+            if (!takeButton(head))
+                return std::nullopt;
+        } else if (const auto keys = parseModifiers(head)) {
+            out.modifiers = *keys;
+            if (colon = on.find(':', colon + 1); colon != std::string_view::npos) {
+                if (!takeButton(on.substr(head.size() + 1, colon - head.size() - 1)))
+                    return std::nullopt;
+            } else {
+                colon = head.size();
+            }
+        } else {
+            return std::nullopt;
+        }
         on.remove_prefix(colon + 1);
         if (on.find(':') != std::string_view::npos)
             return std::nullopt;
@@ -769,9 +863,9 @@ std::optional<ParsedGesture> parseGestureTrigger(std::string_view on)
     return out;
 }
 
-std::string formatGestureTrigger(MouseButton trigger, std::string_view stroke, MouseButton chord)
+std::string formatGestureTrigger(MouseButton trigger, std::string_view stroke, MouseButton chord, Modifiers modifiers)
 {
-    if (trigger != MouseButton::Any && !isTriggerButton(trigger))
+    if ((trigger != MouseButton::Any && !isTriggerButton(trigger)) || (modifiers & ~kAllModifiers))
         return {};
     if (trigger != MouseButton::Any && chord == trigger)
         return {};
@@ -782,6 +876,10 @@ std::string formatGestureTrigger(MouseButton trigger, std::string_view stroke, M
         return {};
     }
     std::string out;
+    if (modifiers != 0) {
+        out += modifiersId(modifiers);
+        out += ':';
+    }
     if (trigger != MouseButton::Any) {
         out += buttonShortId(trigger);
         out += ':';
@@ -811,6 +909,9 @@ std::wstring gestureBadge(std::string_view on, bool chinese)
         out += L'+';
         out += buttonShortTitle(parsed->chord, chinese);
     }
+    // The keys before it, a space apart ("Shift +左", not "Shift+左": a chord is not a key).
+    if (parsed->modifiers != 0)
+        out = modifiersTitle(parsed->modifiers) + L' ' + out;
     return out;
 }
 
@@ -955,6 +1056,12 @@ MouseButton Rule::triggerButton() const
     return MouseButton::Any;
 }
 
+Modifiers Rule::modifiers() const
+{
+    const auto g = parseGestureTrigger(on);
+    return g ? g->modifiers : Modifiers {0};
+}
+
 bool Rule::sameCase(const Rule& other) const
 {
     return on == other.on && where == other.where && selection == other.selection && sameApps(apps, other.apps);
@@ -970,6 +1077,8 @@ const Rule* match(const std::vector<Rule>& rules, std::string_view on, const Con
             const auto rg = parseGestureTrigger(r.on);
             if (!rg || rg->stroke != g->stroke || rg->chord != g->chord)
                 continue;
+            if (rg->modifiers != (g->modifiers | context.modifiers))
+                continue; // the keys held: exactly those, none for none
             const MouseButton active = g->trigger != MouseButton::Any ? g->trigger : context.button;
             if (rg->trigger != MouseButton::Any && active != MouseButton::Any && rg->trigger != active)
                 continue;
@@ -979,8 +1088,8 @@ const Rule* match(const std::vector<Rule>& rules, std::string_view on, const Con
                 continue;
         } else if (w) {
             const auto rw = parseWheelTrigger(r.on);
-            if (!rw || rw->up != w->up)
-                continue;
+            if (!rw || rw->up != w->up || context.modifiers != 0)
+                continue; // with keys held the wheel is the program's (Shift + wheel scrolls sideways)
             const MouseButton active = w->trigger != MouseButton::Any ? w->trigger : context.button;
             if (rw->trigger != MouseButton::Any && active != MouseButton::Any && rw->trigger != active)
                 continue;
@@ -1021,13 +1130,14 @@ bool chordMatches(const std::vector<Rule>& rules, std::string_view stroke, Mouse
     return false;
 }
 
-bool selectionMatters(const std::vector<Rule>& rules, std::string_view prefix, std::wstring_view program, MouseButton button)
+bool selectionMatters(const std::vector<Rule>& rules, std::string_view prefix, std::wstring_view program, MouseButton button,
+    Modifiers modifiers)
 {
     return std::ranges::any_of(rules, [&](const Rule& r) {
         if (!r.selection || r.action.kind == Action::Kind::Nothing)
             return false;
         const auto parsed = parseGestureTrigger(r.on);
-        if (!parsed)
+        if (!parsed || parsed->modifiers != modifiers)
             return false;
         if (parsed->trigger != MouseButton::Any && button != MouseButton::Any && parsed->trigger != button)
             return false;
@@ -1037,6 +1147,20 @@ bool selectionMatters(const std::vector<Rule>& rules, std::string_view prefix, s
             return true;
         const bool circle = parsed->stroke == kClockwise || parsed->stroke == kCounterClockwise;
         return circle || std::string_view(parsed->stroke).starts_with(prefix);
+    });
+}
+
+bool modifiersMatter(const std::vector<Rule>& rules, Modifiers modifiers, MouseButton button, std::wstring_view program)
+{
+    return std::ranges::any_of(rules, [&](const Rule& r) {
+        if (r.action.kind == Action::Kind::Nothing)
+            return false;
+        const auto parsed = parseGestureTrigger(r.on);
+        if (!parsed || parsed->modifiers != modifiers)
+            return false;
+        if (parsed->trigger != MouseButton::Any && button != MouseButton::Any && parsed->trigger != button)
+            return false;
+        return r.apps.empty() || listed(r.apps, program);
     });
 }
 
@@ -1105,8 +1229,12 @@ std::optional<std::vector<Rule>> parseRules(std::string_view json)
         const TriggerKind kind = triggerKind(r.on);
         if (kind == TriggerKind::Unknown)
             continue;
-        if (kind == TriggerKind::Gesture)
+        if (kind == TriggerKind::Gesture) {
+            // Written by hand: "Shift+Ctrl:DR" is "ctrl+shift:DR".
+            const auto g = parseGestureTrigger(r.on);
+            r.on = formatGestureTrigger(g->trigger, g->stroke, g->chord, g->modifiers);
             r.where = zoneById(o["where"].toString()).value_or(Zone::Anywhere);
+        }
         if (kind == TriggerKind::Gesture || kind == TriggerKind::Key)
             r.selection = o["selection"].toBool();
         if (kind == TriggerKind::Gesture || kind == TriggerKind::Wheel || kind == TriggerKind::Key) {
@@ -1393,6 +1521,18 @@ void RubWatch::reset()
 
 // ---- mouse button & chord state machine ----
 
+namespace {
+
+// Whether another button pressed while `held` is held (nothing drawn) would make a chord there.
+bool chordSet(const std::vector<Rule>& rules, MouseButton held, Context context)
+{
+    context.button = held;
+    return std::ranges::any_of(std::initializer_list<MouseButton> {MouseButton::Left, MouseButton::Right, MouseButton::Middle, MouseButton::X1, MouseButton::X2},
+        [&](MouseButton second) { return second != held && chordMatches(rules, "", second, context); });
+}
+
+} // namespace
+
 bool GestureSession::wantsTriggerCheck(MouseButton btn, const std::vector<MouseButton>& enabledButtons, bool activeStillDown) const
 {
     if (!hasTriggerButton(enabledButtons, btn))
@@ -1424,13 +1564,14 @@ SessionResult GestureSession::onButtonDown(MouseButton btn, int x, int y, int st
         m_downY = y;
         m_startDistance = std::max(startDistance, 1);
         m_wheelDelta = 0;
+        m_chordsSet = chordSet(settings.rules, btn, context);
         m_recognizer.reset(x, y, stroke);
         res.startHoldTimer = true;
         res.swallow = true;
         return res;
     }
 
-    if ((m_state == State::Pressed || m_state == State::Gesturing || m_state == State::Rocked)
+    if ((m_state == State::Pressed || m_state == State::Held || m_state == State::Gesturing || m_state == State::Rocked)
         && btn != MouseButton::Any && btn != m_activeButton && m_chordButton == MouseButton::Any) {
         const bool tooLong = m_state == State::Gesturing && m_recognizer.tooLong();
         const std::string strokeStr = (m_state == State::Gesturing && !tooLong) ? m_recognizer.gesture() : std::string();
@@ -1450,7 +1591,7 @@ SessionResult GestureSession::onButtonDown(MouseButton btn, int x, int y, int st
             return res;
         }
         // Unmatched left click while drawing: keep the existing cancel-on-left-click behavior.
-        if (btn == MouseButton::Left && (m_state == State::Pressed || m_state == State::Gesturing)) {
+        if (btn == MouseButton::Left && (m_state == State::Pressed || m_state == State::Held || m_state == State::Gesturing)) {
             res.stopHoldTimer = true;
             m_state = State::Canceled;
             res.event = SessionResult::Event::Cancel;
@@ -1484,6 +1625,7 @@ SessionResult GestureSession::onButtonUp(MouseButton btn, int x, int y)
         const std::string chordStroke = std::exchange(m_chordStroke, {});
         switch (std::exchange(m_state, State::Idle)) {
         case State::Pressed:
+        case State::Held:
             res.event = SessionResult::Event::Click;
             res.button = released;
             res.swallow = true;
@@ -1519,11 +1661,20 @@ SessionResult GestureSession::onMove(int x, int y)
         res.watchScreen = true;
         return res;
     }
-    if (m_state == State::Pressed) {
+    if (m_state == State::Pressed || m_state == State::Held) {
         const int dx = x - m_downX;
         const int dy = y - m_downY;
         if (dx * dx + dy * dy < m_startDistance * m_startDistance)
             return res;
+        if (m_state == State::Held) {
+            // Held still, then moved: an ordinary drag. This move is held
+            // back, so the press goes through where it was.
+            m_state = State::Through;
+            res.event = SessionResult::Event::PressThrough;
+            res.button = m_activeButton;
+            res.swallow = true;
+            return res;
+        }
         res.stopHoldTimer = true;
         m_state = State::Gesturing;
         res.startBeforeMove = true;
@@ -1542,7 +1693,8 @@ SessionResult GestureSession::onMove(int x, int y)
 SessionResult GestureSession::onWheel(int delta, bool hasWheelRules, const Settings& settings, const Context& context)
 {
     SessionResult res;
-    if (m_state != State::Pressed && m_state != State::Gesturing && m_state != State::Wheeling && m_state != State::Rocked)
+    if (m_state != State::Pressed && m_state != State::Held && m_state != State::Gesturing && m_state != State::Wheeling
+        && m_state != State::Rocked)
         return res;
     if (!hasWheelRules || delta == 0 || m_chordButton != MouseButton::Any)
         return res;
@@ -1583,6 +1735,13 @@ SessionResult GestureSession::onHoldTimer()
     res.stopHoldTimer = true;
     if (m_state != State::Pressed)
         return res;
+    // A chord set for this button: holding still is how one waits to press
+    // the second (GitHub #436: past the hold time a side button went
+    // through, and the browser went back).
+    if (m_chordsSet) {
+        m_state = State::Held;
+        return res;
+    }
     m_state = State::Through;
     res.event = SessionResult::Event::PressThrough;
     res.button = m_activeButton;
@@ -1592,7 +1751,7 @@ SessionResult GestureSession::onHoldTimer()
 SessionResult GestureSession::onAbort()
 {
     SessionResult res;
-    if (m_state == State::Pressed || m_state == State::Gesturing) {
+    if (m_state == State::Pressed || m_state == State::Held || m_state == State::Gesturing) {
         res.stopHoldTimer = true;
         m_chordButton = MouseButton::Any;
         m_chordStroke.clear();
@@ -1610,6 +1769,7 @@ void GestureSession::reset()
     m_chordStroke.clear();
     m_swallowedButtons = 0;
     m_wheelDelta = 0;
+    m_chordsSet = false;
 }
 
 } // namespace gestures

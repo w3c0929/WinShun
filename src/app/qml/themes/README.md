@@ -149,6 +149,9 @@ Hook {
 `capsuleRadius` `capsulePadding` `capsuleKeyRadius` `capsuleFill` `typeChipHeight`（0：UiScale） `menuItemHeight` `menuPadding`
 `pageTabsInset` `checkSize` `scrim` `menuHoverEdge` `animFast` `animMove`，函数 `edge(dpr)`（窗口边、窗口级分隔线）、`hair(dpr)`（部件内部的 1 设备像素线）。
 只有部分风格有的值：`Theme.tok("名字", 默认)`。
+`fieldInset` 与 `fieldKeyInsetAt` 按“紧凑”及以上的 56 高搜索行设计；宿主摆搜索框一律用 `Theme.fieldInsetYIn(行高)`（框的上下留白）和
+`Theme.fieldKeyInsetIn(框高, dpr)`（框里键的缩进）：行矮（“密集”44、文件夹窗口）时先让留白，框至少 `fieldLeast`（28）、键至少 `fieldKeyLeast`（20），
+左右仍是 `fieldInset`（#480：触感风格在密集下范围键只剩 10 高，字被裁掉）。风格不用为密集另给数值。
 
 需要新钩子或新 token：写进交付说明，由 A 统一加到 fluent/Look.qml 和 Hook.qml，不要自己改共用文件。
 
@@ -174,6 +177,8 @@ Hook {
 `--preview-settings <dir> --style tactile` 等离屏出图（不碰正在运行的 WinShun）。离屏图里没有 DWM 的圆角、边和阴影。
 
 `--preview-results <dir> --style-buttons --style fluent|brand|tactile|liquid [--dark] [--scale 1.5]` 检查真实按钮部件：图标选中、文字分页、打开预览、主操作、选中工具按钮、禁用、键盘焦点，以及用窗口内鼠标事件切换列表／大图。输出各状态 PNG 与 `buttons.json`；数据在临时目录，不操作系统剪贴板。
+
+`--preview-results <dir> --row-states --style … [--dark] [--scale 1]` 是真实搜索窗（Main.qml）里的三行结果：第一行是键盘所在行，第三行在指针下，看选中和悬停在真实行上分不分得开（`row-states.png`）。选中与悬停的量化门槛见 [配色规则](../../../../docs/colors.md) 第 9 条，`tst_appearance` 的 `rowStates`、`selectionTokens` 把关；改 `rowSelected`、`selection`、`hover`、托盘或灰字后跑它。
 
 ## 6. 液态玻璃
 

@@ -255,7 +255,8 @@ public:
     // Save: into the chosen save folder, or Save As when none was chosen (#194);
     // SavePrevious: into the folder without a picker; SaveAs: always the picker.
     // OcrTranslate: pinned where it is, its words translated in place (GitHub #191).
-    enum class Action { Copy, Save, Cancel, Pin, Ocr, OcrCopy, OcrSearch, OcrWeb, Long, Qr, Delay, CopyPin, Record, SavePrevious, SaveAs, OcrTranslate };
+    // Formula: the formula in it read as LaTeX (Shift+F; CaptureFormula).
+    enum class Action { Copy, Save, Cancel, Pin, Ocr, OcrCopy, OcrSearch, OcrWeb, Long, Qr, Delay, CopyPin, Record, SavePrevious, SaveAs, OcrTranslate, Formula };
     Q_ENUM(Action)
     // One-shot picking modes: a drag or click finishes immediately without the toolbar.
     // Ocr: 识别屏幕文字 / 截图翻译 (#198, #356); Pin: 截图并直接贴图 (#450).
@@ -473,6 +474,8 @@ public:
     Q_INVOKABLE bool keyPressed(int key, int modifiers, bool autoRepeat = false);
     Q_INVOKABLE void keyReleased(int key); // a Shift alone, let go of: the colour's next format
     Q_INVOKABLE void act(int action); // the toolbar's buttons: an Action
+    // The 贴图 hotkey, the same key as 贴到屏幕 here (#469): as that key does.
+    void pinByHotkey();
 
 signals:
     // What to take: that monitor's pixels in `rect` (its own physical
