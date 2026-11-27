@@ -17,6 +17,7 @@
 #include <QJsonObject>
 #include <QLibraryInfo>
 #include <QScopeGuard>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QProcess>
@@ -379,19 +380,25 @@ private slots:
         // spelling, the dialog shows nothing new and the wait for its address
         // to change runs its full second and a half, as with a folder slow
         // to list. The focus stays where it was put meanwhile.
-        const HWND view = [dialog] {
+        // The items view is the DirectUIHWND under SHELLDLL_DefView. The
+        // dialog builds it a moment after its address shows the folder, so it
+        // is waited for (looked up at once, it was missing on a busy PC).
+        const auto findView = [dialog] {
             HWND found = nullptr;
             ::EnumChildWindows(dialog, [](HWND child, LPARAM data) -> BOOL {
                 wchar_t name[32] {};
                 ::GetClassNameW(child, name, 32);
-                if (::wcscmp(name, L"DirectUIHWND") != 0 || !::IsWindowVisible(child) || !::FindWindowExW(child, nullptr, L"CtrlNotifySink", nullptr))
+                wchar_t parent[32] {};
+                ::GetClassNameW(::GetParent(child), parent, 32);
+                if (::wcscmp(name, L"DirectUIHWND") != 0 || ::wcscmp(parent, L"SHELLDLL_DefView") != 0 || !::IsWindowVisible(child))
                     return TRUE;
                 *reinterpret_cast<HWND*>(data) = child;
                 return FALSE;
             }, reinterpret_cast<LPARAM>(&found));
             return found;
-        }();
-        QVERIFY2(view, "the dialog's list of files was not found");
+        };
+        HWND view = nullptr;
+        QTRY_VERIFY2_WITH_TIMEOUT((view = findView()) != nullptr, "the dialog's list of files was not found", 5000);
         const QString again = target + u"\\..\\"_s + QFileInfo(start).fileName();
         std::atomic<bool> going {true};
         auto moved = std::async(std::launch::async, [&] {
@@ -732,6 +739,52 @@ private slots:
         QVERIFY(!ws::filemanager::kindOf(nullptr));
     }
 
+    // A portable Total Commander leaves nothing in the registry: once seen
+    // running it is known when closed too, as long as its file is there
+    // (a chat report, 2026-11-27).
+    void portableTotalCommanderIsRemembered()
+    {
+        using ws::filemanager::Kind;
+        ws::filemanager::setProgramMemory({});
+        if (::FindWindowW(L"TTOTAL_CMD", nullptr))
+            QSKIP("Total Commander is running on this PC");
+        // Installed here (the registry names it): what is seen running is still kept, the rest cannot be told apart.
+        const bool inRegistry = ws::filemanager::installed(Kind::TotalCommander);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString state = dir.filePath(u"state.ini"_s);
+        ws::filemanager::setProgramMemory(state);
+        const auto forget = qScopeGuard([] { ws::filemanager::setProgramMemory({}); });
+        QCOMPARE(ws::filemanager::installed(Kind::TotalCommander), inRegistry);
+        constexpr const wchar_t* name = L"TTOTAL_CMD";
+        WNDCLASSW wc {};
+        wc.lpfnWndProc = ::DefWindowProcW;
+        wc.hInstance = ::GetModuleHandleW(nullptr);
+        wc.lpszClassName = name;
+        QVERIFY(::RegisterClassW(&wc));
+        auto unregister = qScopeGuard([&] { ::UnregisterClassW(name, wc.hInstance); });
+        const HWND window = ::CreateWindowExW(
+            0, name, L"Total Commander", WS_OVERLAPPED, 0, 0, 100, 100, nullptr, nullptr, wc.hInstance, nullptr);
+        QVERIFY(window);
+        QVERIFY(ws::filemanager::installed(Kind::TotalCommander)); // running: this program stands for it
+        ::DestroyWindow(window);
+        QVERIFY(!::FindWindowW(name, nullptr));
+        QVERIFY(ws::filemanager::installed(Kind::TotalCommander)); // closed: remembered
+        const QString kept = QSettings(state, QSettings::IniFormat).value(u"FileManagers/TotalCommander"_s).toString();
+        QCOMPARE(QFileInfo(kept), QFileInfo(QCoreApplication::applicationFilePath()));
+        // Another run reads it back; a program that is gone is not offered.
+        ws::filemanager::setProgramMemory(state);
+        QVERIFY(ws::filemanager::installed(Kind::TotalCommander));
+        {
+            QSettings edit(state, QSettings::IniFormat);
+            edit.setValue(u"FileManagers/TotalCommander"_s, dir.filePath(u"gone\\TOTALCMD64.EXE"_s));
+        }
+        ws::filemanager::setProgramMemory(state);
+        QCOMPARE(ws::filemanager::installed(Kind::TotalCommander), inRegistry);
+        if (inRegistry)
+            QSKIP("Total Commander is installed on this PC: only the keeping of the program seen running was checked");
+    }
+
     void oneCommanderNavigation_data()
     {
         QTest::addColumn<int>("model");
@@ -1054,6 +1107,15 @@ private slots:
         QFETCH(bool, explicitDirectory);
         if (!::GetShellWindow())
             QSKIP("No desktop shell in this test session");
+        // Windows PowerShell's Start entry may be gone (removed with its
+        // shortcut): launched anyway, Windows shows its "cannot find" message
+        // box on the desktop of whoever runs the test.
+        IShellItem* entry = nullptr;
+        if (FAILED(::SHCreateItemFromParsingName(
+                L"shell:AppsFolder\\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe",
+                nullptr, IID_PPV_ARGS(&entry))))
+            QSKIP("Windows PowerShell has no Start entry on this PC");
+        entry->Release();
         QTemporaryDir temporary;
         QVERIFY(temporary.isValid());
         const QString output = temporary.filePath(u"app-console.json"_s);

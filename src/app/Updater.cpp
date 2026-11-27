@@ -1,5 +1,6 @@
 #include "Updater.h"
 
+#include "Diagnostics.h"
 #include "Settings.h"
 #include "UpdateDelta.h"
 #include "UsageReport.h"
@@ -69,16 +70,18 @@ QString appDir()
     return QDir::toNativeSeparators(QCoreApplication::applicationDirPath());
 }
 
-// The downloads: %LOCALAPPDATA%\WinShun\Updates, the user's own, also for a
-// portable copy (not its "data", which the update leaves as it is); a
-// --profile's own folder for tests.
+QString localData()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+}
+
+// The downloads, the helper's copy and the logs (update::updatesFolder):
+// %LOCALAPPDATA%\WinShun\Updates, a portable copy's own data\Updates.
 QString updatesDir()
 {
-    const QString profile = Settings::profile();
-    if (!profile.isEmpty() && profile != Settings::portableFolder())
-        return profile + u"\\Updates"_s;
-    return QDir::toNativeSeparators(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
-        + u"/WinShun/Updates"_s);
+    static const QString folder = update::updatesFolder(update::installKind(appDir(), !Settings::portableFolder().isEmpty()),
+        Settings::profile(), Settings::portableFolder(), localData());
+    return folder;
 }
 
 // The update service: the latest version for this Windows and package.
@@ -382,6 +385,18 @@ void Updater::finishCheck(int status, const QByteArray& body, unsigned long erro
     }
     std::optional<release::Info> latest;
     const release::Answer answer = release::judge(status, body, currentVersion(), &latest);
+    // What the service said, for a report of "it only finds an older version"
+    // (GitHub #487): each check asked for by hand, and the automatic ones
+    // whose answer is another than the last (every 10 minutes otherwise).
+    const QString said = answer == release::Answer::Invalid ? u"invalid %1 %2"_s.arg(status).arg(error)
+                         : latest ? latest->version : u"up to date"_s;
+    if (manual || said != m_lastSaid) {
+        m_lastSaid = said;
+        diagnostics::record(u"update-check"_s,
+            {{u"manual"_s, manual}, {u"status"_s, status}, {u"answer"_s, said}, {u"current"_s, currentVersion()},
+                {u"installing"_s, m_stage != Stage::Idle}, {u"shown"_s, m_release ? m_release->version : QString()},
+                {u"skipped"_s, state().value(u"SkippedVersion"_s).toString()}});
+    }
     if (answer == release::Answer::Invalid) {
         QString problem;
         if (status == 403 || status == 429)
@@ -1110,6 +1125,9 @@ void Updater::cleanUp()
             if (dir.exists())
                 all = dir.removeRecursively() && all;
         }
+        // Versions before 0.51 kept a portable copy's downloads on the system drive (GitHub #484).
+        if (Settings::profile() == Settings::portableFolder())
+            update::removeStrayUpdates(localData() + u"/WinShun"_s);
     }
     static int retries = 0;
     if (!all && retries++ < 3)

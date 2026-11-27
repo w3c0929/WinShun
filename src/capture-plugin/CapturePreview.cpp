@@ -2808,6 +2808,20 @@ int runCaptureTools(const QStringList& args)
         pump(150);
         saved = saveGrab(window, out.filePath(name.toString() + u".png"_s)) && saved;
     };
+    // A rectangle just drawn is selected: its outline and handles are over
+    // it, the picture inside still to be seen (GitHub #498: a black block).
+    tool(Kind::Rect);
+    drag({520, 30}, {700, 110});
+    grab(u"rect-selected");
+    {
+        const QImage shot = window->grabWindow();
+        const qreal dpr = shot.devicePixelRatio();
+        const QColor inside = shot.pixelColor(qRound((20 + 610) * dpr), qRound((20 + 70) * dpr));
+        const bool clear = inside.red() > 240 && inside.green() > 240 && inside.blue() > 240;
+        say(u"selected rectangle: the picture inside it is %1 (%2), selection %3"_s.arg(clear ? u"shown"_s : u"COVERED"_s,
+            inside.name()).arg(model.selection().size()));
+        saved = saved && clear && !model.selection().isEmpty();
+    }
     tool(Kind::Arrow);
     model.setPanel({{u"lineMode"_s, u"bezier"_s}});
     drag({410, 180}, {760, 180});
@@ -3524,6 +3538,24 @@ int runPresenter(const QStringList& args)
     say(u"%1 %2 %3x%4"_s.arg(saved ? u"saved"_s : u"NOT saved"_s, file).arg(picture.width()).arg(picture.height()));
     if (laser)
         send(QEvent::MouseButtonRelease, {840, 505}, Qt::LeftButton, Qt::NoButton);
+    // Each board in its own colour however it is reached (GitHub #485: the
+    // black one opened from the desktop came up white): a corner of the ink
+    // window, where nothing is drawn, once the fade is over.
+    const auto boardColour = [&](presenter::Board wanted) {
+        presenter.toggleBoard(int(wanted));
+        pump(300);
+        settle(ink);
+        return ink->grabWindow().pixelColor(2, 2).rgba();
+    };
+    const auto named = [](QRgb colour) { return QColor::fromRgba(colour).name(QColor::HexArgb); };
+    presenter.toggleBoard(int(presenter::Board::White)); // closed: the desktop
+    pump(300);
+    const QRgb fromDesktop = boardColour(presenter::Board::Black);
+    check(fromDesktop == presenter::kBlackBoard, u"the black board from the desktop is black: %1"_s.arg(named(fromDesktop)));
+    const QRgb whiteAfter = boardColour(presenter::Board::White);
+    check(whiteAfter == presenter::kWhiteBoard, u"the white board after the black one is white: %1"_s.arg(named(whiteAfter)));
+    const QRgb blackAfter = boardColour(presenter::Board::Black);
+    check(blackAfter == presenter::kBlackBoard, u"the black board after the white one is black: %1"_s.arg(named(blackAfter)));
     presenter.close();
     toolbar->hide();
     delete toolbar;

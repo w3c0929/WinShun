@@ -8,6 +8,7 @@
 #include "Wsl.h"
 
 #include "AppCatalog.h"
+#include "CommandLaunch.h"
 #include "Crawler.h"
 #include "Details.h"
 #include "FileIconProvider.h"
@@ -5172,6 +5173,25 @@ void Launcher::sortBy(int key)
         // Names and paths up (a to z); sizes and times down (the largest, the newest first).
         order = {sortKey, sortKey == SortKey::Size || sortKey == SortKey::Modified || sortKey == SortKey::Created};
     }
+    setPanelSort(order);
+}
+
+int Launcher::panelSortChoice() const
+{
+    for (int sort = BestMatch; sort < MostOpened; ++sort) {
+        if (columnOrder(static_cast<Sort>(sort)) == m_panelSort)
+            return sort;
+    }
+    return -1;
+}
+
+void Launcher::choosePanelSort(int sort)
+{
+    setPanelSort(columnOrder(static_cast<Sort>(std::clamp(sort, int(BestMatch), int(MostOpened)))));
+}
+
+void Launcher::setPanelSort(SortOrder order)
+{
     if (order == m_panelSort)
         return;
     m_panelSort = order;
@@ -5238,6 +5258,21 @@ void Launcher::refreshStatus()
     if (m_panel && m_haveResults && !m_replacePending && !m_keyword && m_scope != Content && m_totalMatches > 0) {
         const QString count = tr("共 %Ln 项", nullptr, totalMatches());
         s = s.isEmpty() ? count : count + u" · "_s + s;
+    }
+    // 内容 there too (GitHub #476): the files listed with the words in them,
+    // as a figure that stays while the scan goes on (the divider shows how
+    // far it is) and says when scrolling brings more.
+    if (m_panel && m_haveResults && !m_replacePending && !m_keyword && m_scope == Content && s.isEmpty()) {
+        QSet<QString> files;
+        for (int i = 0; i < m_results.count(); ++i) {
+            if (const SearchResult* r = m_results.at(i); r && r->line != 0)
+                files.insert(r->path);
+        }
+        if (const int found = static_cast<int>(files.size()); found > 0) {
+            s = m_contentRunning ? tr("已找到 %Ln 个文件，还在找…", nullptr, found)
+                : m_moreContent  ? tr("已列出 %Ln 个文件，往下滚动列出更多", nullptr, found)
+                                 : tr("共 %Ln 个文件", nullptr, found);
+        }
     }
     if (const int selected = m_results.selectedCount(); selected > 0)
         s = tr("已选择 %Ln 项", nullptr, selected);
@@ -6519,7 +6554,18 @@ void Launcher::followPreview()
     if (!m_preview)
         return;
     if (m_preview->isOpen()) {
-        m_preview->follow(previewItem(m_results.at(m_currentRow)));
+        const std::optional<FilePreview::Item> item = previewItem(m_results.at(m_currentRow));
+        // The box emptied, nothing listed to show: an empty window beside it
+        // is only in the way (GitHub #492). Still wanted: back on the next
+        // row with a file, as when the launcher opens. Not while words are
+        // typed (a row without a file, or no match yet: it would flicker),
+        // nor QuickLook's or Seer's window, which is theirs to close.
+        if (!item && m_results.count() == 0 && m_query.trimmed().isEmpty() && !m_preview->showsElsewhere()) {
+            m_preview->close();
+            m_previewResume = true;
+            return;
+        }
+        m_preview->follow(item);
         return;
     }
     // In the panel's details their 预览 tab is the preview: the window waits
@@ -7072,7 +7118,15 @@ void Launcher::performApp(const SearchResult& app, Action action)
             return;
         }
         remember(app.path, m_shownText);
-        shell::launchApp(app.path, action == RunAsAdmin, reportFailure(app.name));
+        // A terminal found while typing in a folder opens in that folder, as
+        // typing its name in Explorer's address bar does (GitHub #430).
+        if (const QString terminal = typedInFolder() ? commandlaunch::terminalOfApp(app.path, app.target) : QString();
+            !terminal.isEmpty() && QFileInfo(m_typingFolder).isAbsolute()) {
+            qInfo().noquote() << u"Opening the terminal %1 in the folder typed in"_s.arg(terminal);
+            shell::openTerminalIn(terminal, {}, m_typingFolder, reportFailure(app.name), action == RunAsAdmin);
+        } else {
+            shell::launchApp(app.path, action == RunAsAdmin, reportFailure(app.name));
+        }
         emit dismissRequested();
         break;
     case Reveal:

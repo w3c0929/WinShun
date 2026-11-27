@@ -23,7 +23,7 @@ Win顺 在读取任何设置之前按以下优先级确定目录：
 | `clipboard\` | `%LOCALAPPDATA%\WinShun\clipboard\` | `clipboard.db`、`images\`、`projects\`、OCR 崩溃哨兵文件 `reading-picture`；手动备份为单个 ZIP（`ClipBackupFiles`），还原时先解到旁边的 `clipboard.restore\`，下次启动在打开历史前整体换入 |
 | `WinShun.log` / `.old.log` | `%LOCALAPPDATA%\WinShun\` | 运行警告/错误日志（`WINSHUN_LOG_INFO` 开 info 级）；`RepeatFilter` 折叠 10 秒内超 3 次重复消息 |
 | `diagnostics\` | `%LOCALAPPDATA%\WinShun\diagnostics\` | `events*.jsonl`、`crash.txt` 与固定导出包 `WinShun-diagnostics.zip` |
-| `Updates\` | `%LOCALAPPDATA%\WinShun\Updates\` | 下载暂存 `*.partial`、增量展开目录、更新助手副本与 `update.log` |
+| `Updates\` | `%LOCALAPPDATA%\WinShun\Updates\`；便携版在 `data\Updates\`（`update::updatesFolder`，#484），Scoop 仍在 `%LOCALAPPDATA%` | 下载暂存 `*.partial`、增量展开目录、更新助手副本与 `update.log`；便携版启动清理时由 `update::removeStrayUpdates` 删掉旧版留在 `%LOCALAPPDATA%\WinShun\Updates` 的文件（仅当该目录下只有 `Updates`、其中只有文件、且都不是链接） |
 
 ### 1.2 `WinShun.ini` 节区总览
 
@@ -83,6 +83,7 @@ Win顺 在读取任何设置之前按以下优先级确定目录：
 | 事件名 | 来源 | 核心内容与频控 |
 |---|---|---|
 | `app-start` / `app-crash` | `main.cpp` / `CrashRecord` | 启动环境与权限；上次闪退原因/线程/`activity`/调用栈 |
+| `update-check` | `Updater::finishCheck` | 更新服务的回答（版本或失败码）、本机版本、正在安装与否、界面上显示的版本、已跳过的版本；手动检查每次都记，自动检查只在回答变了时记 |
 | `app-message-repeated` | `RepeatFilter` | 10 秒内重复超 3 次的 `WinShun.log` 折叠计数 |
 | `content-*` | `ContentIndexer` | 轮次起止、限速、直读/回退、30 秒吞吐、最久 8 项活动槽、>3 秒慢读（每轮前 8 次） |
 | `ui-font` / `screens` / `graphics` / `graphics-error` / `power` / `fonts-changed` / `font-database-changed` / `text-check` | `DisplayDiagnostics` / `TextCheck` | 字体、屏幕参数、显卡驱动、场景图错误、睡眠与字形自检 |
@@ -105,7 +106,7 @@ Win顺 在读取任何设置之前按以下优先级确定目录：
 - **增量更新（`UpdateDelta` / `tools/delta`）**：发布脚本对最近至多 3 个兼容旧版用 zstd level-19 `--patch-from` 生成增量包（<60% 全量体积且经完整还原逐文件校验），清单通过隐藏注释 `<!-- winshun-delta 1 ... -->` 随同一可信链下发；客户端逐文件验旧哈希与新哈希，任一失败静默回退全量包（`WINSHUN_UPDATE_NODELTA` 可关闭增量）。
 - **按安装形态执行**：
   - **安装版（`AllUsers` / `CurrentUser`）**：普通权限启动 `setup.exe /SILENT …`（`AllUsers` 由 Inno Setup 自弹 UAC 保持 `[Run]` 普通权限），伴随 `WinShunUpdate.exe --watch-setup` 兜底重启旧版；安装脚本先将 `WinShunMcp.exe` 改名再退中转防锁 DLL，被占用文件改名 `.wsold` 挪开。
-  - **便携版（`Portable`）**：严格路径/重解析点校验解压至同卷 `.winshun-update-new`，复制 `WinShunUpdate.exe` 至 `Updates\` 持 `Local\WinShun.Updating` 交换顶层项（不动 `data`），3 分钟内未见新版窗口则自动回滚。
+  - **便携版（`Portable`）**：严格路径/重解析点校验解压至同卷 `.winshun-update-new`，复制 `WinShunUpdate.exe` 至 `data\Updates\`（交换不动 `data`，助手仍在被替换的范围之外）持 `Local\WinShun.Updating` 交换顶层项（不动 `data`），3 分钟内未见新版窗口则自动回滚。
   - **Scoop（`Scoop`）**：高于便携版优先识别，经 `current` 联接稳定路径，以 `-EncodedCommand` 调 `scoop update winshun`；`pre_uninstall` 仅在真卸载时跑 `--uninstall-cleanup`。
 - **提权交接（`ElevationWait`）**：管理员直读更新后先等 `Local\WinShun.Updating` 释放与窗口关闭（上限 60 秒，否则发通知询问）再以管理员重启；更新前写 `PendingVersion`，下次启动核对并清理残留包。
 - **匿名统计（`core/UsageReport`）**：每日至多上报一次 `SHA-256("gleaning.install.v1:winshun:" + MachineGuid)` + 版本/OS，预览模式不上报。
